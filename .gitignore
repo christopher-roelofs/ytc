@@ -1,0 +1,7 @@
+# Build trees (build-local = laptop, build = Orange Pi convention)
+build*/
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store
