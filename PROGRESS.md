@@ -252,6 +252,28 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### Second device: RockNIX (Adreno) support + render-only libmpv bundle (2026-08-23)
+- Target 2: RockNIX handheld (Retroid Pocket, Snapdragon 865 / Adreno), aarch64, at
+  192.168.86.249 (root/rocknix; DHCP — was expected at .246). Has SDL2, GLES/EGL,
+  ffmpeg 6.x, libass.9, ALSA, and the `mpv` CLI — but NO `libmpv.so`.
+- muOS's libmpv can't be reused: it hard-NEEDs libmali.so.0 (Mali blob) — wrong GPU
+  vendor for Adreno.
+- Fix: built a RENDER-API-ONLY libmpv on the Pi (mpv 0.36, VO backends disabled:
+  drm/gbm/egl/jpeg/vaapi/vulkan) so it needs only ffmpeg 6.x + libass + alsa (all
+  present on RockNIX) — no libmali/gbm/drm/EGL. Bundled as the port's
+  libs.aarch64/libmpv.so.2 on the device; recipe + lib in portmaster/prebuilt/rocknix/.
+- IMPORTANT: this libmpv links ffmpeg 6.x; muOS has ffmpeg 4.x, so the bundled lib is
+  kept OUT of the shared port/libs.aarch64 (empty there → muOS uses its own system
+  libmpv). RockNIX-only deploy adds it.
+- Deployed to /roms/ports/ytc + /roms/ports/ytc.sh. Verified at runtime: app + bundled
+  libmpv load (ldd clean, ffmpeg/ass/alsa resolve from device), SDL inits, controller
+  detected ("Retroid Pocket Gamepad", L/R shoulders mapped). Full playback test is the
+  user's (needs the device display via the Ports menu).
+- Chosen "bundle libmpv + ffmpeg" but the Pi's ffmpeg 6.1 is unbundleable as-is
+  (libavcodec needs librockchip_mpp; libavdevice drags X11/DRM/xcb) → used the device's
+  clean ffmpeg instead. A no-rkmpp/no-X11 ffmpeg build would be needed for a truly
+  self-contained media stack (deferred).
+
 ### SponsorBlock (2026-08-23)
 - Auto-skips sponsor/intro/outro/selfpromo/interaction/music_offtopic segments via the
   community API (sponsor.ajay.app). Settings toggle "SponsorBlock: On/Off" (persisted,
