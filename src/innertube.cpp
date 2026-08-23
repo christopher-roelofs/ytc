@@ -389,6 +389,22 @@ static void collect_results(const json& node, const std::string& chan_hint,
             sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
             if (!sr.video_id.empty() && !sr.title.empty()) out.push_back(std::move(sr));
         }
+        // compactVideoRenderer: the related/up-next item shape from /next.
+        if (auto it = node.find("compactVideoRenderer"); it != node.end() && it->is_object()) {
+            const json& n = *it;
+            SearchResult sr;
+            sr.video_id = n.value("videoId", "");
+            sr.channel_id = video_channel_id(n);
+            if (n.contains("title")) sr.title = run_text(n["title"]);
+            if (n.contains("longBylineText")) sr.author = run_text(n["longBylineText"]);
+            else if (n.contains("shortBylineText")) sr.author = run_text(n["shortBylineText"]);
+            if (n.contains("lengthText")) sr.length_text = run_text(n["lengthText"]);
+            if (n.contains("viewCountText")) sr.view_count_text = run_text(n["viewCountText"]);
+            if (n.contains("publishedTimeText")) sr.published_text = run_text(n["publishedTimeText"]);
+            sr.length_seconds = parse_duration(sr.length_text);
+            sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
+            if (!sr.video_id.empty() && !sr.title.empty()) out.push_back(std::move(sr));
+        }
         if (auto it = node.find("channelRenderer"); it != node.end() && it->is_object()) {
             const json& n = *it;
             SearchResult sr;
@@ -1266,6 +1282,36 @@ std::vector<CaptionTrack> Innertube::caption_tracks(const std::string& video_id)
         }
     } catch (...) { out.clear(); }
     return out;
+}
+
+std::vector<SearchResult> Innertube::related_videos(const std::string& video_id) {
+    std::vector<SearchResult> out;
+    try {
+        // WEB (search_client) returns the richest watch-next secondaryResults.
+        const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
+        HttpClient http;   // LOCAL: thread-safe
+        std::string vd = visitor_data_;
+        json client = json::parse(fp.context_json);
+        if (!vd.empty()) client["visitorData"] = vd;
+        client["hl"] = "en"; client["gl"] = "US";
+        json body = {{"videoId", video_id}, {"context", {{"client", client}}}};
+        std::string url = std::string(kInnertubeBase) + "/next";
+        if (!api_key_.empty()) url += "?key=" + api_key_;
+        auto r = http.post(url, body.dump(), client_headers(fp));
+        if (!r.ok()) return out;
+        auto j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded()) return out;
+        // secondaryResults holds the related list; parse compactVideoRenderer/lockups.
+        if (const json* sec = find_key(j, "secondaryResults"))
+            collect_results(*sec, "", out);
+        // Keep only playable videos (drop channels/playlists/posts) and self.
+        std::vector<SearchResult> vids;
+        for (auto& s : out)
+            if (!s.video_id.empty() && s.kind == SearchResult::Kind::Video &&
+                s.video_id != video_id)
+                vids.push_back(std::move(s));
+        return vids;
+    } catch (...) { return {}; }
 }
 
 std::string Innertube::caption_vtt(const std::string& base_url) {

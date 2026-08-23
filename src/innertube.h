@@ -230,6 +230,10 @@ public:
     // none/failure. Fetch a track's WebVTT text with caption_vtt(track.base_url).
     std::vector<CaptionTrack> caption_tracks(const std::string& video_id);
     std::string caption_vtt(const std::string& base_url);   // WebVTT text ("" on fail)
+
+    // Related / up-next videos for a video (one /next call). Thread-safe; video rows
+    // only (channels/playlists filtered out). Empty on failure. For autoplay.
+    std::vector<SearchResult> related_videos(const std::string& video_id);
     // Playlist description via its VL /browse (playlistMetadataRenderer). Thread-safe.
     std::string playlist_description(const std::string& playlist_id);
     std::vector<std::pair<std::string, bool>> restricted_cache();

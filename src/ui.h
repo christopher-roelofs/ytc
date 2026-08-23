@@ -192,7 +192,8 @@ private:
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
-                            ToggleSponsorBlock, CycleCaptions, ClearHistory, Quit };
+                            ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
+                            ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -251,6 +252,20 @@ private:
     void poll_captions();
     void apply_caption_selection();        // off / cached sub-add / kick async download
     void poll_caption_download();          // install a finished VTT if still selected
+
+    // Autoplay: when a video ends, play the next one automatically.
+    bool autoplay_ = true;                 // setting "autoplay" (default on)
+    int  now_playing_index_ = -1;          // index in results_ the playing video came from
+    std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
+    std::atomic<bool> rel_running_{false}, rel_done_{false};
+    std::mutex rel_m_;
+    std::vector<yt::SearchResult> rel_pending_;
+    bool rel_autoplay_pending_ = false;    // a related-autoplay fetch is in flight
+    void handle_playback_ended();          // EOF: autoplay next / related / back to grid
+    bool autoplay_next_in_list();          // play next playable item in results_; false if none
+    void start_related_autoplay(const std::string& video_id);
+    void poll_related_autoplay();
+    void play_item(const yt::SearchResult& v, int index);  // launch a video (no resume prompt)
 
     Theme theme_;
     gfx::Window* win_;

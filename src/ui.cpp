@@ -266,6 +266,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
+    autoplay_ = it_.setting_int("autoplay", 1) != 0;          // default ON
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
@@ -282,6 +283,7 @@ App::~App() {
     if (sb_thread_.joinable()) sb_thread_.join();
     if (cc_thread_.joinable()) cc_thread_.join();
     if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
+    if (rel_thread_.joinable()) rel_thread_.join();
 }
 
 void App::set_results(std::vector<yt::SearchResult> r) {
@@ -555,6 +557,9 @@ void App::open_settings() {
     menu_items_.push_back({std::string("Ask to Resume:  ")
                            + (ask_resume_ ? "On" : "Off"),
                            MenuAction::ToggleAskResume});
+    menu_items_.push_back({std::string("Autoplay:  ")
+                           + (autoplay_ ? "On" : "Off"),
+                           MenuAction::ToggleAutoplay});
     menu_items_.push_back({std::string("SponsorBlock:  ")
                            + (sponsorblock_ ? "On" : "Off"),
                            MenuAction::ToggleSponsorBlock});
@@ -613,6 +618,12 @@ void App::adjust_setting(MenuAction a, int dir) {
         volume_ = v;
         it_.set_setting_int("volume", volume_);
         if (mode_ == Mode::Playing) player_.set_volume(volume_);   // live if playing
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::ToggleAutoplay) {
+        autoplay_ = !autoplay_;
+        it_.set_setting_int("autoplay", autoplay_ ? 1 : 0);
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
@@ -1163,6 +1174,7 @@ void App::menu_activate() {
         case MenuAction::CycleSpeed:
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
+        case MenuAction::ToggleAutoplay:
             return;   // value rows change with Left/Right only; A does nothing
         case MenuAction::Quit:
             menu_open_ = false;
@@ -1412,7 +1424,7 @@ void App::input(Action a) {
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
-                    act == MenuAction::CycleCaptions)
+                    act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -1565,6 +1577,7 @@ void App::pump_async() {
     poll_sponsorblock();
     poll_captions();
     poll_caption_download();
+    poll_related_autoplay();
     // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
     // (non-debounced) seek to the segment end; each segment skips at most once per
     // play so a deliberate seek back in doesn't fight the user.
@@ -1640,11 +1653,7 @@ void App::pump_async() {
             has_pending_seek_ = false; pending_seek_ = 0;
         }
         if (!player_.pump()) {       // playback ended (EOF/error)
-            if (!now_playing_item_.video_id.empty())   // finished -> forget resume point
-                it_.clear_resume_pos(now_playing_item_.video_id);
-            player_.stop();
-            mode_ = Mode::Grid;
-            has_pending_seek_ = false; pending_seek_ = 0;
+            handle_playback_ended();  // autoplay next / related, or back to grid
         }
     }
 }
@@ -2492,6 +2501,7 @@ void App::request_playback() {
     const yt::SearchResult* v = selected();
     if (!v || v->video_id.empty()) return;   // only videos are playable
     now_playing_item_ = *v;                      // context for the player options menu
+    now_playing_index_ = sel_;                   // remember list position (for autoplay)
     stats_for_nerds_ = false;                    // per-video: reset for each new video
     playback_speed_ = 1.0;                       // per-video: speed back to normal
     // (replay_current, used for quality changes, does NOT reset these -> speed persists
@@ -2508,6 +2518,74 @@ void App::request_playback() {
         }
     }
     start_resolve(v->video_id, v->title, 0);
+}
+
+// Launch a specific video (autoplay path) without the resume prompt.
+void App::play_item(const yt::SearchResult& v, int index) {
+    now_playing_item_ = v;
+    now_playing_index_ = index;
+    stats_for_nerds_ = false;
+    playback_speed_ = 1.0;
+    start_resolve(v.video_id, v.title, 0);
+}
+
+// Called when playback ends naturally (EOF). Autoplay the next video if enabled:
+// next playable item in the current list, else a related video, else back to grid.
+void App::handle_playback_ended() {
+    if (!now_playing_item_.video_id.empty())
+        it_.clear_resume_pos(now_playing_item_.video_id);   // finished -> forget resume
+    player_.stop();
+    has_pending_seek_ = false; pending_seek_ = 0;
+    if (autoplay_ && autoplay_next_in_list()) return;       // next in list (start_resolve -> Loading)
+    if (autoplay_) { start_related_autoplay(now_playing_item_.video_id); return; }
+    mode_ = Mode::Grid;
+}
+
+// Play the next playable video after now_playing_index_ in results_. False if none.
+bool App::autoplay_next_in_list() {
+    int start = now_playing_index_ >= 0 ? now_playing_index_ + 1 : (int)results_.size();
+    for (int i = start; i < (int)results_.size(); ++i) {
+        const yt::SearchResult& v = results_[i];
+        if (v.video_id.empty() || v.is_channel() || v.is_playlist() || v.is_post()) continue;
+        sel_ = i; ensure_visible();
+        status_msg_ = "Up next: " + v.title;
+        status_until_ = SDL_GetTicks() + 3500;
+        play_item(v, i);
+        return true;
+    }
+    return false;
+}
+
+// End of list: fetch related videos off-thread and autoplay the first one.
+void App::start_related_autoplay(const std::string& video_id) {
+    if (video_id.empty()) { mode_ = Mode::Grid; return; }
+    mode_ = Mode::Loading;
+    status_msg_ = "Finding next video..."; status_until_ = SDL_GetTicks() + 6000;
+    rel_autoplay_pending_ = true;
+    if (rel_thread_.joinable()) rel_thread_.join();
+    rel_running_ = true; rel_done_ = false;
+    rel_thread_ = std::thread([this, video_id]() {
+        std::vector<yt::SearchResult> r;
+        try { r = it_.related_videos(video_id); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(rel_m_); rel_pending_ = std::move(r); }
+        rel_running_ = false; rel_done_ = true;
+    });
+}
+void App::poll_related_autoplay() {
+    if (!rel_done_.exchange(false)) return;
+    std::vector<yt::SearchResult> r;
+    { std::lock_guard<std::mutex> lk(rel_m_); r = std::move(rel_pending_); rel_pending_.clear(); }
+    // If the user navigated away (Back left Loading), or autoplay was cancelled, drop it.
+    if (!rel_autoplay_pending_ || mode_ != Mode::Loading) { rel_autoplay_pending_ = false; return; }
+    rel_autoplay_pending_ = false;
+    if (r.empty()) { mode_ = Mode::Grid; status_msg_ = "No more videos";
+                     status_until_ = SDL_GetTicks() + 2500; return; }
+    // Replace the list with the related set so subsequent autoplay chains through it.
+    results_ = std::move(r);
+    sel_ = 0; scroll_ = 0;
+    status_msg_ = "Up next: " + results_[0].title;
+    status_until_ = SDL_GetTicks() + 3500;
+    play_item(results_[0], 0);
 }
 
 // Save (or clear) the current playback position for ask-to-resume. Called when
