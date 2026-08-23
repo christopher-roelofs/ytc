@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ytnative CXX)
+project(ytc CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,7 +43,7 @@ if(BUILD_UI)
     # otherwise a no-op stub so the UI still builds/iterates without mpv.
     pkg_check_modules(MPV mpv)
     if(MPV_FOUND)
-      target_compile_definitions(ytgfx PUBLIC YTNATIVE_HAVE_MPV)
+      target_compile_definitions(ytgfx PUBLIC YTC_HAVE_MPV)
       target_include_directories(ytgfx PUBLIC ${MPV_INCLUDE_DIRS})
       target_link_libraries(ytgfx PUBLIC ${MPV_LIBRARIES})
       message(STATUS "libmpv found: yt_ui will have real playback")

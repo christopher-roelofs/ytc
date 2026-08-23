@@ -202,7 +202,7 @@ std::unique_ptr<Window> Window::create(int w, int h, const std::string& title,
 
     const char* drv = SDL_GetCurrentVideoDriver();
     bool headless = drv && std::strcmp(drv, "offscreen") == 0;
-    Uint32 mode = getenv("YTNATIVE_WINDOWED") ? (SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE)
+    Uint32 mode = getenv("YTC_WINDOWED") ? (SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE)
                                               : SDL_WINDOW_FULLSCREEN_DESKTOP;
     Uint32 flags = SDL_WINDOW_OPENGL | (headless ? SDL_WINDOW_HIDDEN : mode);
     SDL_Window* win = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED,

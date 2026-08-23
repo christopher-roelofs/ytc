@@ -1,4 +1,4 @@
-# ytnative — native YouTube client for Linux handhelds
+# ytc — native YouTube client for Linux handhelds
 
 C++/SDL2/libmpv. No yt-dlp, no Python, no reliance on the device ffmpeg binary.
 Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
@@ -8,7 +8,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 - Debian 11, gcc/g++ 10.2, cmake 3.18, 8 cores, 16GB RAM, 198GB free.
 - libmpv 2.0.14 + SDL2 2.0.14 + libcurl 7.74 all preinstalled with dev headers.
 - GLES 3.2 / EGL 1.5, DRI (`card0/1`), `/dev/mpp_service` (RK3588 VPU) present.
-- Deploy: `rsync` to `~/ytnative`, `cmake --build build -j8`.
+- Deploy: `rsync` to `~/ytc`, `cmake --build build -j8`.
 - Secondary target device: **muOS 2601 handheld** at `192.168.86.244` (root/root), Allwinner H700.
 
 ## Status — both milestones PROVEN on hardware (2026-08-22)
@@ -55,7 +55,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 - `ThumbCache`: worker thread downloads thumbnail bytes; GL-thread `pump()` decodes +
   uploads. Non-blocking UI.
 - `src/main_ui.cpp`: interactive (gamepad/keyboard -> actions) OR headless
-  (`YTNATIVE_SHOT=path` renders a nav sequence to PNGs). Honors `SDL_VIDEODRIVER`.
+  (`YTC_SHOT=path` renders a nav sequence to PNGs). Honors `SDL_VIDEODRIVER`.
 - **Verified on BOTH**: local Mesa (offscreen, 1280x720) and Orange Pi real Mali GPU
   (KMSDRM, native 1920x1080) — pixel-identical, resolution-independent scaling works.
 
@@ -72,7 +72,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 ### M5: playback integrated into the UI — DONE (2026-08-22)
 - `src/player.{h,cpp}`: `Player` wraps libmpv render API into the app's shared GLES2
   context. Header is mpv-free (opaque Impl); implementation is REAL when
-  `YTNATIVE_HAVE_MPV` is defined (CMake sets it when libmpv is found), else a no-op
+  `YTC_HAVE_MPV` is defined (CMake sets it when libmpv is found), else a no-op
   STUB so the UI still builds/iterates on machines without libmpv (this laptop).
 - App gained `Mode {Grid, Loading, Playing}`. Select on a card -> resolve() ->
   best_video/best_audio -> `player_.play(video_url, audio_url, user_agent)`.
@@ -90,8 +90,8 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   COMMAND on MPV_EVENT_FILE_LOADED — the URL is a discrete arg, no `&`/`:` parsing.
   Confirmed: AAC decoder opens, aid=1 selected, pipewire AO opens. Do the same for any
   future external track (subs, alt audio) — command, not path-list option.
-- Headless play capture: `YTNATIVE_PLAYTEST=1` adds select+settle+screenshot steps;
-  run on Pi as `sudo SDL_VIDEODRIVER=kmsdrm`. `YTNATIVE_DEBUG=1` prints [play]/[mpv]
+- Headless play capture: `YTC_PLAYTEST=1` adds select+settle+screenshot steps;
+  run on Pi as `sudo SDL_VIDEODRIVER=kmsdrm`. `YTC_DEBUG=1` prints [play]/[mpv]
   breadcrumbs (resolve, mpv init, frame/pos) — invaluable for the hang diagnosis.
 
 ### M6: async resolve + loading state — DONE (2026-08-22)
@@ -151,9 +151,9 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   on the NEXT play, pump() reads it and set ended=true -> App stops the just-started
   video. First video worked only because there was no prior STOP.
 - Fix: in pump(), only END_FILE reason EOF(0) or ERROR(4) counts as "ended"; ignore
-  STOP(2)/QUIT(3)/REDIRECT(5) (always our own doing). Verified with YTNATIVE_SEQTEST
+  STOP(2)/QUIT(3)/REDIRECT(5) (always our own doing). Verified with YTC_SEQTEST
   (plays N grid items in a row) — all now PLAYING.
-- Test hook: `YTNATIVE_SEQTEST=1 YTNATIVE_SEQN=N YTNATIVE_SHOT=/tmp/x` (needs SHOT to
+- Test hook: `YTC_SEQTEST=1 YTC_SEQN=N YTC_SHOT=/tmp/x` (needs SHOT to
   enter headless mode) plays N items select->back->next and prints PLAYING/FAIL each.
 
 ### KEY BUG — iOS-only videos 403 in mpv (fixed 2026-08-22, big one)
@@ -165,17 +165,17 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   (403) AND a single full-length range (403) — they require SMALL chunked ranges
   (~1 MiB bounded -> 206). Not IP-bound, not UA-bound (all UAs/families gave 206 with
   a bounded range). ffmpeg can't be forced to chunk via a static header.
-- Fix: custom libmpv stream protocol `ytn://` (src/stream.{h,cpp}) via
+- Fix: custom libmpv stream protocol `ytc://` (src/stream.{h,cpp}) via
   mpv_stream_cb_add_ro. read_fn fetches with libcurl using bounded `Range:
   pos-(pos+chunk-1)` (kChunk=1MiB); size from `clen=`; seek supported. player.cpp
-  wraps both video+audio URLs as `ytn://<base64url(ua\nurl)>` (HLS .m3u8 NOT wrapped
+  wraps both video+audio URLs as `ytc://<base64url(ua\nurl)>` (HLS .m3u8 NOT wrapped
   — mpv handles live natively). Verified: the iOS-only video now plays; normal
   VISIONOS videos + audio still play. This also centralizes fetching for future
   URL-refresh-on-expiry.
 
 ### Video artifacts — Intel-VAAPI-specific, NOT the target (diagnosed 2026-08-22)
 - Symptom: on the dev LAPTOP (Intel UHD 620), 2nd+ videos showed artifacts.
-- Ruled out: ytn:// data is byte-identical to reference (md5 match); software decode
+- Ruled out: ytc:// data is byte-identical to reference (md5 match); software decode
   is clean (offscreen frame + no decode errors).
 - PROVEN on Orange Pi (RK3588, rkmpp hwdec — same class as the handheld target):
   3 videos in a row via SEQTEST screenshots are ALL CLEAN. So the artifacts are an
@@ -183,7 +183,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 - Mitigations kept (help the target + robustness): hwdec default `auto-copy-safe`
   (copy frames, don't import GPU surfaces); FRESH mpv instance per video
   (Player::play tears down + re-inits — reused instance leaked decoder/surface state).
-- Laptop dev workaround: `YTNATIVE_HWDEC=no` (software; i7-8650U handles 1080p fine).
+- Laptop dev workaround: `YTC_HWDEC=no` (software; i7-8650U handles 1080p fine).
 - Eventual settings menu should carry a per-device hwdec choice.
 
 ### Remaining failure class: live streams / premieres
@@ -201,9 +201,9 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 - `data/gamecontrollerdb.txt` (community DB, 2270 entries) loaded at startup via
   SDL_GameControllerAddMappingsFromFile; `data/gamecontrollerdb_local.txt` loaded
   after (local overrides win). Paths resolve from cwd, then <exe>/data, <exe>/../data,
-  /opt/ytnative, /usr/share/ytnative (exe_dir via /proc/self/exe). Env overrides:
-  YTNATIVE_GAMEPADDB / YTNATIVE_GAMEPADDB_LOCAL.
-- Diagnostics: YTNATIVE_PADTEST=1 = a loop that logs RAW joystick button indices +
+  /opt/ytc, /usr/share/ytc (exe_dir via /proc/self/exe). Env overrides:
+  YTC_GAMEPADDB / YTC_GAMEPADDB_LOCAL.
+- Diagnostics: YTC_PADTEST=1 = a loop that logs RAW joystick button indices +
   the SDL button each maps to, acting on nothing (so pressing A can't quit). Used to
   build a mapping for an unknown controller.
 - Fixed the user's controller: an unbranded X360 clone (guid 030081b85e04...8e02...)
@@ -218,7 +218,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 ### Responsive UI + carousel view (2026-08-22)
 - Resizable window in windowed mode (SDL_WINDOW_RESIZABLE); on SIZE_CHANGED the
   Window re-queries drawable size and App::on_resize re-flows layout + re-bakes fonts
-  (debounced: only when height changes >=24px). YTNATIVE_WINSIZE=WxH sets initial size.
+  (debounced: only when height changes >=24px). YTC_WINSIZE=WxH sets initial size.
 - Responsive columns: compute_columns() = round(width/380), clamped [2,6]. 640->2,
   1280->3, 1920->5. Fewer columns on small screens = bigger cards + text.
 - Font readability floor: scale = clamp(H/720, 0.9, 2.2) so text stays legible on
@@ -226,10 +226,10 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
 - Carousel/coverflow browse view (toggle: V key / Left-Shoulder). render_carousel:
   large centered card + scaled/dimmed neighbors, eased carousel_pos_ animation,
   centered title/author/position. Left/Right = 1D nav, A plays. Headless capture:
-  YTNATIVE_CAROUSELSHOT=1. Grid remains the default; carousel is opt-in per session.
+  YTC_CAROUSELSHOT=1. Grid remains the default; carousel is opt-in per session.
 
 ### Resolution strategy (see docs/RESOLUTION_STRATEGY.md)
-- Decision: STICK with config-swappable JS-less clients (visionos/tv/ios) + ytn://
+- Decision: STICK with config-swappable JS-less clients (visionos/tv/ios) + ytc://
   bounded-range fetch. SKIP QuickJS/web-client sig-cipher (higher maintenance churn,
   doesn't solve PoTokens, industry moved away from it). Full reasoning + a "when it
   breaks" runbook + login analysis are in docs/RESOLUTION_STRATEGY.md.
@@ -271,7 +271,7 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   0.25/0.5/0.75/1/1.25/1.5/1.75/2x. `Player::set_speed()` -> mpv "speed" property, live.
 - Per-video: resets to 1x on each new video (request_playback), but persists across a
   quality re-resolve (replay_current). Applied after play() alongside volume.
-- Verified headless (YTNATIVE_SPEEDTEST): row shows "1x", Right x2 -> "1.5x".
+- Verified headless (YTC_SPEEDTEST): row shows "1x", Right x2 -> "1.5x".
 - Next up (user-selected feature set): SponsorBlock, Captions (CC), Up-next + autoplay.
 
 ### UI polish pass (2026-08-23)
@@ -305,7 +305,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   user-facing decode switch worth having; also useful if a specific device's hwdec is
   flaky. `src/player.{h,cpp}`: `set_hwdec(mode)` stores the mpv `hwdec` string applied
   at the NEXT init (hwdec must be set before mpv_initialize). Precedence in init():
-  `YTNATIVE_HWDEC` env (dev override) > app setting > built-in default. `auto-copy-safe`
+  `YTC_HWDEC` env (dev override) > app setting > built-in default. `auto-copy-safe`
   is still the default -> DEVICE BEHAVIOR UNCHANGED unless the user flips it.
 - `src/ui.{h,cpp}`: "Video Decode: Hardware/Software" row in Settings (`hwdec_mode_`,
   persisted "hwdec": 0 hardware / 1 software), Left/Right to toggle. Hardware -> mpv
@@ -314,7 +314,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   position (hwdec is fixed at init, so a fresh stream is needed to apply it live).
 - ARM impact: default Hardware = today's behavior. Choosing Software on RK3588 drops
   hardware accel (fine for 1080p H264, drops frames on 4K/high-fps); H700 unchanged.
-- Verified headless (`YTNATIVE_SETTINGSSHOT`): row shows "Hardware", Right -> "Software",
+- Verified headless (`YTC_SETTINGSSHOT`): row shows "Hardware", Right -> "Software",
   settings.json gains "hwdec": 1.
 
 ### App-local volume control (independent of system mixer) (2026-08-23)
@@ -328,7 +328,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   centered "Volume NN%" overlay (bar on a 0..150 scale with a tick at the 100%
   reference) that fades after ~1.4s. Also a "Volume: NN%" row in the Settings menu,
   adjusted with Left/Right like the other settings (live if a video is playing).
-- Verified headless (`YTNATIVE_VOLTEST=<id>`): Up x3 -> "Volume 115%" (fill past the
+- Verified headless (`YTC_VOLTEST=<id>`): Up x3 -> "Volume 115%" (fill past the
   100% tick), Down x8 -> "Volume 75%" (fill below it). Persists across videos.
 
 ### Auto-retry with incremental backoff on network failure (2026-08-23)
@@ -435,7 +435,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   H - footer - pad (gap so the card + selection ring clear the footer, not flush).
 
 ### Scrolling header (2026-08-22)
-- The top header (ytnative / subtitle / count) now scrolls WITH the grid (drawn at
+- The top header (ytc / subtitle / count) now scrolls WITH the grid (drawn at
   y=-scroll_), so it's only visible at the top and slides off as you scroll. Card cull
   changed from `< hbar` to `< 0`. Footer hint bar stays pinned.
 
@@ -457,7 +457,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   = Latest/search. Saved/restored across channel-view push/pop (prev_view_label_) so
   Back from a channel returns to the correct list header. Each view has its own empty
   state. Cleared by search()/load_latest().
-- Verified headless (YTNATIVE_MAINMENUSHOT): menu + all three views render with seeded
+- Verified headless (YTC_MAINMENUSHOT): menu + all three views render with seeded
   data; live on laptop with a scratch config. Note: em dash / non-ASCII still "???"
   (ASCII-only font atlas — still the pending Unicode item).
 - Refinements: (a) FAV badge only on CHANNEL tiles now, not on videos from a favorite
@@ -488,7 +488,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   set true only if we actually paused (skips if the user had already paused), cleared on
   resume and on nav-away (Go*/Quit stop the player, so no resume). Resume happens in
   both close paths (overlay Back/Menu, and the context-toggle tail of menu_activate).
-- Verified headless (YTNATIVE_PAUSETEST): playing=0 -> menu open=1 -> menu closed=0.
+- Verified headless (YTC_PAUSETEST): playing=0 -> menu open=1 -> menu closed=0.
 
 ### Player controls: auto-hide/fade (2026-08-22)
 - Tried shrinking the video into a top region with a persistent slim bar (render to a
@@ -502,7 +502,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   bar multiplies by alpha (with_a). Plays untouched -> controls fade away.
 - Reverted helpers removed: Player::render_region/render_to_texture/frame_texture,
   gfx::Renderer::textured_id. Kept Player::set_pause (pause-on-menu feature).
-- Verified headless (YTNATIVE_PAUSETEST): faded playing frame (clean picture), paused
+- Verified headless (YTC_PAUSETEST): faded playing frame (clean picture), paused
   frame (bar + ‖ glyph back). Built on Pi.
 
 ### Settings menu — Max Quality (2026-08-22)
@@ -512,11 +512,11 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   place, and persists immediately.
 - Persistence: Innertube::setting_int/set_setting_int over settings.json (key->int) in
   config_dir_. App loads max_height at startup (default 1080; settings.json overrides;
-  YTNATIVE_MAXHEIGHT env still wins for testing) into play_prefs_.max_height, which already
+  YTC_MAXHEIGHT env still wins for testing) into play_prefs_.max_height, which already
   drives best_video() selection.
 - Pause-flag fix: returning to the main menu from Settings must not reset menu_paused_
   (open_main_menu now only sets it when playing AND not already paused), else resume-on-close
-  was lost. Verified headless (YTNATIVE_MAINMENUSHOT): Settings shows "Max Quality: 1080p",
+  was lost. Verified headless (YTC_MAINMENUSHOT): Settings shows "Max Quality: 1080p",
   cycles to 480p, settings.json = {"max_height":480}.
 - INTERACTION CHANGE: setting values now change with LEFT/RIGHT (not A). App::adjust_setting
   (action, dir) handles the cycle; Settings-kind menu routes Left=-1/Right=+1 to the
@@ -537,7 +537,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   also the groundwork for the future "ask to resume" setting.
 - A also nudges quality forward (consistent with Settings). Menu footer shows
   "A: select  Left/Right: quality  B: close" when a quality row is present.
-- Verified headless (YTNATIVE_QUALTEST=dQw4w9WgXcQ): play @cap1080 -> itag137; open menu,
+- Verified headless (YTC_QUALTEST=dQw4w9WgXcQ): play @cap1080 -> itag137; open menu,
   Right -> 1440p, close -> re-resolve @cap1440 -> itag271 (VP9), still Playing, resumed.
 
 ### Stats for Nerds (2026-08-22)
@@ -551,7 +551,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
 - render_player draws a translucent top-left panel with the lines while enabled (updates
   live). Menu-open scrim dims it (drawn before the overlay). A-select no-op extended to
   ToggleStats; context footer -> "A: select  Left/Right: change  B: close" when any value row.
-- Verified headless (YTNATIVE_STATSTEST): overlay shows res/fps, H.264, software, 3.64Mbps,
+- Verified headless (YTC_STATSTEST): overlay shows res/fps, H.264, software, 3.64Mbps,
   aac 128kbps, dropped, buffer, A/V sync; toggle label flips to Enabled.
 - PER-VIDEO: stats_for_nerds_ resets to false in request_playback (each NEW video) but is
   left untouched in replay_current, so it persists across a same-video quality re-resolve.
@@ -562,8 +562,8 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
 - Fix: Player::seek_relative now seeks to a CLAMPED ABSOLUTE target (time-pos+delta, floored
   at 0, capped at duration-1.0s) instead of a raw relative seek, so forward seeks can't hit
   EOF. Natural end-of-playback still EOFs correctly (only manual seeks are clamped).
-- Verified headless (YTNATIVE_SEEKTEST=jNQXAC9IVRw, 18s clip): 12x FF -> still mode=2
-  (Playing), no END_FILE. NOTE: headless hooks require YTNATIVE_SHOT set (headless=shot!=null).
+- Verified headless (YTC_SEEKTEST=jNQXAC9IVRw, 18s clip): 12x FF -> still mode=2
+  (Playing), no END_FILE. NOTE: headless hooks require YTC_SHOT set (headless=shot!=null).
 
 ### RESTRICTED (paced) delivery — the real seek-crash/hang root cause (2026-08-23)
 - Investigated with direct curl probes (scratch probe1-8) against resolved URLs. FINDINGS:
@@ -627,8 +627,8 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   tiles in set_results + poll_more (+ immediately filters the current list on toggle).
   First encounter still shows a restricted video; after one play its channel is hidden
   everywhere. Verified: kids search 20 -> 10 results with the learned channel hidden.
-- Debug hooks: YTNATIVE_DUMP_PLAYER=<dir> dumps raw /player JSON per client;
-  YTNATIVE_DUMP_BROWSE=<dir> dumps raw channel /browse JSON.
+- Debug hooks: YTC_DUMP_PLAYER=<dir> dumps raw /player JSON per client;
+  YTC_DUMP_BROWSE=<dir> dumps raw channel /browse JSON.
 
 ### Proactive restricted checks (v2 of the filter) (2026-08-23)
 - REPLACED the learned-only restricted_channels.json with a PROACTIVE checker: when
@@ -674,11 +674,11 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   LOCAL HttpClient (thread-safe; visitor data pre-warmed once before workers).
 - BUILD: ytcore now spawns threads -> Threads::Threads made PUBLIC on ytcore (ARM link
   of yt_search/yt_resolve/yt_play broke with "libpthread DSO missing").
-- Debug: YTNATIVE_DUMP_SEARCH=<dir> dumps raw /search JSON; WAITSHOT=<ms> settle+shot.
+- Debug: YTC_DUMP_SEARCH=<dir> dumps raw /search JSON; WAITSHOT=<ms> settle+shot.
 - TOGGLE-OFF FIX: hide filters are destructive (items erased in place), so turning a
   hide setting OFF now calls refresh_current_view() — re-fetches whatever list is
   showing (channel view via channel_feed, label views via their loaders, Home via
-  home_feed, else search(query_)). Verified round-trip (YTNATIVE_TOGGLETEST):
+  home_feed, else search(query_)). Verified round-trip (YTC_TOGGLETEST):
   Home 60 -> 40 (hide on) -> 60 with Shorts restored (hide off).
 ### Playlists (2026-08-23)
 - Search returns playlists as lockupViewModel with contentType LOCKUP_CONTENT_TYPE_PLAYLIST:
@@ -699,7 +699,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   no channel-info fetch; header = playlist title). Back pops. Pagination + async
   refresh_current_view work in playlist views (Kind::Playlist branch). request_playback
   guards empty video_id; options menu skipped on playlist tiles for now.
-- Verified (YTNATIVE_PLAYLISTTEST): search shows playlist tile ("960 videos"), open ->
+- Verified (YTC_PLAYLISTTEST): search shows playlist tile ("960 videos"), open ->
   100-item grid w/ full metadata, Back pops. Mix tiles gone from search.
 
 ### Channel tabs (All / Videos / Shorts / Playlists) + view back-STACK (2026-08-23)
@@ -717,7 +717,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
 - BACK-STACK: replaced the single prev_* slot with a proper std::vector<ViewState>
   (results/query/label/cont/subview/chan_tab/channel_info/sel/scroll). push_view() on
   open_channel/open_playlist; pop_view() on Back — so search -> channel -> Playlists tab
-  -> playlist -> Back -> Back unwinds correctly (verified via YTNATIVE_TABTEST shots).
+  -> playlist -> Back -> Back unwinds correctly (verified via YTC_TABTEST shots).
   Top-level loaders (search/home/favorites/WL/history) clear the stack.
 
 ### Views: shared tile renderer + carousel parity + 3D coverflow + L/R tabs (2026-08-23)
@@ -740,7 +740,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
 - L/R SHOULDERS = switch tab (cycle_tab): LEFTSHOULDER prev / RIGHTSHOULDER next, on
   channel (0..4) and Home (0..3) tabbed views; keeps focus on content (tab_focus_=false).
   Was: LEFTSHOULDER=toggle_view (now V key / Settings only).
-- Verified headless (YTNATIVE_VIEW=1/2, PRERIGHT): carousel + coverflow both render all
+- Verified headless (YTC_VIEW=1/2, PRERIGHT): carousel + coverflow both render all
   tile types with metadata; Settings shows View row; grid pixel-unchanged.
 - FOLLOW-UPS (2026-08-23): motion smoothed to a critically-damped spring
   (update_carousel_anim, SmoothDamp, dt-based) — fixed the "settles off-centre then
@@ -776,7 +776,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   at the saved pos (uses the existing start-position path); Start over -> clear + play
   from 0. Rendered topmost (render_resume_prompt), input consumed at top of App::input.
 - Setting "Ask to Resume: On/Off" (ask_resume, default ON) in Settings; value row
-  (Left/Right), persisted. Verified (YTNATIVE_RESUMETEST): play->seek 28.6s->Back saves
+  (Left/Right), persisted. Verified (YTC_RESUMETEST): play->seek 28.6s->Back saves
   pos; replay shows the prompt; Resume -> Playing.
 
 ### Show Description (2026-08-23)
@@ -791,20 +791,20 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   ("Loading description..."), poll_description applies; stale results discarded if
   closed. Over the player it inherits the menu's auto-pause (desc_paused_) and resumes
   on close. B/A/Select close. Chapters/timestamps show as plain text (often present in
-  descriptions). Verified both paths (YTNATIVE_DESCTEST screenshots).
+  descriptions). Verified both paths (YTC_DESCTEST screenshots).
 
 - PLAYLISTS too: playlist options menu gained "Show Description";
   Innertube::playlist_description(id) = VL /browse -> playlistMetadataRenderer.description
   (plain string; also present in microformat + sidebar). open_description branches on
   is_playlist for the async fetch. SHORTS already worked (they're regular videos —
-  same /player path). Verified (YTNATIVE_PLDESCTEST): "350+ best lofi songs" overlay.
+  same /player path). Verified (YTC_PLDESCTEST): "350+ best lofi songs" overlay.
 
 - "Show Channel Description" on video rows INSIDE A PLAYLIST screen only (gate:
   !subview_playlist_.empty() — playlist rows mix uploaders). Same overlay; fetches
   channel_info(id).description async. ENABLER: parse_lockup now extracts the uploader's
   channel browseId from the author part's commandRuns (playlist rows carry it) ->
   playlist rows also gained Add-Channel-to-Favorites + Go-to-Channel in their menu.
-  Verified (YTNATIVE_CHDESCTEST): row menu shows 5 items; overlay shows the channel's
+  Verified (YTC_CHDESCTEST): row menu shows 5 items; overlay shows the channel's
   description.
 - "Show Channel Description" WIDENED to ALL tiles (2026-08-23): every video tile with a
   known channel_id (search/home/channel/playing), playlist tiles (owner browseId now
@@ -856,7 +856,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
 - Options menu on a playlist tile now offers Add/Remove Watch Later (was: no menu).
   WatchLaterToggle generalized: id = playlist_id|video_id, stores tile metadata at add
   time so the WL view renders full playlist tiles offline. A on a WL playlist opens it.
-- Verified (YTNATIVE_WLPLTEST): search -> playlist tile -> menu Add -> WL view shows
+- Verified (YTC_WLPLTEST): search -> playlist tile -> menu Add -> WL view shows
   playlist tile ("960 videos", owner, Playlist) -> A opens its 100-video grid.
 
 ### Unicode text rendering (2026-08-23) — no more "????"
@@ -893,9 +893,9 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   channel views ("ch:<id>:t<n>") and Home playlists ("home:pl") so a stale fetch from a
   previous tab is discarded — and poll_refresh RE-KICKS a fetch if the current view is
   still empty after a discard (rapid tab flipping converges).
-- Verified (YTNATIVE_HOMETABTEST): Home All 60 -> Shorts 20 (instant) -> Playlists 56
+- Verified (YTC_HOMETABTEST): Home All 60 -> Shorts 20 (instant) -> Playlists 56
   (async, merged across favorites). Channel TABTEST still passes.
-- PAGINATION STATUS (verified 2026-08-23, YTNATIVE_VIDPAGE hook): search ✅; channel
+- PAGINATION STATUS (verified 2026-08-23, YTC_VIDPAGE hook): search ✅; channel
   Videos tab ✅ (30->60->90->120 on scroll; Shorts/Playlists tabs same mechanism);
   playlist contents ✅ (100/page). Channel ALL (featured) = one big page (~115) then
   END — featured continuations are shelf-style, no more items (natural end, not a bug).
@@ -913,7 +913,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
   view_label_ set; refresh_current_view's label shortcut then hijacked tab switches back
   to load_favorites(). Fix: open_channel/open_playlist clear view_label_ (the back STACK
   restores it on pop now), AND the label shortcuts are guarded with !in_channel_view_.
-  Verified via YTNATIVE_FAVTABTEST (favorites -> channel -> Right = Videos tab).
+  Verified via YTC_FAVTABTEST (favorites -> channel -> Right = Videos tab).
 
 - ASYNC: refresh_current_view() now fetches on a BACKGROUND thread (refresh_thread_ +
   poll_refresh in pump_async), so the settings-menu label updates the same frame and the
@@ -963,7 +963,7 @@ Screenshot review + code audit; fixes in src/ui.{cpp,h}:
       (CA bundle path shared by Debian and muOS), linked against the DEVICE's
       libmpv.so.2 (0.35.1 — newer than the Pi's distro 0.32; SONAME mismatch was
       the trap), font falls back to bundled data/DejaVuSans.ttf, launcher caps
-      YTNATIVE_MAXHEIGHT=480. Search + thumbnails (TLS) + GLES2 grid + full mpv
+      YTC_MAXHEIGHT=480. Search + thumbnails (TLS) + GLES2 grid + full mpv
       playback all verified on the RG28XX (640x480, software decode).
       Remaining for a store submission: port.json/screenshot/licenses + other-CFW
       matrix (libmpv presence per CFW; bundling custom mpv+ffmpeg is the fallback).
@@ -976,6 +976,6 @@ config/clients.json   client fingerprints (the maintenance surface)
 src/http.*            libcurl wrapper (persistent handle, keep-alive)
 src/innertube.*       visitor_id + player, format parsing, best_video/best_audio
 src/main_resolve.cpp  M1 CLI: resolve + print ladder + probe URL
-src/main_play.cpp     M2: SDL2+libmpv player (YTNATIVE_BENCH=<s> for headless bench)
+src/main_play.cpp     M2: SDL2+libmpv player (YTC_BENCH=<s> for headless bench)
 third_party/json.hpp  nlohmann/json single header
 ```

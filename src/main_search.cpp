@@ -7,7 +7,7 @@
 #include <string>
 
 static const char* config_path() {
-    const char* env = std::getenv("YTNATIVE_CONFIG");
+    const char* env = std::getenv("YTC_CONFIG");
     return env ? env : "config/clients.json";
 }
 

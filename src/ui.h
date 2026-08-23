@@ -367,7 +367,7 @@ private:
 
     // Default playback quality cap. All resolutions stay AVAILABLE, but we don't
     // default to 4K (too heavy for most targets). The future settings menu edits
-    // this; YTNATIVE_MAXHEIGHT overrides it for testing (0 = uncapped).
+    // this; YTC_MAXHEIGHT overrides it for testing (0 = uncapped).
     yt::VideoPrefs play_prefs_;
 
     // On-screen keyboard (Search mode).

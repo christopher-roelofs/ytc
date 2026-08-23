@@ -74,7 +74,7 @@ libjpeg, libz, libc/m/dl/pthread.
 - [ ] Copy the bundle set into `portmaster/port/libs.aarch64/`; relink `yt_ui` for the
       port against this libmpv (PKG_CONFIG_PATH to the prefix).
 - [ ] hwdec selection: `rkmpp` on Rockchip, software elsewhere. Simplest: launcher
-      sets YTNATIVE_HWDEC per device (or app auto-detects /dev/mpp_service). Allwinner
+      sets YTC_HWDEC per device (or app auto-detects /dev/mpp_service). Allwinner
       (RG28XX) stays software (librockchip_mpp loads, decoders fail -> sw fallback).
 - [ ] Verify on a real Rockchip handheld (RK3566/3588) and re-verify RG28XX still runs
       (software) with the bundled stack.

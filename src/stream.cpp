@@ -94,7 +94,7 @@ static int64_t read_fn(void* cookie, char* buf, uint64_t nbytes) {
     // network instead of erroring (an error makes mpv corrupt/EOF -> kills
     // playback). mpv shows "buffering"; cancel_fn aborts us instantly on stop.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
-    bool dbg = getenv("YTNATIVE_DEBUG");
+    bool dbg = getenv("YTC_DEBUG");
     int attempt = 0;
     while (!s->cancelled.load()) {
         WriteCtx w{buf, (uint64_t)want, 0};
@@ -153,7 +153,7 @@ static void close_fn(void* cookie) {
 }
 
 static int open_fn(void*, char* uri, mpv_stream_cb_info* info) {
-    // uri is "ytn://<base64url(ua \n real_url)>"
+    // uri is "ytc://<base64url(ua \n real_url)>"
     std::string u(uri);
     auto pos = u.find("://");
     std::string payload = (pos == std::string::npos) ? u : u.substr(pos + 3);
@@ -184,7 +184,7 @@ void register_stream(mpv_handle* mpv) {
 }
 
 std::string wrap_url(const std::string& url, const std::string& user_agent) {
-    return "ytn://" + b64encode(user_agent + "\n" + url);
+    return "ytc://" + b64encode(user_agent + "\n" + url);
 }
 
 } // namespace ytn

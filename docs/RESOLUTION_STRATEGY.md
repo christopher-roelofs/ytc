@@ -1,6 +1,6 @@
 # Stream Resolution Strategy & Fallbacks
 
-How ytnative turns a `videoId` into playable stream URLs, why it's built this way,
+How ytc turns a `videoId` into playable stream URLs, why it's built this way,
 and what to do when YouTube breaks it. Read this before adding a JS engine, a
 PoToken provider, or "just switching to the web client."
 
@@ -15,12 +15,12 @@ PoToken provider, or "just switching to the web client."
      and full H264/VP9/AV1 ladder. Working as of 2026-08.
    - **TVHTML5**, **IOS** — fallbacks. IOS is the only client that returns some
      age/region/copyright-restricted videos, but its URLs need special handling
-     (see `ytn://` below).
+     (see `ytc://` below).
 3. Fingerprints live in `config/clients.json` (name, version, UA, header id).
    **This is the maintenance surface.** When a client gets bot-walled, update the
    string(s) — crib current values from yt-dlp's
    `yt_dlp/extractor/youtube/_base.py`. No rebuild needed.
-4. Playback fetches through our own `ytn://` libmpv stream (src/stream.cpp) using
+4. Playback fetches through our own `ytc://` libmpv stream (src/stream.cpp) using
    small bounded range requests (~1 MiB). Required for IOS URLs (they 403 on
    ffmpeg's open-ended ranges); harmless for the others. Also the natural home for
    future URL-refresh-on-403.
@@ -142,7 +142,7 @@ The ONE viable mechanism — cookie import + SAPISIDHASH:
    bot-walled. Update VISIONOS (or the failing client's) version/UA in
    `config/clients.json` from yt-dlp `_base.py`; add/enable another JS-less client.
 2. **Some videos fail, most work:** usually per-video (premiere/live → expected;
-   iOS-only + 403 → check `ytn://` bounded-range path is active). Not a global
+   iOS-only + 403 → check `ytc://` bounded-range path is active). Not a global
    strategy failure.
 3. **Direct URLs 403 broadly / throttled:** a client's URLs may have started
    requiring a GVS PoToken. First try a *different* JS-less client (config). Only if

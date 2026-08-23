@@ -75,7 +75,7 @@ void ThumbCache::worker() {
           if (!queue_.empty()) { url = queue_.front(); queue_.pop_front(); } }
         if (url.empty()) { SDL_Delay(10); continue; }
         auto r = http.get(url);
-        if (getenv("YTNATIVE_DEBUG"))
+        if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[thumb] GET %.50s -> %ld %zub\n", url.c_str(), r.status, r.body.size());
         Pending p{url, {}, r.ok()};
         if (r.ok()) p.bytes.assign(r.body.begin(), r.body.end());
@@ -91,7 +91,7 @@ void ThumbCache::pump(int max_uploads) {
     for (auto& p : ready) {
         if (!p.ok || p.bytes.empty()) continue;
         auto t = gfx::Texture::from_encoded(p.bytes.data(), p.bytes.size());
-        if (getenv("YTNATIVE_DEBUG"))
+        if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[thumb] decode %.40s -> %s\n", p.url.c_str(), t ? "OK" : "FAIL");
         if (t) tex_[p.url] = std::move(t);
     }
@@ -190,7 +190,7 @@ void App::load_fonts() {
     // data/, then the Debian system path (dev machines). Handhelds don't
     // ship DejaVu — the port bundles it in data/.
     auto pick_font = []() -> std::string {
-        const char* env = std::getenv("YTNATIVE_FONT");
+        const char* env = std::getenv("YTC_FONT");
         std::string cands[] = { env ? std::string(env) : std::string(),
                                 "data/DejaVuSans.ttf",
                                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" };
@@ -254,8 +254,8 @@ App::App(const std::string& config_path, gfx::Window* win)
     load_fonts();
     cols_ = compute_columns();
     view_mode_ = (ViewMode)it_.setting_int("view", 0);   // 0 grid / 1 carousel / 2 coverflow
-    if (getenv("YTNATIVE_CAROUSEL")) view_mode_ = ViewMode::Carousel;
-    if (const char* vm = getenv("YTNATIVE_VIEW")) view_mode_ = (ViewMode)atoi(vm);
+    if (getenv("YTC_CAROUSEL")) view_mode_ = ViewMode::Carousel;
+    if (const char* vm = getenv("YTC_VIEW")) view_mode_ = (ViewMode)atoi(vm);
     refresh_favorites();
     refresh_watch_later();
     hide_restricted_ = it_.setting_int("hide_restricted", 0) != 0;
@@ -268,9 +268,9 @@ App::App(const std::string& config_path, gfx::Window* win)
     sponsorblock_ = it_.setting_int("sponsorblock", 1) != 0;   // default ON
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
-    // YTNATIVE_MAXHEIGHT overrides for testing (0 = uncapped).
+    // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
     play_prefs_.max_height = it_.setting_int("max_height", 1080);
-    if (const char* mh = getenv("YTNATIVE_MAXHEIGHT")) play_prefs_.max_height = atoi(mh);
+    if (const char* mh = getenv("YTC_MAXHEIGHT")) play_prefs_.max_height = atoi(mh);
 }
 
 App::~App() {
@@ -544,7 +544,7 @@ void App::open_settings() {
     menu_items_.push_back({std::string("Video Decode:  ")
                            + (hwdec_mode_ ? "Software" : "Hardware"),
                            MenuAction::CycleHwdec});
-    menu_items_.push_back({std::string("Hide Restricted Videos:  ")
+    menu_items_.push_back({std::string("Hide Paced Videos:  ")
                            + (hide_restricted_ ? "On" : "Off"),
                            MenuAction::ToggleHideRestricted});
     menu_items_.push_back({std::string("Hide Shorts:  ")
@@ -1262,7 +1262,7 @@ void App::poll_more() {
             if (r.author.empty()) r.author = query_;
     cont_token_ = next.continuation;   // new token, or "" at the end of the feed
     queue_restricted_checks();
-    if (getenv("YTNATIVE_DEBUG"))
+    if (getenv("YTC_DEBUG"))
         std::fprintf(stderr, "[more] +%zu -> total %zu (%s)\n", added, results_.size(),
                      cont_token_.empty() ? "END" : "more available");
 }
@@ -1497,7 +1497,7 @@ void App::pump_async() {
                 player_.seek_relative(sg.end - pos);
                 sb_skipped_[i] = true;
                 played_max_ = std::max(played_max_, sg.end);
-                if (getenv("YTNATIVE_DEBUG"))
+                if (getenv("YTC_DEBUG"))
                     std::fprintf(stderr, "[sponsorblock] skipped %s [%.1f-%.1f]\n",
                                  sg.category.c_str(), sg.start, sg.end);
                 status_msg_ = "Skipped " + sb_category_label(sg.category);
@@ -1541,7 +1541,7 @@ void App::pump_async() {
                     if (limit < p) limit = p;
                     if (target > limit) {
                         delta = limit - p;
-                        status_msg_ = "Seeking limited on this video (restricted stream)";
+                        status_msg_ = "Seeking limited on this video (paced stream)";
                         status_until_ = SDL_GetTicks() + 4000;
                     }
                 } else if (delta < 0) {
@@ -1549,7 +1549,7 @@ void App::pump_async() {
                     if (floor_t < 0) floor_t = 0;
                     if (target < floor_t) {
                         delta = floor_t - p;
-                        status_msg_ = "Seeking limited on this video (restricted stream)";
+                        status_msg_ = "Seeking limited on this video (paced stream)";
                         status_until_ = SDL_GetTicks() + 4000;
                     }
                 }
@@ -1777,7 +1777,7 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
     float hbar = 84 * s;
     rn.quad({0, hy, (float)W, hbar}, theme_.panel);
     rn.quad({0, hy+hbar-3*s, (float)W, 3*s}, theme_.accent);
-    rn.text(*font_title_, "ytnative", 32*s, hy+24*s, theme_.text);
+    rn.text(*font_title_, "YTC", 32*s, hy+24*s, theme_.text);
     std::string sub;
     if (in_channel_view_) {
         sub = query_;
@@ -1796,7 +1796,7 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
     float count_w = font_small_->text_width(count);
     rn.text(*font_small_, count, W - count_w - 32*s, hy+34*s, theme_.text_dim);
     // Subtitle starts clear of the logo (its real width), ends clear of the count.
-    float sub_x = std::max(240*s, 32*s + font_title_->text_width("ytnative") + 28*s);
+    float sub_x = std::max(240*s, 32*s + font_title_->text_width("YTC") + 28*s);
     float sub_w = (W - count_w - 32*s - 20*s) - sub_x;
     if (sub_w > 40*s)
         rn.text(*font_body_, font_body_->ellipsize(sub, sub_w), sub_x, hy+32*s, theme_.text_dim);
@@ -2170,7 +2170,7 @@ void App::render_player(gfx::Renderer& rn) {
     float s = H / 720.f;
     // mpv paints the video frame into the framebuffer first...
     static int fc = 0;
-    if (getenv("YTNATIVE_DEBUG") && (fc++ % 20 == 0))
+    if (getenv("YTC_DEBUG") && (fc++ % 20 == 0))
         std::fprintf(stderr, "[play] frame %d pos=%.1f dur=%.1f\n", fc, player_.position(), player_.duration());
     // Full-screen video (mpv paints the frame first)...
     player_.render(W, H);
@@ -2440,7 +2440,7 @@ void App::replay_current(double at_seconds) {
         double safe = (15.0 * 1024 * 1024 * 8) / (double)playing_vbitrate_;
         if (at_seconds > safe) {
             at_seconds = safe;
-            status_msg_ = "Restricted stream: resuming near the start";
+            status_msg_ = "Paced stream: resuming near the start";
             status_until_ = SDL_GetTicks() + 5000;
         }
     }
@@ -2464,7 +2464,7 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
     resolve_done_ = false;
     if (resolve_thread_.joinable()) resolve_thread_.join();
     resolve_thread_ = std::thread([this, video_id, fallback_title, prefs]() {
-        bool dbg = getenv("YTNATIVE_DEBUG");
+        bool dbg = getenv("YTC_DEBUG");
         ResolveResult r;
         r.title = fallback_title;
         try {
@@ -2561,7 +2561,7 @@ void App::poll_resolve() {
     playing_vbitrate_ = r.video_bitrate;
     played_max_ = start_at;                     // seek window anchors here
     if (playing_paced_) {
-        status_msg_ = "Limited seeking on this video (restricted stream)";
+        status_msg_ = "Limited seeking on this video (paced stream)";
         status_until_ = SDL_GetTicks() + 5000;
         // Remember the channel verdict (restriction is channel-wide in practice);
         // the "Hide Restricted" filter picks it up like any checked verdict.

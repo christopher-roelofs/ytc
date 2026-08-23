@@ -1,6 +1,6 @@
 // Video playback via libmpv rendering into the app's shared GLES2 context.
 // The header is mpv-free so ui.cpp/App can use it whether or not libmpv is
-// present; the implementation (player.cpp) is real only when YTNATIVE_HAVE_MPV
+// present; the implementation (player.cpp) is real only when YTC_HAVE_MPV
 // is defined, otherwise a no-op stub (lets the UI build/iterate without mpv).
 #pragma once
 #include <string>
@@ -44,7 +44,7 @@ public:
     int  volume() const;
 
     // Hardware-decode mode, applied to the NEXT play() (mpv "hwdec" must be set
-    // before init). Empty restores the built-in default. The YTNATIVE_HWDEC env
+    // before init). Empty restores the built-in default. The YTC_HWDEC env
     // var, if set, always overrides this. Typical: "auto-copy-safe" / "no".
     void set_hwdec(const std::string& mode);
 

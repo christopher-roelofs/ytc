@@ -192,7 +192,7 @@ VideoInfo Innertube::try_client(const ClientFingerprint& fp,
         return out;
     }
     // Debug: dump the raw /player response for offline analysis.
-    if (const char* dump = getenv("YTNATIVE_DUMP_PLAYER")) {
+    if (const char* dump = getenv("YTC_DUMP_PLAYER")) {
         std::string path = std::string(dump) + "/" + video_id + "_" + fp.name + ".json";
         std::ofstream f(path);
         if (f) f << r.body;
@@ -500,7 +500,7 @@ Innertube::Feed Innertube::search_feed(const std::string& query) {
         HttpClient http;   // LOCAL: search_feed may run on a refresh worker thread
         auto r = http.post(url, body.dump(), client_headers(fp));
         if (!r.ok()) return feed;
-        if (const char* dump = getenv("YTNATIVE_DUMP_SEARCH")) {
+        if (const char* dump = getenv("YTC_DUMP_SEARCH")) {
             std::ofstream f(std::string(dump) + "/search.json");
             if (f) f << r.body;
         }
@@ -874,7 +874,7 @@ ChannelInfo Innertube::channel_info(const std::string& channel_id) {
             if (vr.ok()) { auto vj = json::parse(vr.body, nullptr, false);
                 if (!vj.is_discarded()) vd = vj.at("responseContext").value("visitorData", ""); }
         }
-        if (getenv("YTNATIVE_DEBUG"))
+        if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[chinfo] fp=%s vd.len=%zu id=%s ctx.len=%zu\n",
                          fp.name.c_str(), vd.size(), channel_id.c_str(), fp.context_json.size());
         json client = json::parse(fp.context_json);
@@ -892,7 +892,7 @@ ChannelInfo Innertube::channel_info(const std::string& channel_id) {
         auto j = json::parse(r.body, nullptr, false);
         if (j.is_discarded()) return info;
         // Debug: dump the raw /browse response for offline analysis.
-        if (const char* dump = getenv("YTNATIVE_DUMP_BROWSE")) {
+        if (const char* dump = getenv("YTC_DUMP_BROWSE")) {
             std::ofstream f(std::string(dump) + "/browse_" + channel_id + ".json");
             if (f) f << r.body;
         }
@@ -929,7 +929,7 @@ ChannelInfo Innertube::channel_info(const std::string& channel_id) {
         }
         if (info.name.empty()) info.name = channel_id;
         info.ok = !info.subs_text.empty() || !info.video_count_text.empty() || !info.description.empty();
-        if (getenv("YTNATIVE_DEBUG"))
+        if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[chinfo] parsed name=%s subs=[%s] videos=[%s]\n",
                 info.name.c_str(), info.subs_text.c_str(), info.video_count_text.c_str());
     } catch (const std::exception& e) {
@@ -1406,7 +1406,7 @@ std::vector<SponsorSegment> Innertube::sponsor_segments(const std::string& video
                         + "?categories=" + url_encode(cats)
                         + "&actionTypes=" + url_encode("[\"skip\"]");
         HttpClient http;   // local -> thread-safe
-        auto r = http.get(url, {"User-Agent: ytnative/1.0"});
+        auto r = http.get(url, {"User-Agent: ytc/1.0"});
         if (!r.ok()) return out;                     // 404 = no segments for this prefix
         json arr = json::parse(r.body, nullptr, false);
         if (arr.is_discarded() || !arr.is_array()) return out;

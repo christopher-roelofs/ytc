@@ -15,7 +15,7 @@
 #include <string>
 
 static const char* config_path() {
-    const char* env = std::getenv("YTNATIVE_CONFIG");
+    const char* env = std::getenv("YTC_CONFIG");
     return env ? env : "config/clients.json";
 }
 
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_Window* win = SDL_CreateWindow("ytnative", SDL_WINDOWPOS_CENTERED,
+    SDL_Window* win = SDL_CreateWindow("YTC", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, 1280, 720,
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!win) die(SDL_GetError());
@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
     mpv_set_option_string(mpv, "user-agent", info.user_agent.c_str());
     mpv_set_option_string(mpv, "ytdl", "no");   // direct URLs only; no youtube-dl
     mpv_set_option_string(mpv, "vd-lavc-threads", "4");
-    const char* hw = getenv("YTNATIVE_HWDEC");
+    const char* hw = getenv("YTC_HWDEC");
     mpv_set_option_string(mpv, "hwdec", hw ? hw : "auto-safe"); // e.g. rkmpp on RK3588
     mpv_set_option_string(mpv, "cache", "yes");
     mpv_set_option_string(mpv, "demuxer-max-bytes", "48MiB");
@@ -99,10 +99,10 @@ int main(int argc, char** argv) {
     const char* cmd[] = {"loadfile", v->url.c_str(), nullptr};
     mpv_command(mpv, cmd);
 
-    // Optional headless decode benchmark: YTNATIVE_BENCH=<seconds> prints
+    // Optional headless decode benchmark: YTC_BENCH=<seconds> prints
     // resolution / hwdec / fps then exits. Lets us validate decode on a board
     // with no attached display.
-    const char* bench_env = std::getenv("YTNATIVE_BENCH");
+    const char* bench_env = std::getenv("YTC_BENCH");
     Uint32 bench_ms = bench_env ? (Uint32)(atof(bench_env) * 1000) : 0;
     Uint32 start_ticks = SDL_GetTicks();
 

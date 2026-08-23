@@ -1,6 +1,6 @@
 #include "player.h"
 
-#ifdef YTNATIVE_HAVE_MPV
+#ifdef YTC_HAVE_MPV
 // ---------------------------------------------------------------------------
 // Real implementation: libmpv render API into the current GLES2 context.
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ struct Player::Impl {
     }
 
     bool init() {
-        bool dbg = getenv("YTNATIVE_DEBUG");
+        bool dbg = getenv("YTC_DEBUG");
         if (dbg) std::fprintf(stderr, "[mpv] create...\n");
         mpv = mpv_create();
         if (!mpv) return false;
@@ -44,10 +44,10 @@ struct Player::Impl {
         // textures rather than imported as GPU surfaces into our render-API GL
         // context. Direct surface import (plain "vaapi"/"auto-safe") can produce
         // corrupt/artifacted frames on some drivers (Intel VAAPI + render API).
-        // Override with YTNATIVE_HWDEC (e.g. "no", "auto", "vaapi").
+        // Override with YTC_HWDEC (e.g. "no", "auto", "vaapi").
         // Env var wins (dev/debug escape hatch); otherwise the app-chosen mode
         // (from the Settings "Video Decode" toggle), defaulting to auto-copy-safe.
-        const char* hw = getenv("YTNATIVE_HWDEC");
+        const char* hw = getenv("YTC_HWDEC");
         mpv_set_option_string(mpv, "hwdec", hw ? hw : hwdec.c_str());
         mpv_set_option_string(mpv, "cache", "yes");
         // Allow app-local volume above 100% so quiet videos can be amplified
@@ -117,7 +117,7 @@ bool Player::play(const std::string& video_url, const std::string& audio_url,
         mpv_set_option_string(impl_->mpv, "demuxer-readahead-secs", "25");
         mpv_set_option_string(impl_->mpv, "cache-secs", "25");
     }
-    // Route both streams through our ytn:// protocol (bounded-range libcurl
+    // Route both streams through our ytc:// protocol (bounded-range libcurl
     // fetch) so iOS-issued URLs — which 403 on ffmpeg's open-ended ranges —
     // play. Live HLS manifests (.m3u8) must NOT be wrapped: mpv handles those.
     bool is_hls = video_url.find(".m3u8") != std::string::npos ||
@@ -148,7 +148,7 @@ void Player::stop() {
 }
 bool Player::pump() {
     if (!impl_->mpv) return false;
-    bool dbg = getenv("YTNATIVE_DEBUG");
+    bool dbg = getenv("YTC_DEBUG");
     while (true) {
         mpv_event* e = mpv_wait_event(impl_->mpv, 0);
         if (e->event_id == MPV_EVENT_NONE) break;

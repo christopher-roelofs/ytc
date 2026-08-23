@@ -1,6 +1,6 @@
 // UI entry point.
 //   ./yt_ui "<query>"                  interactive (KMSDRM/X11), gamepad+keyboard
-//   YTNATIVE_SHOT=out ./yt_ui "<q>"    headless: render frames to out_NN.png
+//   YTC_SHOT=out ./yt_ui "<q>"    headless: render frames to out_NN.png
 //
 // Headless mode uses the SDL "offscreen" driver so the exact GLES2 UI path is
 // exercised with no display, letting us verify the UI visually via screenshots.
@@ -12,7 +12,7 @@
 #include <unistd.h>   // readlink (exe_dir)
 
 static const char* config_path() {
-    const char* e = std::getenv("YTNATIVE_CONFIG");
+    const char* e = std::getenv("YTC_CONFIG");
     return e ? e : "config/clients.json";
 }
 
@@ -55,7 +55,7 @@ static ui::App::Action map_button(Uint8 b) {
 
 int main(int argc, char** argv) {
     std::string query = argc > 1 ? argv[1] : "";   // no query => Latest/empty state
-    const char* shot = std::getenv("YTNATIVE_SHOT");
+    const char* shot = std::getenv("YTC_SHOT");
     bool headless = shot != nullptr;
 
     // Driver: respect an explicit SDL_VIDEODRIVER from the environment (e.g.
@@ -64,12 +64,12 @@ int main(int argc, char** argv) {
     std::string driver;
     if (std::getenv("SDL_VIDEODRIVER")) driver = "";      // honor the env value
     else if (headless)                  driver = "offscreen";
-    // Initial window size (YTNATIVE_WINSIZE=WxH), e.g. 640x480 for a handheld.
+    // Initial window size (YTC_WINSIZE=WxH), e.g. 640x480 for a handheld.
     int win_w = 1280, win_h = 720;
-    if (const char* ws = std::getenv("YTNATIVE_WINSIZE")) {
+    if (const char* ws = std::getenv("YTC_WINSIZE")) {
         int a, b; if (sscanf(ws, "%dx%d", &a, &b) == 2 && a > 0 && b > 0) { win_w = a; win_h = b; }
     }
-    auto win = gfx::Window::create(win_w, win_h, "ytnative", driver);
+    auto win = gfx::Window::create(win_w, win_h, "YTC", driver);
     if (!win) { std::fprintf(stderr, "window create failed\n"); return 1; }
 
     gfx::Renderer rn;
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
         };
         // Debug: play a specific video id straight through the real App/player
         // path (with mpv logging), to reproduce per-video failures.
-        if (const char* pid = std::getenv("YTNATIVE_PLAYID")) {
+        if (const char* pid = std::getenv("YTC_PLAYID")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             app.input(ui::App::Action::Select);
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "PLAYID %s final mode=%d\n", pid, (int)app.mode());
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_PAUSETEST")) {
+        if (const char* pid = std::getenv("YTC_PAUSETEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             app.input(ui::App::Action::Select);           // start playback
@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "PAUSETEST: menu closed, paused=%d\n", app.player_paused());
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_RESUMETEST")) {
+        if (const char* pid = std::getenv("YTC_RESUMETEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "RESUMETEST: resumed mode=%d\n", (int)app.mode());
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_QUALTEST")) {
+        if (const char* pid = std::getenv("YTC_QUALTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             app.input(ui::App::Action::Select);            // start playback
@@ -186,7 +186,7 @@ int main(int argc, char** argv) {
             app.render(rn); win->screenshot(std::string(shot) + "_after.png");
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_SEEKTEST")) {
+        if (const char* pid = std::getenv("YTC_SEEKTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             app.input(ui::App::Action::Select);
@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
                          (int)app.mode());
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_VOLTEST")) {
+        if (const char* pid = std::getenv("YTC_VOLTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
@@ -227,7 +227,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VOLTEST done\n");
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_SBPLAYTEST")) {
+        if (const char* pid = std::getenv("YTC_SBPLAYTEST")) {
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(3000);                          // let startup home-load finish first
@@ -238,7 +238,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "SBPLAYTEST done\n");
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_SPEEDTEST")) {
+        if (const char* pid = std::getenv("YTC_SPEEDTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "SPEEDTEST done\n");
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_STATSTEST")) {
+        if (const char* pid = std::getenv("YTC_STATSTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
             app.input(ui::App::Action::Select);
@@ -270,7 +270,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "STATSTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_VIDPAGE")) {  // channel Videos tab: scroll-driven load-more
+        if (std::getenv("YTC_VIDPAGE")) {  // channel Videos tab: scroll-driven load-more
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1500);
@@ -284,7 +284,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VIDPAGE done sel=%d\n", app.selected_index());
             return 0;
         }
-        if (std::getenv("YTNATIVE_FAVTABTEST")) {  // regression: favorites -> channel -> tab Right
+        if (std::getenv("YTC_FAVTABTEST")) {  // regression: favorites -> channel -> tab Right
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1000);
@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "FAVTABTEST done, in_subview=%d\n", (int)app.in_subview());
             return 0;
         }
-        if (std::getenv("YTNATIVE_HOMETABTEST")) {  // Home tab strip walk-through
+        if (std::getenv("YTC_HOMETABTEST")) {  // Home tab strip walk-through
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1500);
@@ -317,7 +317,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "HOMETABTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_TABTEST")) {  // channel tab strip walk-through
+        if (std::getenv("YTC_TABTEST")) {  // channel tab strip walk-through
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1500);
@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "TABTEST done\n");
             return 0;
         }
-        if (const char* pid = std::getenv("YTNATIVE_DESCTEST")) {  // description overlay
+        if (const char* pid = std::getenv("YTC_DESCTEST")) {  // description overlay
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1800);
@@ -373,7 +373,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "DESCTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_CHDESCTEST")) {  // channel description from a playlist row
+        if (std::getenv("YTC_CHDESCTEST")) {  // channel description from a playlist row
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(2000);
@@ -396,7 +396,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "CHDESCTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_PLDESCTEST")) {  // playlist description overlay
+        if (std::getenv("YTC_PLDESCTEST")) {  // playlist description overlay
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(2000);
@@ -415,7 +415,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "PLDESCTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_WLPLTEST")) {  // playlist -> Watch Later round trip
+        if (std::getenv("YTC_WLPLTEST")) {  // playlist -> Watch Later round trip
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(2000);
@@ -444,7 +444,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "WLPLTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_PLAYLISTTEST")) {  // open the first playlist tile
+        if (std::getenv("YTC_PLAYLISTTEST")) {  // open the first playlist tile
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             settle(2000);
@@ -469,7 +469,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "PLAYLISTTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_TOGGLETEST")) {  // hide-shorts toggle round trip
+        if (std::getenv("YTC_TOGGLETEST")) {  // hide-shorts toggle round trip
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             auto toggle_shorts = [&]{
@@ -492,22 +492,22 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "TOGGLETEST done\n");
             return 0;
         }
-        if (const char* wms = std::getenv("YTNATIVE_WAITSHOT")) {  // settle N ms, screenshot
+        if (const char* wms = std::getenv("YTC_WAITSHOT")) {  // settle N ms, screenshot
             int ms = atoi(wms); int w = 0;
             do { app.pump_async(); app.render(rn); win->swap(); SDL_Delay(50); w += 50; }
             while (w < ms);
-            if (const char* pr = std::getenv("YTNATIVE_PRERIGHT"))
+            if (const char* pr = std::getenv("YTC_PRERIGHT"))
                 for (int k = 0; k < atoi(pr); ++k) { app.input(ui::App::Action::Right);
                     for (int j=0;j<6;j++){app.pump_async();app.render(rn);win->swap();SDL_Delay(30);} }
             app.render(rn); win->screenshot(std::string(shot) + "_wait.png");
             std::fprintf(stderr, "WAITSHOT done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_PAGETEST")) {   // scroll down; results should grow via load-more
+        if (std::getenv("YTC_PAGETEST")) {   // scroll down; results should grow via load-more
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn); win->swap();
                 SDL_Delay(50); w+=50; } while (w<ms); };
             settle(1500);
-            if (std::getenv("YTNATIVE_PAGE_CHANNEL") && app.selected() && app.selected()->is_channel()) {
+            if (std::getenv("YTC_PAGE_CHANNEL") && app.selected() && app.selected()->is_channel()) {
                 app.input(ui::App::Action::Select);   // open the channel view first
                 settle(2000);
             }
@@ -517,7 +517,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "PAGETEST done sel=%d\n", app.selected_index());
             return 0;
         }
-        if (std::getenv("YTNATIVE_CHANOPEN")) {   // open channel at sel 0, wait for async info
+        if (std::getenv("YTC_CHANOPEN")) {   // open channel at sel 0, wait for async info
             app.input(ui::App::Action::Select);
             int w = 0;
             do { app.pump_async(); app.render(rn); win->swap(); SDL_Delay(50); w += 50; }
@@ -539,14 +539,14 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "wrote %s (mode=%d)\n", path.c_str(), (int)app.mode());
         };
         for (auto& st : steps) run_step(st);
-        if (std::getenv("YTNATIVE_PLAYTEST"))
+        if (std::getenv("YTC_PLAYTEST"))
             for (auto& st : play_steps) run_step(st);
-        if (std::getenv("YTNATIVE_SEQTEST")) {
+        if (std::getenv("YTC_SEQTEST")) {
             // Reproduce the "2nd+ video fails" bug: play several grid items in a
             // row (select -> play -> back -> next). Each must actually PLAY.
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
-            int n = std::getenv("YTNATIVE_SEQN") ? atoi(std::getenv("YTNATIVE_SEQN")) : 4;
+            int n = std::getenv("YTC_SEQN") ? atoi(std::getenv("YTC_SEQN")) : 4;
             for (int i = 0; i < n; ++i) {
                 app.input(ui::App::Action::Select);   // play current selection
                 settle(4000);
@@ -562,7 +562,7 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
-        if (std::getenv("YTNATIVE_CAROUSELSHOT")) {
+        if (std::getenv("YTC_CAROUSELSHOT")) {
             app.toggle_view();
             for (int i = 0; i < 3; ++i) app.input(ui::App::Action::Right);
             int w = 0;
@@ -573,7 +573,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "wrote carousel screenshot\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_MENUSHOT")) {
+        if (std::getenv("YTC_MENUSHOT")) {
             app.input(ui::App::Action::Menu);          // open options menu on sel 0
             app.render(rn);
             win->screenshot(std::string(shot) + "_menu.png");
@@ -583,7 +583,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "MENUSHOT done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_CLEARHISTTEST")) {
+        if (std::getenv("YTC_CLEARHISTTEST")) {
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
             app.open_main_menu();
@@ -600,7 +600,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "CLEARHISTTEST done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_SETTINGSSHOT")) {
+        if (std::getenv("YTC_SETTINGSSHOT")) {
             app.open_main_menu();
             for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Settings
             app.input(ui::App::Action::Select);                            // open Settings
@@ -612,7 +612,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "SETTINGSSHOT done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_MAINMENUSHOT")) {
+        if (std::getenv("YTC_MAINMENUSHOT")) {
             app.open_main_menu();                        // Start-button top-level menu
             app.render(rn);
             win->screenshot(std::string(shot) + "_mainmenu.png");
@@ -644,7 +644,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "MAINMENUSHOT done\n");
             return 0;
         }
-        if (std::getenv("YTNATIVE_SEARCHSHOT")) {
+        if (std::getenv("YTC_SEARCHSHOT")) {
             app.input(ui::App::Action::Search);          // open the OSK
             app.render(rn);
             win->screenshot(std::string(shot) + "_kb_empty.png");
@@ -659,7 +659,7 @@ int main(int argc, char** argv) {
 
     // Load the community controller-mapping DB so buttons land on the right
     // SDL_CONTROLLER_BUTTON_* slots (SDL's built-in set misses many pads/
-    // handhelds). Tried in order; YTNATIVE_GAMEPADDB overrides the path.
+    // handhelds). Tried in order; YTC_GAMEPADDB overrides the path.
     {
         std::string dir = exe_dir();
         // Search cwd/data, <exe>/data, <exe>/../data, then system dirs.
@@ -668,17 +668,17 @@ int main(int argc, char** argv) {
                                     std::string("data/") + base,
                                     dir + "/data/" + base,
                                     dir + "/../data/" + base,
-                                    std::string("/opt/ytnative/") + base,
-                                    std::string("/usr/share/ytnative/") + base };
+                                    std::string("/opt/ytc/") + base,
+                                    std::string("/usr/share/ytc/") + base };
             for (const auto& c : cands) {
                 if (c.empty()) continue;
                 int n = SDL_GameControllerAddMappingsFromFile(c.c_str());
                 if (n >= 0) { std::fprintf(stderr, "gamepad: %s %d from %s\n", label, n, c.c_str()); return; }
             }
         };
-        load(std::getenv("YTNATIVE_GAMEPADDB"), "gamecontrollerdb.txt", "loaded");
+        load(std::getenv("YTC_GAMEPADDB"), "gamecontrollerdb.txt", "loaded");
         // Local overrides win (loaded last) — fix pads not in the DB / wrong layout.
-        load(std::getenv("YTNATIVE_GAMEPADDB_LOCAL"), "gamecontrollerdb_local.txt", "+overrides");
+        load(std::getenv("YTC_GAMEPADDB_LOCAL"), "gamecontrollerdb_local.txt", "+overrides");
     }
 
     SDL_JoystickEventState(SDL_ENABLE);   // also deliver raw button events (for mapping diagnosis)
@@ -701,7 +701,7 @@ int main(int argc, char** argv) {
 
     // Gamepad diagnostic: log raw button indices + SDL names, act on nothing,
     // so every button can be pressed without quitting. End by closing the window.
-    if (std::getenv("YTNATIVE_PADTEST")) {
+    if (std::getenv("YTC_PADTEST")) {
         std::fprintf(stderr, "PADTEST: press A, B, X, Y one at a time (nothing will act).\n");
         bool run = true;
         while (run) {
@@ -780,12 +780,12 @@ int main(int argc, char** argv) {
                 if (app.mode() == M::Search) app.input_text(e.text.text);
             }
             else if (e.type == SDL_JOYBUTTONDOWN) {
-                if (std::getenv("YTNATIVE_DEBUG"))
+                if (std::getenv("YTC_DEBUG"))
                     std::fprintf(stderr, "RAW joystick button index: %d\n", e.jbutton.button);
             }
             else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
                 Uint8 b = e.cbutton.button;
-                if (std::getenv("YTNATIVE_DEBUG"))
+                if (std::getenv("YTC_DEBUG"))
                     std::fprintf(stderr, "gamepad button: %s\n",
                         SDL_GameControllerGetStringForButton((SDL_GameControllerButton)b));
                 if (b == SDL_CONTROLLER_BUTTON_Y) app.input(A::Search); // open/submit

@@ -1,6 +1,6 @@
 # PortMaster port
 
-ytnative running as a PortMaster-style port on muOS handhelds. First verified
+ytc running as a PortMaster-style port on muOS handhelds. First verified
 2026-08-22 on an Anbernic RG28XX (muOS 2601.0 JACARANDA, Allwinner H700,
 640x480): search, thumbnails, GLES2 grid, and full mpv playback.
 
@@ -11,10 +11,10 @@ hold-to-seek, restricted/Shorts filters, paced-stream seek fixes.
 
 ## Layout
 
-- `ytnative.sh` — the launch script (portmaster.games/packaging.html layout).
+- `ytc.sh` — the launch script (portmaster.games/packaging.html layout).
   Installs to the CFW's ports scripts folder (muOS: `roms/Ports/`).
-- `port/` — the assembled game directory, installed as `ports/ytnative/`:
-  - `ytnative.aarch64` — stripped `yt_ui`
+- `port/` — the assembled game directory, installed as `ports/ytc/`:
+  - `ytc.aarch64` — stripped `yt_ui`
   - `config/clients.json` — Innertube client fingerprints
   - `data/` — gamecontrollerdb + bundled DejaVuSans.ttf (handhelds don't
     ship the Debian font path; `ui.cpp` falls back to `data/`)
@@ -65,10 +65,10 @@ see the -L dirs; `BUILD_PLAYER=OFF` skips the yt_play spike.)
 
 ## Device notes (RG28XX / muOS)
 
-- muOS layout: script -> `/mnt/sdcard/roms/Ports/ytnative.sh`, game dir ->
-  `/mnt/sdcard/ports/ytnative/`. `control.txt` derives `$directory` from the
+- muOS layout: script -> `/mnt/sdcard/roms/Ports/ytc.sh`, game dir ->
+  `/mnt/sdcard/ports/ytc/`. `control.txt` derives `$directory` from the
   script path.
-- The launcher exports `YTNATIVE_MAXHEIGHT=480`: 480p panel + software decode
+- The launcher exports `YTC_MAXHEIGHT=480`: 480p panel + software decode
   on 4xA53 (no hwdec on these devices; the custom mpv+ffmpeg build in
   PROGRESS.md's TODO is only worth it for hwdec or CFWs without libmpv).
 - Built-in pad matches the bundled gamecontrollerdb
@@ -108,8 +108,8 @@ When we DO bundle for RK3588 (the portable path):
    ~/mpvbuild/prefix/lib/aarch64-linux-gnu/, ffmpeg 6.1 = the .so.60/.58/.4/.7 set
    in ~/mpvbuild/prefix/lib/ (NOT the .so.61/.59/.5/.8 ffmpeg-7 set that's also there),
    librockchip_mpp at /usr/lib/aarch64-linux-gnu/.
-3. Link ytnative against the custom mpv headers/pc (already in prefix), set
-   YTNATIVE_HWDEC=rkmpp (or auto) in the RK3588 launcher variant, drop the 480p cap.
+3. Link ytc against the custom mpv headers/pc (already in prefix), set
+   YTC_HWDEC=rkmpp (or auto) in the RK3588 launcher variant, drop the 480p cap.
 
 ## Still to do for a real PortMaster submission
 
