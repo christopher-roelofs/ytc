@@ -243,9 +243,14 @@ private:
     std::mutex cc_m_;
     std::vector<yt::CaptionTrack> cc_pending_;
     int cc_sig_ = 0;
+    // Async VTT download for the selected track (so cycling captions never blocks).
+    std::thread cc_dl_thread_;
+    std::atomic<bool> cc_dl_running_{false}, cc_dl_done_{false};
+    std::string cc_dl_vtt_, cc_dl_lang_;   // pending result + which language it is for
     void start_captions(const std::string& video_id);
     void poll_captions();
-    void apply_caption_selection();        // download (if needed) + sub-add or off
+    void apply_caption_selection();        // off / cached sub-add / kick async download
+    void poll_caption_download();          // install a finished VTT if still selected
 
     Theme theme_;
     gfx::Window* win_;

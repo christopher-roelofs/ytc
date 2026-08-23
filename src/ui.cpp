@@ -281,6 +281,7 @@ App::~App() {
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
     if (cc_thread_.joinable()) cc_thread_.join();
+    if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
 }
 
 void App::set_results(std::vector<yt::SearchResult> r) {
@@ -789,23 +790,44 @@ void App::poll_captions() {
     cc_tracks_ = std::move(cc_pending_);
     cc_pending_.clear();
 }
-// Download (once, cached) the selected track's WebVTT and hand it to mpv; or hide.
+// Apply the current caption selection WITHOUT blocking: Off hides; an already-cached
+// track is added instantly; an un-cached track is downloaded on a worker thread and
+// installed later by poll_caption_download().
 void App::apply_caption_selection() {
     if (cc_sel_ <= 0 || cc_sel_ > (int)cc_tracks_.size()) { player_.subtitles_off(); return; }
     const yt::CaptionTrack& t = cc_tracks_[cc_sel_ - 1];
-    std::string path;
     auto it = cc_paths_.find(t.language_code);
-    if (it != cc_paths_.end()) path = it->second;
-    else {
-        std::string vtt = it_.caption_vtt(t.base_url);   // small blocking fetch (TLS)
-        if (vtt.empty()) { status_msg_ = "Captions unavailable";
-                           status_until_ = SDL_GetTicks() + 2500; cc_sel_ = 0;
-                           player_.subtitles_off(); return; }
-        path = "/tmp/ytc_cc_" + t.language_code + ".vtt";
-        std::ofstream o(path, std::ios::binary); o << vtt; o.close();
-        cc_paths_[t.language_code] = path;
+    if (it != cc_paths_.end()) { player_.add_subtitle(it->second); return; }  // cached
+    // Not cached: fetch off-thread. Hide until it arrives; show a brief status.
+    player_.subtitles_off();
+    status_msg_ = "Loading captions..."; status_until_ = SDL_GetTicks() + 4000;
+    std::string url = t.base_url, lang = t.language_code;
+    if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
+    cc_dl_running_ = true; cc_dl_done_ = false;
+    cc_dl_thread_ = std::thread([this, url, lang]() {
+        std::string vtt;
+        try { vtt = it_.caption_vtt(url); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cc_m_); cc_dl_vtt_ = std::move(vtt); cc_dl_lang_ = lang; }
+        cc_dl_running_ = false; cc_dl_done_ = true;
+    });
+}
+// Install a finished VTT — but only if that language is still the selection.
+void App::poll_caption_download() {
+    if (!cc_dl_done_.exchange(false)) return;
+    std::string vtt, lang;
+    { std::lock_guard<std::mutex> lk(cc_m_); vtt = std::move(cc_dl_vtt_); lang = cc_dl_lang_;
+      cc_dl_vtt_.clear(); }
+    bool still_selected = cc_sel_ > 0 && cc_sel_ <= (int)cc_tracks_.size() &&
+                          cc_tracks_[cc_sel_ - 1].language_code == lang;
+    if (vtt.empty()) {
+        if (still_selected) { status_msg_ = "Captions unavailable";
+            status_until_ = SDL_GetTicks() + 2500; cc_sel_ = 0; player_.subtitles_off(); }
+        return;
     }
-    player_.add_subtitle(path);   // sub-add + select + visible
+    std::string path = "/tmp/ytc_cc_" + lang + ".vtt";
+    { std::ofstream o(path, std::ios::binary); o << vtt; }
+    cc_paths_[lang] = path;
+    if (still_selected) player_.add_subtitle(path);   // user may have moved on -> just cache
 }
 
 // Channel description in the same overlay (used from playlist rows, where each
@@ -1542,6 +1564,7 @@ void App::pump_async() {
     poll_description();
     poll_sponsorblock();
     poll_captions();
+    poll_caption_download();
     // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
     // (non-debounced) seek to the segment end; each segment skips at most once per
     // play so a deliberate seek back in doesn't fight the user.
