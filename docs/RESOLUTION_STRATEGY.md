@@ -110,6 +110,32 @@ subscriptions via the official Data API + device flow (the no-browser, no-ban pa
 Reserve cookie-based auth for users who explicitly want authenticated playback and
 accept the risk.
 
+## Authentication — analysis (2026-08-23, decided NOT to implement for now)
+
+What auth WOULD unlock: real FEsubscriptions feed; server-side Watch Later (VLWL) /
+Liked (VLLL) / playlists (read+write, syncs across devices); synced history + resume
+positions (FEhistory); personalized home/related; age-restricted playback; write
+actions (like/subscribe/comment/poll votes); far fewer bot-walls; Premium bitrates if
+the account has Premium. Auth would NOT fix restricted/paced (kids) delivery — that's
+content policy — and DRM rentals are out of scope (Widevine).
+
+The ONE viable mechanism — cookie import + SAPISIDHASH:
+- OAuth device-code (TV flow) is DEAD: Google revoked it for YouTube scopes in 2024
+  (yt-dlp removed OAuth). Official Data API OAuth = metadata-only + quotas, no stream
+  URLs. Embedded login needs a browser engine (botguard/2FA) — infeasible in SDL.
+- Working path: user exports cookies.txt from a logged-in browser (extension), copies
+  to the device like other config (e.g. config/cookies.txt). App sends the cookies +
+  an `Authorization: SAPISIDHASH <ts>_<sha1(ts + " " + SAPISID + " " + origin)>`
+  header (origin https://www.youtube.com) on Innertube requests. /browse, /player,
+  /next then act as the account.
+- Implementation sketch when wanted: (1) cookie parsing + SAPISIDHASH in HttpClient
+  (~a day), verify via FEsubscriptions; (2) "Subscriptions" in the Start menu;
+  (3) server-side WL/history views (VLWL/FEhistory) merging with local JSON;
+  (4) like/subscribe endpoints in the options menus.
+- Caveats: cookies rotate/expire (weeks-months; degrade to anonymous + hint);
+  ToS-gray, small ban risk -> THROWAWAY ACCOUNT recommended, auth strictly opt-in,
+  anonymous stays the default; logged-in mode ties viewing to the account.
+
 ## Runbook — when resolution breaks
 
 1. **All videos fail with LOGIN_REQUIRED / "not a bot":** the primary client got

@@ -4,6 +4,11 @@ ytnative running as a PortMaster-style port on muOS handhelds. First verified
 2026-08-22 on an Anbernic RG28XX (muOS 2601.0 JACARANDA, Allwinner H700,
 640x480): search, thumbnails, GLES2 grid, and full mpv playback.
 
+2026-08-23: full feature build re-deployed + confirmed working on the RG28XX
+(device libmpv, NEEDED = SDL2/GLESv2/libmpv.so.2/pthread/m/c). Carries channel &
+Home tabs, Community posts, playlists, description overlays, Unicode text,
+hold-to-seek, restricted/Shorts filters, paced-stream seek fixes.
+
 ## Layout
 
 - `ytnative.sh` — the launch script (portmaster.games/packaging.html layout).
@@ -73,9 +78,43 @@ see the -L dirs; `BUILD_PLAYER=OFF` skips the yt_play spike.)
   frontend bleeds overlays into the screen; only Ports-menu launches are
   clean). Verify remotely by `dd`-ing `/dev/fb0`.
 
+## Bundling the custom rkmpp mpv — decision + findings (2026-08-23)
+
+DECISION: do NOT bundle the custom mpv on Allwinner (H700) devices — they keep
+using the device's own libmpv (current port, works). The custom rkmpp build is
+reserved for RK3588/RK3566 targets, where it actually gives hwdec.
+
+Why (measured on the RG28XX/H700 at 192.168.86.244):
+- H700 has NO Rockchip VPU -> rkmpp = zero benefit (software fallback either way).
+- The RK3588-built libmpv can't be dropped on it as-is: NEEDED libgbm.so.1 is
+  ABSENT (and the Pi's copy is a Rockchip-Mali blob = wrong GPU vendor), and it
+  NEEDs libjpeg.so.62 (device has only .8/.9). Those come from mpv's DRM/GBM VO
+  backends, which we DON'T use (we drive mpv via the render API into SDL's GL ctx).
+- Device already provides libmpv.so.2 (mpv 0.35.1), libEGL/GLESv2 -> libmali.so,
+  libass.so.9, ffmpeg 4.x (avcodec.so.58 etc.).
+
+When we DO bundle for RK3588 (the portable path):
+1. Rebuild libmpv on the Pi RENDER-API-ONLY: disable the gpu-context/VO backends
+   (drm, wayland, x11, gbm, egl) so libmpv drops libgbm/libEGL/libdrm NEEDEDs and
+   only needs the ffmpeg chain + libass. `meson ... -Dgpl=true -Dlibmpv=true
+   -Dvideo-output-drivers=[] ` (keep only what render API needs) — verify with
+   `readelf -d libmpv.so.2 | grep NEEDED` afterward (should be just av*/ass/sys).
+2. Bundle into port/libs.aarch64: libmpv.so.2 + ffmpeg 6.1 set (libavcodec.so.60,
+   libavformat.so.60, libavutil.so.58, libswscale.so.7, libswresample.so.4,
+   libavfilter.so.9, libavdevice.so.60) + librockchip_mpp.so.1 (HARD NEEDED of our
+   libavcodec; loads + sw-falls-back on non-Rockchip) + libass.so.9 + libjpeg.so.62
+   (bundle any the target CFW lacks; check per device).
+   Source paths on the Pi (192.168.86.243): libmpv at
+   ~/mpvbuild/prefix/lib/aarch64-linux-gnu/, ffmpeg 6.1 = the .so.60/.58/.4/.7 set
+   in ~/mpvbuild/prefix/lib/ (NOT the .so.61/.59/.5/.8 ffmpeg-7 set that's also there),
+   librockchip_mpp at /usr/lib/aarch64-linux-gnu/.
+3. Link ytnative against the custom mpv headers/pc (already in prefix), set
+   YTNATIVE_HWDEC=rkmpp (or auto) in the RK3588 launcher variant, drop the 480p cap.
+
 ## Still to do for a real PortMaster submission
 
 - port.json, screenshot, licenses folder, README for the store.
 - Test matrix beyond muOS (ArkOS, ROCKNIX, AmberELEC — libmpv presence/SONAME
-  needs checking per CFW; bundling our own mpv+ffmpeg is the fallback).
+  needs checking per CFW; the render-only custom mpv above is the fallback for
+  CFWs that ship no libmpv).
 - armhf decision (skip: aarch64-only is accepted).

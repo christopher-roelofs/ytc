@@ -54,7 +54,7 @@ static ui::App::Action map_button(Uint8 b) {
 }
 
 int main(int argc, char** argv) {
-    std::string query = argc > 1 ? argv[1] : "lofi hip hop radio";
+    std::string query = argc > 1 ? argv[1] : "";   // no query => Latest/empty state
     const char* shot = std::getenv("YTNATIVE_SHOT");
     bool headless = shot != nullptr;
 
@@ -73,9 +73,20 @@ int main(int argc, char** argv) {
     if (!win) { std::fprintf(stderr, "window create failed\n"); return 1; }
 
     gfx::Renderer rn;
-    ui::App app(config_path(), win.get());
-    std::fprintf(stderr, "searching '%s'...\n", query.c_str());
-    app.search(query);
+    std::unique_ptr<ui::App> app_ptr;
+    try {
+        app_ptr = std::make_unique<ui::App>(config_path(), win.get());
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "fatal: cannot start (%s)\n", e.what());
+        return 1;   // exit cleanly instead of std::terminate
+    }
+    ui::App& app = *app_ptr;
+    if (!query.empty()) {
+        std::fprintf(stderr, "searching '%s'...\n", query.c_str());
+        app.search(query);        // guarded internally; never throws (CLI/test convenience)
+    } else {
+        app.load_home();          // always start on Home (favorite-channel RSS; may be empty)
+    }
 
     if (headless) {
         // Render a short navigation sequence, waiting for thumbnails between shots.
@@ -106,6 +117,388 @@ int main(int argc, char** argv) {
                  if (w == 6000) win->screenshot(std::string(shot) + "_playing.png"); }
             while (w < 12000);
             std::fprintf(stderr, "PLAYID %s final mode=%d\n", pid, (int)app.mode());
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_PAUSETEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select);           // start playback
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(6000);
+            std::fprintf(stderr, "PAUSETEST: playing, paused=%d\n", app.player_paused());
+            app.render(rn); win->screenshot(std::string(shot) + "_playing_faded.png");
+            app.input(ui::App::Action::Select);            // pause (Select toggles)
+            settle(400);
+            std::fprintf(stderr, "PAUSETEST: after Select, paused=%d\n", app.player_paused());
+            app.render(rn); win->screenshot(std::string(shot) + "_paused.png");
+            app.input(ui::App::Action::Select);            // resume before menu test
+            settle(300);
+            app.open_main_menu();                          // Start over the player
+            settle(400);
+            std::fprintf(stderr, "PAUSETEST: menu open, paused=%d\n", app.player_paused());
+            app.render(rn); win->screenshot(std::string(shot) + "_menu_over_player.png");
+            app.input(ui::App::Action::Back);              // close menu (no navigate)
+            settle(400);
+            std::fprintf(stderr, "PAUSETEST: menu closed, paused=%d\n", app.player_paused());
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_RESUMETEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            app.input(ui::App::Action::Select);          // first play (no prompt)
+            settle(6000);
+            app.input(ui::App::Action::Right); settle(500);   // seek forward (~+10s)
+            app.input(ui::App::Action::Right); settle(1500);
+            std::fprintf(stderr, "RESUMETEST: mode=%d before Back\n", (int)app.mode());
+            app.input(ui::App::Action::Back);            // saves resume position
+            settle(400);
+            app.input(ui::App::Action::Select);          // play again -> should prompt
+            settle(300);
+            app.render(rn); win->screenshot(std::string(shot) + "_prompt.png");
+            std::fprintf(stderr, "RESUMETEST: after 2nd select mode=%d\n", (int)app.mode());
+            app.input(ui::App::Action::Select);          // confirm Resume
+            settle(6000);
+            std::fprintf(stderr, "RESUMETEST: resumed mode=%d\n", (int)app.mode());
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_QUALTEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select);            // start playback
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(8000);
+            std::fprintf(stderr, "QUALTEST: playing mode=%d\n", (int)app.mode());
+            app.input(ui::App::Action::Menu);              // open options menu
+            settle(300);
+            app.render(rn); win->screenshot(std::string(shot) + "_optmenu.png");
+            // Move down to the Quality row, raise it, then close (re-resolve + resume).
+            for (int i = 0; i < 3; ++i) app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Right);             // raise quality -> dirty
+            settle(200);
+            app.render(rn); win->screenshot(std::string(shot) + "_optmenu_q.png");
+            app.input(ui::App::Action::Back);              // close -> replay_current(pos)
+            settle(9000);                                  // allow re-resolve + reload
+            std::fprintf(stderr, "QUALTEST: after change mode=%d\n", (int)app.mode());
+            app.render(rn); win->screenshot(std::string(shot) + "_after.png");
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_SEEKTEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select);
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(5000);
+            std::fprintf(stderr, "SEEKTEST: before, mode=%d\n", (int)app.mode());
+            // Aggressive: many rapid seeks with tiny gaps, mixing directions.
+            for (int i = 0; i < 16 && app.mode() == ui::App::Mode::Playing; ++i) {
+                app.input(i % 4 == 3 ? ui::App::Action::Left : ui::App::Action::Right);
+                settle(40);
+            }
+            std::fprintf(stderr, "SEEKTEST: after rapid seeks, mode=%d\n", (int)app.mode());
+            settle(4000);   // let the debounced seek fire + stream settle
+            // Several more waves pressing against the cache edge (mimics real use).
+            for (int wave = 0; wave < 4 && app.mode() == ui::App::Mode::Playing; ++wave) {
+                for (int i = 0; i < 8; ++i) { app.input(ui::App::Action::Right); settle(60); }
+                settle(2500);
+                std::fprintf(stderr, "SEEKTEST: wave %d done, mode=%d\n", wave, (int)app.mode());
+            }
+            settle(3000);
+            std::fprintf(stderr, "SEEKTEST: final mode=%d (2=Playing,0=Grid)\n",
+                         (int)app.mode());
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_VOLTEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2500);                              // let visitor_data warm up first
+            app.input(ui::App::Action::Select);
+            settle(8000);
+            for (int i = 0; i < 3; ++i) app.input(ui::App::Action::Up);    // +15%
+            app.render(rn); win->screenshot(std::string(shot) + "_volup.png");
+            for (int i = 0; i < 8; ++i) app.input(ui::App::Action::Down);  // -40%
+            app.render(rn); win->screenshot(std::string(shot) + "_voldn.png");
+            std::fprintf(stderr, "VOLTEST done\n");
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_STATSTEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select);
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(8000);
+            app.input(ui::App::Action::Menu);              // options menu
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Stats row
+            app.input(ui::App::Action::Right);             // enable stats
+            app.render(rn); win->screenshot(std::string(shot) + "_menu.png");
+            app.input(ui::App::Action::Back);              // close menu
+            settle(600);
+            app.render(rn); win->screenshot(std::string(shot) + "_stats.png");
+            std::fprintf(stderr, "STATSTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_VIDPAGE")) {  // channel Videos tab: scroll-driven load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.input(ui::App::Action::Select);      // open channel (first result)
+            settle(2500);
+            app.input(ui::App::Action::Up);          // tabs
+            app.input(ui::App::Action::Right);       // Videos
+            settle(2500);
+            app.input(ui::App::Action::Down);        // into grid
+            for (int i = 0; i < 30; ++i) { app.input(ui::App::Action::Down); settle(250); }
+            std::fprintf(stderr, "VIDPAGE done sel=%d\n", app.selected_index());
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_FAVTABTEST")) {  // regression: favorites -> channel -> tab Right
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1000);
+            app.open_main_menu();
+            app.input(ui::App::Action::Down);        // -> Favorite Channels
+            app.input(ui::App::Action::Select);
+            settle(800);
+            app.input(ui::App::Action::Select);      // open first favorite channel
+            settle(2500);
+            app.input(ui::App::Action::Up);          // focus tabs
+            app.input(ui::App::Action::Right);       // -> Videos (async)
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_after_right.png");
+            std::fprintf(stderr, "FAVTABTEST done, in_subview=%d\n", (int)app.in_subview());
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_HOMETABTEST")) {  // Home tab strip walk-through
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.render(rn); win->screenshot(std::string(shot) + "_all.png");
+            app.input(ui::App::Action::Up);          // focus tabs
+            const char* names[] = {"videos", "shorts", "playlists"};
+            for (int i = 0; i < 3; ++i) {
+                app.input(ui::App::Action::Right);
+                settle(i == 2 ? 6000 : 300);         // playlists tab fetches async
+                app.render(rn);
+                win->screenshot(std::string(shot) + "_" + names[i] + ".png");
+            }
+            std::fprintf(stderr, "HOMETABTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_TABTEST")) {  // channel tab strip walk-through
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.input(ui::App::Action::Select);      // open the first result (a channel)
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_all.png");
+            app.input(ui::App::Action::Up);          // focus the tab strip
+            app.render(rn); win->screenshot(std::string(shot) + "_tabfocus.png");
+            const char* names[] = {"videos", "shorts", "playlists", "posts"};
+            for (int i = 0; i < 4; ++i) {
+                app.input(ui::App::Action::Right);   // next tab (fetches)
+                settle(1800);
+                app.render(rn);
+                win->screenshot(std::string(shot) + "_" + names[i] + ".png");
+            }
+            app.input(ui::App::Action::Down);        // back into the grid
+            app.render(rn); win->screenshot(std::string(shot) + "_gridfocus.png");
+            // Deep stack: open a playlist FROM the Playlists tab, then unwind.
+            app.input(ui::App::Action::Select);      // open first playlist
+            settle(2000);
+            app.render(rn); win->screenshot(std::string(shot) + "_pl_open.png");
+            app.input(ui::App::Action::Back);        // -> channel (Playlists tab)
+            settle(300);
+            app.render(rn); win->screenshot(std::string(shot) + "_back1.png");
+            app.input(ui::App::Action::Back);        // -> original search results
+            settle(300);
+            app.render(rn); win->screenshot(std::string(shot) + "_back2.png");
+            std::fprintf(stderr, "TABTEST done\n");
+            return 0;
+        }
+        if (const char* pid = std::getenv("YTNATIVE_DESCTEST")) {  // description overlay
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1800);
+            // Grid tile path: menu -> Show Description (async fetch).
+            app.input(ui::App::Action::Menu);
+            app.input(ui::App::Action::Down); app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Select);
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_grid_desc.png");
+            app.input(ui::App::Action::Back);        // close overlay
+            // Playing path: play, menu -> Show Description (instant).
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select);
+            settle(7000);
+            app.input(ui::App::Action::Menu);
+            app.input(ui::App::Action::Down);        // -> Show Description
+            app.input(ui::App::Action::Select);
+            settle(300);
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // scroll
+            app.render(rn); win->screenshot(std::string(shot) + "_play_desc.png");
+            std::fprintf(stderr, "DESCTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_CHDESCTEST")) {  // channel description from a playlist row
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2000);
+            int guard = 0;                        // find + open a playlist
+            while (guard++ < 60 && app.selected() && !app.selected()->is_playlist()) {
+                int before = app.selected_index();
+                app.input(ui::App::Action::Right);
+                if (app.selected_index() == before) app.input(ui::App::Action::Down);
+                if (app.selected_index() == before) break;
+            }
+            app.input(ui::App::Action::Select);   // open playlist
+            settle(2500);
+            app.input(ui::App::Action::Menu);     // options on the first video row
+            app.render(rn); win->screenshot(std::string(shot) + "_rowmenu.png");
+            // items: [Fav toggle (has channel_id)], [WatchLater], [ShowDesc], [ShowChannelDesc], [GoToChannel]
+            for (int i = 0; i < 3; ++i) app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Select);   // Show Channel Description
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_chdesc.png");
+            std::fprintf(stderr, "CHDESCTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_PLDESCTEST")) {  // playlist description overlay
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2000);
+            int guard = 0;
+            while (guard++ < 60 && app.selected() && !app.selected()->is_playlist()) {
+                int before = app.selected_index();
+                app.input(ui::App::Action::Right);
+                if (app.selected_index() == before) app.input(ui::App::Action::Down);
+                if (app.selected_index() == before) break;
+            }
+            app.input(ui::App::Action::Menu);
+            app.input(ui::App::Action::Down);       // -> Show Description
+            app.input(ui::App::Action::Select);
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_pldesc.png");
+            std::fprintf(stderr, "PLDESCTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_WLPLTEST")) {  // playlist -> Watch Later round trip
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2000);
+            int guard = 0;                        // walk to the first playlist tile
+            while (guard++ < 60 && app.selected() && !app.selected()->is_playlist()) {
+                int before = app.selected_index();
+                app.input(ui::App::Action::Right);
+                if (app.selected_index() == before) app.input(ui::App::Action::Down);
+                if (app.selected_index() == before) break;
+            }
+            if (!app.selected() || !app.selected()->is_playlist()) {
+                std::fprintf(stderr, "WLPLTEST: no playlist found\n"); return 0;
+            }
+            app.input(ui::App::Action::Menu);     // options menu
+            app.render(rn); win->screenshot(std::string(shot) + "_menu.png");
+            app.input(ui::App::Action::Select);   // Add to Watch Later
+            settle(300);
+            app.open_main_menu();                 // -> Watch Later view
+            app.input(ui::App::Action::Down); app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Select);
+            settle(800);
+            app.render(rn); win->screenshot(std::string(shot) + "_wl.png");
+            app.input(ui::App::Action::Select);   // open the saved playlist
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_opened.png");
+            std::fprintf(stderr, "WLPLTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_PLAYLISTTEST")) {  // open the first playlist tile
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2000);
+            app.render(rn); win->screenshot(std::string(shot) + "_results.png");
+            int guard = 0;
+            while (guard++ < 60 && app.selected() && !app.selected()->is_playlist()) {
+                int before = app.selected_index();
+                app.input(ui::App::Action::Right);            // walk the grid
+                if (app.selected_index() == before) app.input(ui::App::Action::Down);
+                if (app.selected_index() == before) break;    // stuck at the end
+            }
+            if (app.selected() && app.selected()->is_playlist()) {
+                std::fprintf(stderr, "PLAYLISTTEST: opening '%s'\n",
+                             app.selected()->title.c_str());
+                app.input(ui::App::Action::Select);
+                settle(2500);
+                app.render(rn); win->screenshot(std::string(shot) + "_open.png");
+                app.input(ui::App::Action::Back);    // pop back
+                settle(400);
+                app.render(rn); win->screenshot(std::string(shot) + "_back.png");
+            } else std::fprintf(stderr, "PLAYLISTTEST: no playlist tile found\n");
+            std::fprintf(stderr, "PLAYLISTTEST done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_TOGGLETEST")) {  // hide-shorts toggle round trip
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            auto toggle_shorts = [&]{
+                app.open_main_menu();
+                for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Settings
+                app.input(ui::App::Action::Select);
+                app.input(ui::App::Action::Down); app.input(ui::App::Action::Down); // -> Hide Shorts
+                app.input(ui::App::Action::Right);                             // flip
+                app.input(ui::App::Action::Back);                              // -> main menu
+                app.input(ui::App::Action::Back);                              // close
+            };
+            settle(2000);
+            app.render(rn); win->screenshot(std::string(shot) + "_1_before.png");
+            toggle_shorts();   // ON: shorts filtered in place
+            settle(600);
+            app.render(rn); win->screenshot(std::string(shot) + "_2_hidden.png");
+            toggle_shorts();   // OFF: view refetches, shorts restored
+            settle(1500);
+            app.render(rn); win->screenshot(std::string(shot) + "_3_restored.png");
+            std::fprintf(stderr, "TOGGLETEST done\n");
+            return 0;
+        }
+        if (const char* wms = std::getenv("YTNATIVE_WAITSHOT")) {  // settle N ms, screenshot
+            int ms = atoi(wms); int w = 0;
+            do { app.pump_async(); app.render(rn); win->swap(); SDL_Delay(50); w += 50; }
+            while (w < ms);
+            if (const char* pr = std::getenv("YTNATIVE_PRERIGHT"))
+                for (int k = 0; k < atoi(pr); ++k) { app.input(ui::App::Action::Right);
+                    for (int j=0;j<6;j++){app.pump_async();app.render(rn);win->swap();SDL_Delay(30);} }
+            app.render(rn); win->screenshot(std::string(shot) + "_wait.png");
+            std::fprintf(stderr, "WAITSHOT done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_PAGETEST")) {   // scroll down; results should grow via load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn); win->swap();
+                SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            if (std::getenv("YTNATIVE_PAGE_CHANNEL") && app.selected() && app.selected()->is_channel()) {
+                app.input(ui::App::Action::Select);   // open the channel view first
+                settle(2000);
+            }
+            for (int i = 0; i < 5; ++i) { app.input(ui::App::Action::Down); settle(160); }
+            app.render(rn); win->screenshot(std::string(shot) + "_bottomsel.png");
+            for (int i = 0; i < 34; ++i) { app.input(ui::App::Action::Down); settle(250); }
+            std::fprintf(stderr, "PAGETEST done sel=%d\n", app.selected_index());
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_CHANOPEN")) {   // open channel at sel 0, wait for async info
+            app.input(ui::App::Action::Select);
+            int w = 0;
+            do { app.pump_async(); app.render(rn); win->swap(); SDL_Delay(50); w += 50; }
+            while (w < 5000);
+            app.render(rn);
+            win->screenshot(std::string(shot) + "_chan.png");
+            std::fprintf(stderr, "CHANOPEN done\n");
             return 0;
         }
         auto run_step = [&](const Step& st) {
@@ -152,6 +545,60 @@ int main(int argc, char** argv) {
             app.render(rn);
             win->screenshot(std::string(shot) + "_carousel.png");
             std::fprintf(stderr, "wrote carousel screenshot\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_MENUSHOT")) {
+            app.input(ui::App::Action::Menu);          // open options menu on sel 0
+            app.render(rn);
+            win->screenshot(std::string(shot) + "_menu.png");
+            app.input(ui::App::Action::Select);        // activate first item (favorite)
+            app.render(rn);
+            win->screenshot(std::string(shot) + "_menu_done.png");
+            std::fprintf(stderr, "MENUSHOT done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_SETTINGSSHOT")) {
+            app.open_main_menu();
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Settings
+            app.input(ui::App::Action::Select);                            // open Settings
+            app.render(rn); win->screenshot(std::string(shot) + "_settings.png");
+            app.input(ui::App::Action::Down);                              // Volume
+            app.input(ui::App::Action::Down);                              // Video Decode
+            app.input(ui::App::Action::Right);                             // toggle -> Software
+            app.render(rn); win->screenshot(std::string(shot) + "_settings_sw.png");
+            std::fprintf(stderr, "SETTINGSSHOT done\n");
+            return 0;
+        }
+        if (std::getenv("YTNATIVE_MAINMENUSHOT")) {
+            app.open_main_menu();                        // Start-button top-level menu
+            app.render(rn);
+            win->screenshot(std::string(shot) + "_mainmenu.png");
+            // Walk down to "Watch Later" (index 2) and open it.
+            app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Select);
+            for (int i = 0; i < 8; ++i) { app.pump_async(); app.render(rn); SDL_Delay(60); }
+            win->screenshot(std::string(shot) + "_watchlater.png");
+            // Back to grid, open menu, go to History (index 3).
+            app.open_main_menu();
+            app.input(ui::App::Action::Down); app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Down); app.input(ui::App::Action::Select);
+            for (int i = 0; i < 8; ++i) { app.pump_async(); app.render(rn); SDL_Delay(60); }
+            win->screenshot(std::string(shot) + "_history.png");
+            // Favorites view (wait longer: channel_info + avatar download per channel).
+            app.open_main_menu();
+            app.input(ui::App::Action::Down); app.input(ui::App::Action::Select);
+            for (int i = 0; i < 60; ++i) { app.pump_async(); app.render(rn); SDL_Delay(60); }
+            win->screenshot(std::string(shot) + "_favorites.png");
+            // Settings submenu: open, then cycle Max Quality twice.
+            app.open_main_menu();
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Settings
+            app.input(ui::App::Action::Select);                            // open Settings
+            app.render(rn); win->screenshot(std::string(shot) + "_settings.png");
+            app.input(ui::App::Action::Right);                             // raise quality
+            app.input(ui::App::Action::Right);                             // raise again
+            app.render(rn); win->screenshot(std::string(shot) + "_settings_cycled.png");
+            std::fprintf(stderr, "MAINMENUSHOT done\n");
             return 0;
         }
         if (std::getenv("YTNATIVE_SEARCHSHOT")) {
@@ -233,11 +680,18 @@ int main(int argc, char** argv) {
     bool running = true;
     using A = ui::App::Action;
     using M = ui::App::Mode;
-    // Back quits from the grid, but only returns to the grid while playing.
+    // Back never quits: at the root grid it does nothing; in a channel subview it
+    // pops one level; while playing/searching/in a menu the App handles it. Exit is
+    // an explicit item in the Start menu (sets app.wants_quit()).
     auto handle = [&](A a) {
-        if (a == A::Back && app.mode() == M::Grid) running = false;
-        else if (a != A::None) app.input(a);
+        if (a != A::None) app.input(a);
     };
+    // Hold-to-seek: controller d-pad buttons don't auto-repeat, so track Left/Right
+    // held during playback and inject repeated seek presses (feeds the App's
+    // accumulate+debounce scrubber: the preview races while held, the seek fires on
+    // release). Speeds up after 2.5s of holding.
+    int   seek_dir = 0;             // -1 rewinding, +1 fast-forwarding, 0 idle
+    Uint32 seek_hold_start = 0, seek_last_rep = 0;
     SDL_StartTextInput();   // enable SDL_TEXTINPUT events for the OSK
     while (running) {
         SDL_Event e;
@@ -263,7 +717,11 @@ int main(int argc, char** argv) {
                         case SDLK_DOWN:  app.input(A::Down);  break;
                         default: break;
                     }
-                } else if (k == SDLK_SLASH || k == SDLK_TAB) {
+                } else if (k == SDLK_m) {
+                    app.input(A::Menu);              // options menu for the current item
+                } else if (k == SDLK_TAB) {
+                    if (app.menu_open()) app.input(A::Back); else app.open_main_menu(); // top-level menu
+                } else if (k == SDLK_SLASH) {
                     app.input(A::Search);            // open the keyboard
                 } else if (k == SDLK_v) {
                     app.toggle_view();               // grid <-> carousel
@@ -284,8 +742,42 @@ int main(int argc, char** argv) {
                     std::fprintf(stderr, "gamepad button: %s\n",
                         SDL_GameControllerGetStringForButton((SDL_GameControllerButton)b));
                 if (b == SDL_CONTROLLER_BUTTON_Y) app.input(A::Search); // open/submit
-                else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) app.toggle_view();
+                else if (b == SDL_CONTROLLER_BUTTON_BACK) app.input(A::Menu);   // Select btn = options
+                else if (b == SDL_CONTROLLER_BUTTON_START) {                    // Start = top-level menu
+                    if (app.menu_open()) app.input(A::Back); else app.open_main_menu();
+                }
+                else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)  app.cycle_tab(-1);  // L = prev tab
+                else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) app.cycle_tab(+1);  // R = next tab
                 else handle(map_button(b));
+                // Begin hold-to-seek tracking (playback only, menu closed).
+                if (app.mode() == M::Playing && !app.menu_open() &&
+                    (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ||
+                     b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
+                    seek_dir = (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) ? -1 : +1;
+                    seek_hold_start = seek_last_rep = SDL_GetTicks();
+                }
+            }
+            else if (e.type == SDL_CONTROLLERBUTTONUP) {
+                Uint8 b = e.cbutton.button;
+                if ((b == SDL_CONTROLLER_BUTTON_DPAD_LEFT  && seek_dir < 0) ||
+                    (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && seek_dir > 0))
+                    seek_dir = 0;
+            }
+        }
+        if (app.wants_quit()) running = false;   // Exit chosen from the Start menu
+        // Hold-to-seek repeats: after a 350ms hold, inject a seek press every 120ms
+        // (50ms once held past 2.5s -> deep scrubbing without button mashing).
+        if (seek_dir != 0) {
+            if (app.mode() != M::Playing || app.menu_open()) {
+                seek_dir = 0;                    // context changed; stop the hold
+            } else {
+                Uint32 now = SDL_GetTicks();
+                Uint32 held = now - seek_hold_start;
+                Uint32 interval = held > 2500 ? 50 : 120;
+                if (held > 350 && now - seek_last_rep >= interval) {
+                    app.input(seek_dir < 0 ? A::Left : A::Right);
+                    seek_last_rep = now;
+                }
             }
         }
         app.pump_async();

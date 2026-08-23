@@ -1,0 +1,4 @@
+{
+  "_comment": "User's favorite channels for the 'Latest' feed, fetched via public RSS (youtube.com/feeds/videos.xml?channel_id=ID) — no login, no API key, merged newest-first. Ships EMPTY on purpose: we don't pick channels for you. A future favorites UI (or login -> your real subscriptions) populates this. Until then, startup shows an empty state prompting search.",
+  "channels": []
+}

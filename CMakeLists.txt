@@ -17,7 +17,9 @@ add_library(ytcore STATIC
   src/http.cpp
   src/innertube.cpp)
 target_include_directories(ytcore PUBLIC ${CURL_INCLUDE_DIRS})
-target_link_libraries(ytcore PUBLIC ${CURL_LIBRARIES})
+# Threads is PUBLIC: ytcore itself spawns std::threads (home_feed parallel fetch),
+# so every consumer (incl. the CLI tools on ARM) needs pthread.
+target_link_libraries(ytcore PUBLIC ${CURL_LIBRARIES} Threads::Threads)
 
 # --- Milestone 1: resolver CLI (no SDL/mpv needed) ---
 add_executable(yt_resolve src/main_resolve.cpp)

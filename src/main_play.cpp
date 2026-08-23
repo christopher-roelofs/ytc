@@ -72,7 +72,8 @@ int main(int argc, char** argv) {
     mpv_set_option_string(mpv, "user-agent", info.user_agent.c_str());
     mpv_set_option_string(mpv, "ytdl", "no");   // direct URLs only; no youtube-dl
     mpv_set_option_string(mpv, "vd-lavc-threads", "4");
-    mpv_set_option_string(mpv, "hwdec", "auto-safe");     // RK3588 VPU if mpv supports it
+    const char* hw = getenv("YTNATIVE_HWDEC");
+    mpv_set_option_string(mpv, "hwdec", hw ? hw : "auto-safe"); // e.g. rkmpp on RK3588
     mpv_set_option_string(mpv, "cache", "yes");
     mpv_set_option_string(mpv, "demuxer-max-bytes", "48MiB");
     mpv_set_option_string(mpv, "audio-files",

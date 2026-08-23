@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 
 namespace gfx {
 
@@ -33,6 +34,10 @@ public:
     static std::unique_ptr<Texture> from_rgba(const uint8_t* px, int w, int h);
     // Decode PNG/JPEG bytes (stb_image) into a texture. nullptr on failure.
     static std::unique_ptr<Texture> from_encoded(const uint8_t* data, size_t n);
+    // Empty (transparent) RGBA texture, for incremental atlases.
+    static std::unique_ptr<Texture> create_empty(int w, int h);
+    // Upload a sub-rectangle (RGBA). GL thread only.
+    void update(int x, int y, int w, int h, const uint8_t* rgba);
 
     unsigned id() const { return id_; }
     int width() const { return w_; }
@@ -42,23 +47,31 @@ private:
     int w_ = 0, h_ = 0;
 };
 
+// UTF-8 aware font with an ON-DEMAND glyph cache: any codepoint the .ttf covers is
+// rasterized into the atlas the first time it's drawn (Latin, accents, Cyrillic,
+// Greek, punctuation, ... with DejaVu). Missing glyphs: emoji-ish codepoints are
+// silently skipped (no more "????"), anything else renders as a tofu box.
 class Font {
 public:
-    // Bake ASCII 32..126 from a .ttf at the given pixel height.
     static std::unique_ptr<Font> load(const std::string& ttf_path, float pixel_h);
+    ~Font();
     float line_height() const { return line_h_; }
     float text_width(const std::string& s) const;
-    // Truncate s with an ellipsis to fit max_w.
+    // Truncate s with an ellipsis to fit max_w (never splits a UTF-8 sequence).
     std::string ellipsize(const std::string& s, float max_w) const;
     struct Glyph { float x0, y0, x1, y1;      // atlas UV (pixels)
                    float xoff, yoff, xadv; int w, h; };
-    const Glyph* glyph(char c) const;
+    // Rasterizes + caches on demand. nullptr => skip this codepoint entirely.
+    const Glyph* glyph(uint32_t codepoint) const;
     Texture* atlas() const { return atlas_.get(); }
     float pixel_h() const { return pixel_h_; }
 private:
     std::unique_ptr<Texture> atlas_;
-    std::vector<Glyph> glyphs_; // indexed by (c - 32)
-    float line_h_ = 0, ascent_ = 0, pixel_h_ = 0;
+    std::vector<uint8_t> ttf_;                // font file bytes (fontinfo points here)
+    void* info_ = nullptr;                    // stbtt_fontinfo* (opaque; gfx.cpp only)
+    mutable std::unordered_map<uint32_t, Glyph> glyphs_;
+    mutable int pen_x_ = 1, pen_y_ = 1, row_h_ = 0;   // shelf packer cursor
+    float line_h_ = 0, ascent_ = 0, pixel_h_ = 0, scale_ = 0;
     int atlas_w_ = 0, atlas_h_ = 0;
     friend class Renderer;
 };
@@ -94,6 +107,10 @@ public:
     // Draw a texture cropped to preserve aspect ("cover" fit) inside r.
     void textured_cover(const Rect& r, const Texture& t, Color tint = {});
     void text(const Font& f, const std::string& s, float x, float y, Color c);
+    // Arbitrary 4-corner quad (TL,TR,BR,BL order) — for faux-3D coverflow tiles.
+    void quad4(float x0,float y0, float x1,float y1, float x2,float y2, float x3,float y3, Color c);
+    void textured_quad4(float x0,float y0, float x1,float y1, float x2,float y2, float x3,float y3,
+                        const Texture& t, Color tint = {});
     void end();                            // flush
 private:
     struct V { float x, y, u, v; float r, g, b, a; };

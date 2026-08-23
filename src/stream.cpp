@@ -4,7 +4,11 @@
 #include <curl/curl.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <string>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 namespace ytn {
 
@@ -42,7 +46,14 @@ struct Stream {
     std::string ua;
     int64_t pos = 0;
     int64_t size = 0;       // total content length (from clen= or a probe)
+    std::atomic<bool> cancelled{false};   // set by mpv's cancel_fn (teardown/stop)
 };
+
+// Abort in-flight curl transfers promptly once mpv cancels the stream.
+static int progress_cb(void* u, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    auto* s = static_cast<Stream*>(u);
+    return s->cancelled.load() ? 1 : 0;   // nonzero aborts the transfer
+}
 
 // Parse clen=<n> from the googlevideo query; 0 if absent.
 static int64_t parse_clen(const std::string& url) {
@@ -73,25 +84,56 @@ static int64_t read_fn(void* cookie, char* buf, uint64_t nbytes) {
     if (s->size > 0 && s->pos + want > s->size) want = s->size - s->pos;
     if (want <= 0) return 0;
 
+    int64_t first = s->pos, last = s->pos + want - 1;
     char range[64];
-    std::snprintf(range, sizeof range, "%lld-%lld",
-                  (long long)s->pos, (long long)(s->pos + want - 1));
-    WriteCtx w{buf, (uint64_t)want, 0};
-    curl_easy_setopt(s->curl, CURLOPT_URL, s->url.c_str());
-    curl_easy_setopt(s->curl, CURLOPT_RANGE, range);
-    curl_easy_setopt(s->curl, CURLOPT_USERAGENT, s->ua.c_str());
-    curl_easy_setopt(s->curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(s->curl, CURLOPT_WRITEDATA, &w);
-    curl_easy_setopt(s->curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(s->curl, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(s->curl, CURLOPT_TIMEOUT, 30L);
-    CURLcode rc = curl_easy_perform(s->curl);
-    if (rc != CURLE_OK) return -1;
-    long code = 0;
-    curl_easy_getinfo(s->curl, CURLINFO_RESPONSE_CODE, &code);
-    if (code >= 400) return -1;
-    s->pos += w.got;
-    return (int64_t)w.got;
+    std::snprintf(range, sizeof range, "%lld-%lld", (long long)first, (long long)last);
+
+    // Persistent-retry loop. Failures here are usually googlevideo's PACED delivery
+    // wall (restricted videos 403 ranges beyond a window that only advances in
+    // roughly real time) — the data WILL become available, so stall like a slow
+    // network instead of erroring (an error makes mpv corrupt/EOF -> kills
+    // playback). mpv shows "buffering"; cancel_fn aborts us instantly on stop.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    bool dbg = getenv("YTNATIVE_DEBUG");
+    int attempt = 0;
+    while (!s->cancelled.load()) {
+        WriteCtx w{buf, (uint64_t)want, 0};
+        curl_easy_setopt(s->curl, CURLOPT_URL, s->url.c_str());
+        curl_easy_setopt(s->curl, CURLOPT_RANGE, range);
+        curl_easy_setopt(s->curl, CURLOPT_USERAGENT, s->ua.c_str());
+        curl_easy_setopt(s->curl, CURLOPT_WRITEFUNCTION, write_cb);
+        curl_easy_setopt(s->curl, CURLOPT_WRITEDATA, &w);
+        curl_easy_setopt(s->curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(s->curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
+        curl_easy_setopt(s->curl, CURLOPT_XFERINFODATA, s);
+        curl_easy_setopt(s->curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(s->curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(s->curl, CURLOPT_CONNECTTIMEOUT, 15L);
+        curl_easy_setopt(s->curl, CURLOPT_TIMEOUT, 20L);
+        curl_easy_setopt(s->curl, CURLOPT_FRESH_CONNECT, attempt > 0 ? 1L : 0L);
+
+        CURLcode rc = curl_easy_perform(s->curl);
+        long code = 0;
+        curl_easy_getinfo(s->curl, CURLINFO_RESPONSE_CODE, &code);
+        if (rc == CURLE_OK && code < 400 && w.got > 0) {
+            s->pos += (int64_t)w.got;
+            return (int64_t)w.got;
+        }
+        if (dbg && attempt < 3)
+            std::fprintf(stderr,
+                "[stream] read failed (rc=%d http=%ld) range=%s attempt=%d -> stalling\n",
+                (int)rc, code, range, attempt);
+        if (std::chrono::steady_clock::now() > deadline) {
+            if (dbg) std::fprintf(stderr, "[stream] range %s still failing after 90s -> error\n",
+                                  range);
+            return -1;   // genuinely dead (expired URL, network down)
+        }
+        // Wait ~1.5s between tries, in small slices so cancel is prompt.
+        for (int i = 0; i < 15 && !s->cancelled.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ++attempt;
+    }
+    return -1;   // cancelled (user backed out / teardown)
 }
 
 static int64_t seek_fn(void* cookie, int64_t offset) {
@@ -131,6 +173,9 @@ static int open_fn(void*, char* uri, mpv_stream_cb_info* info) {
     info->seek_fn = seek_fn;
     info->size_fn = size_fn;
     info->close_fn = close_fn;
+    info->cancel_fn = [](void* cookie) {
+        static_cast<Stream*>(cookie)->cancelled.store(true);
+    };
     return 0;
 }
 
