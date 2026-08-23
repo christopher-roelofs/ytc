@@ -82,6 +82,14 @@ struct SponsorSegment {
     std::string category;   // "sponsor", "intro", "outro", "selfpromo", ...
 };
 
+// One subtitle/caption track from /player.
+struct CaptionTrack {
+    std::string language_code;   // "en", "es", ...
+    std::string name;            // "English" / "English (auto-generated)"
+    std::string base_url;        // timedtext URL (append &fmt=vtt to fetch WebVTT)
+    bool auto_generated = false; // kind == "asr"
+};
+
 struct VideoInfo {
     std::string video_id;
     std::string title;
@@ -217,6 +225,11 @@ public:
     // Full plain-text description for one video ("" on failure). Thread-safe
     // (local HttpClient); one lightweight /player call.
     std::string video_description(const std::string& video_id);
+
+    // Caption/subtitle tracks for a video (one /player call). Thread-safe; empty on
+    // none/failure. Fetch a track's WebVTT text with caption_vtt(track.base_url).
+    std::vector<CaptionTrack> caption_tracks(const std::string& video_id);
+    std::string caption_vtt(const std::string& base_url);   // WebVTT text ("" on fail)
     // Playlist description via its VL /browse (playlistMetadataRenderer). Thread-safe.
     std::string playlist_description(const std::string& playlist_id);
     std::vector<std::pair<std::string, bool>> restricted_cache();

@@ -238,6 +238,16 @@ void Player::set_speed(double mult) {
     if (mult > 4.0) mult = 4.0;
     mpv_set_property(impl_->mpv, "speed", MPV_FORMAT_DOUBLE, &mult);
 }
+void Player::add_subtitle(const std::string& path) {
+    if (!impl_->mpv || path.empty()) return;
+    const char* cmd[] = {"sub-add", path.c_str(), "select", nullptr};
+    mpv_command(impl_->mpv, cmd);
+    int on = 1; mpv_set_property(impl_->mpv, "sub-visibility", MPV_FORMAT_FLAG, &on);
+}
+void Player::subtitles_off() {
+    if (!impl_->mpv) return;
+    int off = 0; mpv_set_property(impl_->mpv, "sub-visibility", MPV_FORMAT_FLAG, &off);
+}
 bool Player::active() const { return impl_->loaded; }
 bool Player::paused() const { return impl_->prop_flag("pause") != 0; }
 double Player::position() const { return impl_->prop_d("time-pos"); }
@@ -303,6 +313,8 @@ void Player::set_volume(int) {}
 int Player::volume() const { return 100; }
 void Player::set_hwdec(const std::string&) {}
 void Player::set_speed(double) {}
+void Player::add_subtitle(const std::string&) {}
+void Player::subtitles_off() {}
 bool Player::active() const { return false; }
 bool Player::paused() const { return false; }
 double Player::position() const { return 0; }

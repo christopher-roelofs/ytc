@@ -280,6 +280,7 @@ App::~App() {
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
+    if (cc_thread_.joinable()) cc_thread_.join();
 }
 
 void App::set_results(std::vector<yt::SearchResult> r) {
@@ -624,6 +625,15 @@ void App::adjust_setting(MenuAction a, int dir) {
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
+    if (a == MenuAction::CycleCaptions) {
+        int n = (int)cc_tracks_.size();
+        if (n > 0) {
+            cc_sel_ = (cc_sel_ + dir + (n + 1)) % (n + 1);   // 0=Off, 1..n tracks; wraps
+            apply_caption_selection();
+        }
+        int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label
+        return;
+    }
     if (a == MenuAction::CycleSpeed) {
         static const double steps[] = {0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0};
         int n = (int)(sizeof(steps)/sizeof(steps[0])), cur = 3;   // default 1.0x
@@ -756,6 +766,46 @@ void App::poll_sponsorblock() {
     sb_segments_ = std::move(sb_pending_);
     sb_pending_.clear();
     sb_skipped_.assign(sb_segments_.size(), false);
+}
+
+// Captions: fetch the track list off-thread when a video starts.
+void App::start_captions(const std::string& video_id) {
+    { std::lock_guard<std::mutex> lk(cc_m_); cc_tracks_.clear(); }
+    cc_sel_ = 0; cc_paths_.clear();
+    if (video_id.empty()) return;
+    int sig = ++cc_sig_;
+    if (cc_thread_.joinable()) cc_thread_.join();
+    cc_running_ = true; cc_done_ = false;
+    cc_thread_ = std::thread([this, video_id, sig]() {
+        std::vector<yt::CaptionTrack> t;
+        try { t = it_.caption_tracks(video_id); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cc_m_); if (sig == cc_sig_) cc_pending_ = std::move(t); }
+        cc_running_ = false; cc_done_ = true;
+    });
+}
+void App::poll_captions() {
+    if (!cc_done_.exchange(false)) return;
+    std::lock_guard<std::mutex> lk(cc_m_);
+    cc_tracks_ = std::move(cc_pending_);
+    cc_pending_.clear();
+}
+// Download (once, cached) the selected track's WebVTT and hand it to mpv; or hide.
+void App::apply_caption_selection() {
+    if (cc_sel_ <= 0 || cc_sel_ > (int)cc_tracks_.size()) { player_.subtitles_off(); return; }
+    const yt::CaptionTrack& t = cc_tracks_[cc_sel_ - 1];
+    std::string path;
+    auto it = cc_paths_.find(t.language_code);
+    if (it != cc_paths_.end()) path = it->second;
+    else {
+        std::string vtt = it_.caption_vtt(t.base_url);   // small blocking fetch (TLS)
+        if (vtt.empty()) { status_msg_ = "Captions unavailable";
+                           status_until_ = SDL_GetTicks() + 2500; cc_sel_ = 0;
+                           player_.subtitles_off(); return; }
+        path = "/tmp/ytc_cc_" + t.language_code + ".vtt";
+        std::ofstream o(path, std::ios::binary); o << vtt; o.close();
+        cc_paths_[t.language_code] = path;
+    }
+    player_.add_subtitle(path);   // sub-add + select + visible
 }
 
 // Channel description in the same overlay (used from playlist rows, where each
@@ -958,6 +1008,11 @@ void App::open_menu() {
                                    MenuAction::CycleMaxQuality});
             char sb[24]; std::snprintf(sb, sizeof sb, "Speed:  %gx", playback_speed_);
             menu_items_.push_back({sb, MenuAction::CycleSpeed});
+            std::string cc = "Captions:  ";
+            if (cc_tracks_.empty()) cc += cc_running_ ? "loading..." : "none";
+            else if (cc_sel_ <= 0) cc += "Off";
+            else cc += cc_tracks_[cc_sel_ - 1].name;
+            menu_items_.push_back({cc, MenuAction::CycleCaptions});
             menu_items_.push_back({std::string("Stats for Nerds:  ")
                                    + (stats_for_nerds_ ? "Enabled" : "Disabled"),
                                    MenuAction::ToggleStats});
@@ -1085,6 +1140,7 @@ void App::menu_activate() {
         case MenuAction::CycleHwdec:
         case MenuAction::CycleSpeed:
         case MenuAction::ToggleSponsorBlock:
+        case MenuAction::CycleCaptions:
             return;   // value rows change with Left/Right only; A does nothing
         case MenuAction::Quit:
             menu_open_ = false;
@@ -1333,7 +1389,8 @@ void App::input(Action a) {
                     act == MenuAction::ToggleHideRestricted || act == MenuAction::ToggleHideShorts ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
-                    act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock)
+                    act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
+                    act == MenuAction::CycleCaptions)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -1484,6 +1541,7 @@ void App::pump_async() {
     poll_refresh();
     poll_description();
     poll_sponsorblock();
+    poll_captions();
     // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
     // (non-debounced) seek to the segment end; each segment skips at most once per
     // play so a deliberate seek back in doesn't fight the user.
@@ -2555,6 +2613,7 @@ void App::poll_resolve() {
     player_.set_volume(volume_);                 // apply the app-local volume level
     player_.set_speed(playback_speed_);          // apply speed (persists across re-resolve)
     start_sponsorblock(now_playing_item_.video_id);   // fetch skip segments off-thread
+    start_captions(now_playing_item_.video_id);        // fetch caption track list off-thread
     now_playing_title_ = r.title;
     now_playing_desc_ = r.description;          // free: came with the resolve
     playing_paced_ = r.paced;

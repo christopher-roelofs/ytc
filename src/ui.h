@@ -192,7 +192,7 @@ private:
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
-                            ToggleSponsorBlock, ClearHistory, Quit };
+                            ToggleSponsorBlock, CycleCaptions, ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -233,6 +233,19 @@ private:
     int sb_sig_ = 0;                        // bumped per video; discards stale fetches
     void start_sponsorblock(const std::string& video_id);
     void poll_sponsorblock();
+
+    // Captions/subtitles for the playing video (async track list; on-demand VTT fetch).
+    std::vector<yt::CaptionTrack> cc_tracks_;
+    int cc_sel_ = 0;                        // 0 = Off, 1..N = cc_tracks_[sel-1]
+    std::unordered_map<std::string,std::string> cc_paths_;  // lang_code -> temp VTT path
+    std::thread cc_thread_;
+    std::atomic<bool> cc_running_{false}, cc_done_{false};
+    std::mutex cc_m_;
+    std::vector<yt::CaptionTrack> cc_pending_;
+    int cc_sig_ = 0;
+    void start_captions(const std::string& video_id);
+    void poll_captions();
+    void apply_caption_selection();        // download (if needed) + sub-add or off
 
     Theme theme_;
     gfx::Window* win_;

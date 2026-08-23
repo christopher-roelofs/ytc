@@ -51,6 +51,10 @@ public:
     // Playback speed multiplier (mpv "speed"); 1.0 = normal. Applied live.
     void set_speed(double mult);
 
+    // Subtitles: add a local subtitle file and select+show it; or hide any subtitle.
+    void add_subtitle(const std::string& path);
+    void subtitles_off();
+
     bool active() const;      // a file is loaded
     bool paused() const;
     double position() const;  // seconds

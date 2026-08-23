@@ -1223,6 +1223,64 @@ std::string Innertube::video_description(const std::string& video_id) {
     } catch (...) { return ""; }
 }
 
+std::vector<CaptionTrack> Innertube::caption_tracks(const std::string& video_id) {
+    std::vector<CaptionTrack> out;
+    try {
+        const ClientFingerprint* fp = nullptr;   // IOS: widest playability + has captions
+        for (const auto& c : clients_) if (c.name == "IOS") fp = &c;
+        if (!fp && !clients_.empty()) fp = &clients_.back();
+        if (!fp) return out;
+        HttpClient http;   // LOCAL: safe from a worker thread
+        std::string vd = visitor_data_;
+        json client = json::parse(fp->context_json);
+        if (!vd.empty()) client["visitorData"] = vd;
+        client["hl"] = "en"; client["gl"] = "US";
+        json body = {{"videoId", video_id}, {"context", {{"client", client}}},
+                     {"contentCheckOk", true}, {"racyCheckOk", true}};
+        std::vector<std::string> headers = {"Content-Type: application/json",
+            "User-Agent: " + fp->user_agent,
+            "X-YouTube-Client-Name: " + std::to_string(fp->client_name_id),
+            "X-YouTube-Client-Version: " + fp->innertube_client_version};
+        if (!vd.empty()) headers.push_back("X-Goog-Visitor-Id: " + vd);
+        std::string url = std::string(kInnertubeBase) + "/player";
+        if (!api_key_.empty()) url += "?key=" + api_key_;
+        auto r = http.post(url, body.dump(), headers);
+        if (!r.ok()) return out;
+        auto j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded()) return out;
+        const json* list = find_key(j, "captionTracks");
+        if (!list || !list->is_array()) return out;
+        for (const auto& t : *list) {
+            CaptionTrack ct;
+            ct.base_url = t.value("baseUrl", "");
+            ct.language_code = t.value("languageCode", "");
+            ct.auto_generated = (t.value("kind", "") == "asr");
+            if (t.contains("name")) {
+                const json& n = t["name"];
+                if (n.contains("simpleText")) ct.name = n["simpleText"].get<std::string>();
+                else if (n.contains("runs") && n["runs"].is_array() && !n["runs"].empty())
+                    ct.name = n["runs"][0].value("text", "");
+            }
+            if (ct.name.empty()) ct.name = ct.language_code;
+            if (!ct.base_url.empty()) out.push_back(std::move(ct));
+        }
+    } catch (...) { out.clear(); }
+    return out;
+}
+
+std::string Innertube::caption_vtt(const std::string& base_url) {
+    if (base_url.empty()) return "";
+    try {
+        HttpClient http;   // LOCAL: thread-safe
+        std::string url = base_url;
+        if (url.find("&fmt=") == std::string::npos && url.find("?fmt=") == std::string::npos)
+            url += "&fmt=vtt";
+        auto r = http.get(url);
+        if (!r.ok()) return "";
+        return r.body;
+    } catch (...) { return ""; }
+}
+
 std::string Innertube::playlist_description(const std::string& playlist_id) {
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
