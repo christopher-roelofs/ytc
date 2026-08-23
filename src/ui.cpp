@@ -1872,9 +1872,19 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
             float chip_w = tw + 36 * s, chip_h = tm.tabs_h - 12 * s;
             gfx::Rect chip{tx, ty0 + 6 * s, chip_w, chip_h};
             bool st = (i == active_tab);
-            if (st && tab_focus_) rn.quad(chip, theme_.accent);
-            else if (st) { rn.quad(chip, theme_.card_sel);
-                rn.quad({chip.x, chip.y + chip.h - 3*s, chip.w, 3*s}, theme_.accent); }
+            // Active tab is always the red accent (whether reached via D-pad on the strip
+            // or the L/R shoulders). When the strip is focused, add a bright outline so
+            // you can still tell you're navigating tabs vs the grid.
+            if (st) {
+                rn.quad(chip, theme_.accent);
+                if (tab_focus_) {
+                    float b = 2 * s;
+                    rn.quad({chip.x, chip.y, chip.w, b}, theme_.text);
+                    rn.quad({chip.x, chip.y + chip.h - b, chip.w, b}, theme_.text);
+                    rn.quad({chip.x, chip.y, b, chip.h}, theme_.text);
+                    rn.quad({chip.x + chip.w - b, chip.y, b, chip.h}, theme_.text);
+                }
+            }
             rn.text(*font_body_, kTabs[i], tx + 18 * s,
                     ty0 + (tm.tabs_h - font_body_->line_height()) / 2 + 2 * s,
                     st ? theme_.text : theme_.text_dim);
