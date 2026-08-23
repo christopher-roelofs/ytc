@@ -5,3 +5,6 @@ build*/
 *.swp
 *~
 .DS_Store
+
+# Packaged port zip (regenerated from portmaster/port/ + YTC.sh; duplicates tracked files)
+portmaster/*.zip
