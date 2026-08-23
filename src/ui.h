@@ -223,7 +223,7 @@ private:
     std::string now_playing_desc_;          // free copy from the playback resolve
 
     // SponsorBlock: async-fetched skip segments for the playing video.
-    bool sponsorblock_ = true;              // setting "sponsorblock" (default on)
+    bool sponsorblock_ = false;             // setting "sponsorblock" (default off)
     std::vector<yt::SponsorSegment> sb_segments_;
     std::vector<bool> sb_skipped_;          // per-segment: already auto-skipped this play
     std::thread sb_thread_;

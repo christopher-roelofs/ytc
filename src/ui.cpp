@@ -265,7 +265,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
-    sponsorblock_ = it_.setting_int("sponsorblock", 1) != 0;   // default ON
+    sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
