@@ -192,7 +192,7 @@ private:
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
-                            ClearHistory, Quit };
+                            ToggleSponsorBlock, ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -221,6 +221,18 @@ private:
     std::mutex desc_m_;
     std::string desc_pending_, desc_pending_id_;
     std::string now_playing_desc_;          // free copy from the playback resolve
+
+    // SponsorBlock: async-fetched skip segments for the playing video.
+    bool sponsorblock_ = true;              // setting "sponsorblock" (default on)
+    std::vector<yt::SponsorSegment> sb_segments_;
+    std::vector<bool> sb_skipped_;          // per-segment: already auto-skipped this play
+    std::thread sb_thread_;
+    std::atomic<bool> sb_running_{false}, sb_done_{false};
+    std::mutex sb_m_;
+    std::vector<yt::SponsorSegment> sb_pending_;
+    int sb_sig_ = 0;                        // bumped per video; discards stale fetches
+    void start_sponsorblock(const std::string& video_id);
+    void poll_sponsorblock();
 
     Theme theme_;
     gfx::Window* win_;

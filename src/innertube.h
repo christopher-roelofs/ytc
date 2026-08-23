@@ -76,6 +76,12 @@ struct SearchResult {
     bool is_post() const { return kind == Kind::Post; }
 };
 
+// One SponsorBlock skip segment (seconds), from the community API.
+struct SponsorSegment {
+    double start = 0, end = 0;
+    std::string category;   // "sponsor", "intro", "outro", "selfpromo", ...
+};
+
 struct VideoInfo {
     std::string video_id;
     std::string title;
@@ -215,6 +221,14 @@ public:
     std::string playlist_description(const std::string& playlist_id);
     std::vector<std::pair<std::string, bool>> restricted_cache();
     void set_restricted_cached(const std::string& channel_id, bool restricted);
+
+    // SponsorBlock: skip segments for a video from the community API
+    // (sponsor.ajay.app). Privacy-preserving: queries by a 4-hex-char SHA-256 prefix
+    // of the videoId (the exact id never leaves the device), then filters locally.
+    // categories_csv e.g. "sponsor,selfpromo,intro,outro". Thread-safe (local
+    // HttpClient); never throws (empty on failure / no segments). Sorted by start.
+    std::vector<SponsorSegment> sponsor_segments(const std::string& video_id,
+                                                 const std::string& categories_csv);
 
     // True once we've obtained a session token — a proxy for "network reachable"
     // (every Innertube call needs it; it's empty until the first success).

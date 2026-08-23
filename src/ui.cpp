@@ -265,6 +265,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
+    sponsorblock_ = it_.setting_int("sponsorblock", 1) != 0;   // default ON
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTNATIVE_MAXHEIGHT overrides for testing (0 = uncapped).
@@ -278,6 +279,7 @@ App::~App() {
     if (more_thread_.joinable()) more_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
+    if (sb_thread_.joinable()) sb_thread_.join();
 }
 
 void App::set_results(std::vector<yt::SearchResult> r) {
@@ -551,6 +553,9 @@ void App::open_settings() {
     menu_items_.push_back({std::string("Ask to Resume:  ")
                            + (ask_resume_ ? "On" : "Off"),
                            MenuAction::ToggleAskResume});
+    menu_items_.push_back({std::string("SponsorBlock:  ")
+                           + (sponsorblock_ ? "On" : "Off"),
+                           MenuAction::ToggleSponsorBlock});
     const char* vname[] = {"Grid", "Carousel", "3D Carousel", "Coverflow"};
     menu_items_.push_back({std::string("View:  ") + vname[(int)view_mode_],
                            MenuAction::CycleView});
@@ -606,6 +611,16 @@ void App::adjust_setting(MenuAction a, int dir) {
         volume_ = v;
         it_.set_setting_int("volume", volume_);
         if (mode_ == Mode::Playing) player_.set_volume(volume_);   // live if playing
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::ToggleSponsorBlock) {
+        sponsorblock_ = !sponsorblock_;
+        it_.set_setting_int("sponsorblock", sponsorblock_ ? 1 : 0);
+        if (sponsorblock_ && mode_ == Mode::Playing)      // fetch now for the current video
+            start_sponsorblock(now_playing_item_.video_id);
+        else if (!sponsorblock_) { std::lock_guard<std::mutex> lk(sb_m_);
+            sb_segments_.clear(); sb_skipped_.clear(); }
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
@@ -718,6 +733,31 @@ void App::open_description(const yt::SearchResult& v) {
         desc_done_ = true;
     });
 }
+// SponsorBlock: fetch skip segments for the playing video off-thread. The result is
+// applied in poll_sponsorblock() only if the signal still matches (video unchanged).
+void App::start_sponsorblock(const std::string& video_id) {
+    { std::lock_guard<std::mutex> lk(sb_m_); sb_segments_.clear(); sb_skipped_.clear(); }
+    if (!sponsorblock_ || video_id.empty()) return;
+    int sig = ++sb_sig_;
+    if (sb_thread_.joinable()) sb_thread_.join();
+    sb_running_ = true; sb_done_ = false;
+    sb_thread_ = std::thread([this, video_id, sig]() {
+        std::vector<yt::SponsorSegment> segs;
+        try { segs = it_.sponsor_segments(video_id,
+                  "sponsor,selfpromo,interaction,intro,outro,music_offtopic"); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(sb_m_);
+          if (sig == sb_sig_) sb_pending_ = std::move(segs); }
+        sb_running_ = false; sb_done_ = true;
+    });
+}
+void App::poll_sponsorblock() {
+    if (!sb_done_.exchange(false)) return;
+    std::lock_guard<std::mutex> lk(sb_m_);
+    sb_segments_ = std::move(sb_pending_);
+    sb_pending_.clear();
+    sb_skipped_.assign(sb_segments_.size(), false);
+}
+
 // Channel description in the same overlay (used from playlist rows, where each
 // video names a different uploader).
 void App::open_channel_description(const std::string& channel_id, const std::string& name) {
@@ -1041,6 +1081,10 @@ void App::menu_activate() {
         case MenuAction::ToggleHideShorts:
         case MenuAction::ToggleAskResume:
         case MenuAction::CycleView:
+        case MenuAction::CycleVolume:
+        case MenuAction::CycleHwdec:
+        case MenuAction::CycleSpeed:
+        case MenuAction::ToggleSponsorBlock:
             return;   // value rows change with Left/Right only; A does nothing
         case MenuAction::Quit:
             menu_open_ = false;
@@ -1289,7 +1333,7 @@ void App::input(Action a) {
                     act == MenuAction::ToggleHideRestricted || act == MenuAction::ToggleHideShorts ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
-                    act == MenuAction::CycleSpeed)
+                    act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -1420,6 +1464,18 @@ void App::input(Action a) {
     ensure_visible();
 }
 
+static std::string sb_category_label(const std::string& c) {
+    if (c == "sponsor")        return "sponsor";
+    if (c == "selfpromo")      return "self-promo";
+    if (c == "interaction")    return "interaction reminder";
+    if (c == "intro")          return "intro";
+    if (c == "outro")          return "outro";
+    if (c == "music_offtopic") return "non-music section";
+    if (c == "preview")        return "recap";
+    if (c == "filler")         return "filler";
+    return c.empty() ? "segment" : c;
+}
+
 void App::pump_async() {
     thumbs_.pump();
     poll_resolve();
@@ -1427,6 +1483,29 @@ void App::pump_async() {
     poll_more();
     poll_refresh();
     poll_description();
+    poll_sponsorblock();
+    // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
+    // (non-debounced) seek to the segment end; each segment skips at most once per
+    // play so a deliberate seek back in doesn't fight the user.
+    if (sponsorblock_ && mode_ == Mode::Playing && !menu_open_ &&
+        !sb_segments_.empty() && !player_.paused()) {
+        double pos = player_.position();
+        for (size_t i = 0; i < sb_segments_.size(); ++i) {
+            const auto& sg = sb_segments_[i];
+            if (i < sb_skipped_.size() && !sb_skipped_[i] &&
+                pos >= sg.start && pos < sg.end - 0.20) {
+                player_.seek_relative(sg.end - pos);
+                sb_skipped_[i] = true;
+                played_max_ = std::max(played_max_, sg.end);
+                if (getenv("YTNATIVE_DEBUG"))
+                    std::fprintf(stderr, "[sponsorblock] skipped %s [%.1f-%.1f]\n",
+                                 sg.category.c_str(), sg.start, sg.end);
+                status_msg_ = "Skipped " + sb_category_label(sg.category);
+                status_until_ = SDL_GetTicks() + 1600;
+                break;
+            }
+        }
+    }
     // Fire a scheduled network-retry once its backoff elapses.
     if (retry_pending_ && !refresh_running_ && mode_ != Mode::Playing &&
         SDL_GetTicks() >= retry_at_) {
@@ -2475,6 +2554,7 @@ void App::poll_resolve() {
     }
     player_.set_volume(volume_);                 // apply the app-local volume level
     player_.set_speed(playback_speed_);          // apply speed (persists across re-resolve)
+    start_sponsorblock(now_playing_item_.video_id);   // fetch skip segments off-thread
     now_playing_title_ = r.title;
     now_playing_desc_ = r.description;          // free: came with the resolve
     playing_paced_ = r.paced;

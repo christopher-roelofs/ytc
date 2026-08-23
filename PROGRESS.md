@@ -252,6 +252,20 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### SponsorBlock (2026-08-23)
+- Auto-skips sponsor/intro/outro/selfpromo/interaction/music_offtopic segments via the
+  community API (sponsor.ajay.app). Settings toggle "SponsorBlock: On/Off" (persisted,
+  default On).
+- Privacy-preserving: queries by the first 4 hex chars of SHA-256(videoId) and filters
+  locally, so the exact id never leaves the device. Self-contained SHA-256 in
+  innertube.cpp (no crypto dep); Innertube::sponsor_segments(id, categories_csv).
+- Async fetch on play (start_sponsorblock, worker thread + sb_sig_ to drop stale);
+  poll_sponsorblock() installs segments. pump_async skips when position enters a segment
+  (immediate seek to end), once per segment per play, with a "Skipped <category>" toast.
+- Validated: C++ output byte-matches the reference API for 9bZkp7q19f0 (2 segments);
+  live play test logs "[sponsorblock] skipped music_offtopic [0.0-4.0]".
+- Remaining from the selected set: Captions (CC), Up-next + autoplay.
+
 ### Playback speed (2026-08-23)
 - Player options menu (while playing) gains "Speed: Nx", Left/Right cycles
   0.25/0.5/0.75/1/1.25/1.5/1.75/2x. `Player::set_speed()` -> mpv "speed" property, live.

@@ -227,6 +227,17 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VOLTEST done\n");
             return 0;
         }
+        if (const char* pid = std::getenv("YTNATIVE_SBPLAYTEST")) {
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);                          // let startup home-load finish first
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});                 // NOW set the target (won't be overwritten)
+            app.input(ui::App::Action::Select); settle(9000);
+            app.render(rn); win->screenshot(std::string(shot) + "_sb.png");
+            std::fprintf(stderr, "SBPLAYTEST done\n");
+            return 0;
+        }
         if (const char* pid = std::getenv("YTNATIVE_SPEEDTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});
