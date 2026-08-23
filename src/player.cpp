@@ -232,6 +232,12 @@ int Player::volume() const {
 void Player::set_hwdec(const std::string& mode) {
     impl_->hwdec = mode.empty() ? "auto-copy-safe" : mode;
 }
+void Player::set_speed(double mult) {
+    if (!impl_->mpv) return;
+    if (mult < 0.25) mult = 0.25;
+    if (mult > 4.0) mult = 4.0;
+    mpv_set_property(impl_->mpv, "speed", MPV_FORMAT_DOUBLE, &mult);
+}
 bool Player::active() const { return impl_->loaded; }
 bool Player::paused() const { return impl_->prop_flag("pause") != 0; }
 double Player::position() const { return impl_->prop_d("time-pos"); }
@@ -296,6 +302,7 @@ void Player::seek_relative(double) {}
 void Player::set_volume(int) {}
 int Player::volume() const { return 100; }
 void Player::set_hwdec(const std::string&) {}
+void Player::set_speed(double) {}
 bool Player::active() const { return false; }
 bool Player::paused() const { return false; }
 double Player::position() const { return 0; }

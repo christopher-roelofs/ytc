@@ -150,6 +150,7 @@ private:
                    float x, float y, float maxw, float s, float alpha);
     void render_browse_chrome(gfx::Renderer& rn, float hy);  // header + tab strip (shared)
     bool browse_empty_overlay(gfx::Renderer& rn);            // centre empty/loading text
+    void draw_status_banner(gfx::Renderer& rn, float top_y, float s); // transient msg, clamped
     void render_player(gfx::Renderer& rn);
     void render_loading(gfx::Renderer& rn);
     void render_search(gfx::Renderer& rn);
@@ -190,7 +191,8 @@ private:
                             GoHome, GoFavorites, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
-                            CycleView, CycleVolume, CycleHwdec, ClearHistory, Quit };
+                            CycleView, CycleVolume, CycleHwdec, CycleSpeed,
+                            ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -322,6 +324,7 @@ private:
     long playing_vbitrate_ = 0;     // bits/s (for byte-window -> seconds math)
     double played_max_ = 0;         // high-water playback position this session
     bool stats_for_nerds_ = false;  // overlay decode/stream stats during playback
+    double playback_speed_ = 1.0;   // per-video playback speed (resets to 1.0 each video)
     int  volume_ = 100;             // app-local volume % (0..150), persisted "volume"
     unsigned volume_overlay_until_ = 0;  // deadline to show the volume indicator
     int  hwdec_mode_ = 0;           // 0 = Hardware (auto-copy-safe), 1 = Software; "hwdec"

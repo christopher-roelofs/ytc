@@ -252,6 +252,31 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### Playback speed (2026-08-23)
+- Player options menu (while playing) gains "Speed: Nx", Left/Right cycles
+  0.25/0.5/0.75/1/1.25/1.5/1.75/2x. `Player::set_speed()` -> mpv "speed" property, live.
+- Per-video: resets to 1x on each new video (request_playback), but persists across a
+  quality re-resolve (replay_current). Applied after play() alongside volume.
+- Verified headless (YTNATIVE_SPEEDTEST): row shows "1x", Right x2 -> "1.5x".
+- Next up (user-selected feature set): SponsorBlock, Captions (CC), Up-next + autoplay.
+
+### UI polish pass (2026-08-23)
+Screenshot review + code audit; fixes in src/ui.{cpp,h}:
+- Menu popups (render_menu): item labels now ellipsized to the panel width; the footer
+  hint is reserved INSIDE the panel (no more grid bleed / last-row collision); Settings
+  panel widened (620*s) so "Label: Value" rows have room; volume/hwdec added to the
+  "Left/Right" hint set.
+- Status banner unified into draw_status_banner(): width clamped to the screen and text
+  ellipsized, so "Added <long channel> to favorites" can't run off both edges. Replaced
+  5 copies (grid/carousel/3D/coverflow/player).
+- Header (render_browse_chrome): count measured first, subtitle ellipsized to the exact
+  gap so it never slides under "loading more..."; subtitle x clears the real logo width.
+- Description overlay: opaque backdrop (video/controls no longer bleed through the inset
+  margins over the player); top clip tightened so scrolled text can't bleed into title.
+- draw_meta: 3-line tile text stacked by real line_height() instead of hardcoded 28/52*s
+  (they overlapped on sub-720p / 480p handhelds where the font scale is floor-clamped).
+- Search input: right-anchored (tail) view + always-visible caret for long queries.
+
 ### Clear History + keyboard tab-switch (2026-08-23)
 - Clear History: options menu (Select) on a tile in the History view gains a
   "Clear History" item (guarded `view_label_ == "History" && !Playing`) ->

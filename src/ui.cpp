@@ -609,6 +609,16 @@ void App::adjust_setting(MenuAction a, int dir) {
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
+    if (a == MenuAction::CycleSpeed) {
+        static const double steps[] = {0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0};
+        int n = (int)(sizeof(steps)/sizeof(steps[0])), cur = 3;   // default 1.0x
+        for (int i = 0; i < n; ++i) if (std::abs(steps[i]-playback_speed_) < 0.01) { cur = i; break; }
+        cur = (cur + dir + n) % n;
+        playback_speed_ = steps[cur];
+        if (mode_ == Mode::Playing) player_.set_speed(playback_speed_);
+        int keep = menu_sel_; open_menu(); menu_sel_ = keep;    // rebuild label in place
+        return;
+    }
     if (a == MenuAction::CycleHwdec) {
         hwdec_mode_ = hwdec_mode_ ? 0 : 1;                 // toggle Hardware/Software
         it_.set_setting_int("hwdec", hwdec_mode_);
@@ -810,7 +820,9 @@ void App::render_description(gfx::Renderer& rn) {
     const int W = win_->width(), H = win_->height();
     float s = H / 720.f;
     rn.begin(W, H);
-    rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.8f));
+    // Opaque backdrop: this overlay can sit over the player, whose video frame and
+    // control bar would otherwise bleed through the panel's inset margins.
+    rn.quad({0, 0, (float)W, (float)H}, theme_.bg);
     float mx = 70*s, my = 46*s;
     float pw = W - mx*2, ph = H - my*2;
     rn.quad({mx, my, pw, ph}, theme_.panel);
@@ -836,7 +848,9 @@ void App::render_description(gfx::Renderer& rn) {
         if (desc_scroll_ > max_scroll) desc_scroll_ = max_scroll;
         float y = body_top - desc_scroll_;
         for (const auto& l : desc_lines_) {
-            if (y + lh >= body_top && y <= body_bot - lh * 0.4f)
+            // Only draw lines whose top is at/below body_top so a scrolled line never
+            // bleeds up into the title/divider (there's no GL scissor here).
+            if (y >= body_top - 0.5f && y <= body_bot - lh * 0.4f)
                 rn.text(*font_small_, l, tx, y, theme_.text_dim);
             y += lh;
         }
@@ -898,10 +912,12 @@ void App::open_menu() {
         if (!subview_playlist_.empty() && mode_ != Mode::Playing)
             menu_items_.push_back({"Show Playlist Description",
                                    MenuAction::ShowPlaylistDescription});
-        // Quality + Stats (Left/Right) — only for the playing video.
+        // Quality + Speed + Stats (Left/Right) — only for the playing video.
         if (mode_ == Mode::Playing) {
             menu_items_.push_back({"Quality:  " + quality_label(play_prefs_.max_height),
                                    MenuAction::CycleMaxQuality});
+            char sb[24]; std::snprintf(sb, sizeof sb, "Speed:  %gx", playback_speed_);
+            menu_items_.push_back({sb, MenuAction::CycleSpeed});
             menu_items_.push_back({std::string("Stats for Nerds:  ")
                                    + (stats_for_nerds_ ? "Enabled" : "Disabled"),
                                    MenuAction::ToggleStats});
@@ -1272,7 +1288,8 @@ void App::input(Action a) {
                 if (act == MenuAction::CycleMaxQuality || act == MenuAction::ToggleStats ||
                     act == MenuAction::ToggleHideRestricted || act == MenuAction::ToggleHideShorts ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
-                    act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec)
+                    act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
+                    act == MenuAction::CycleSpeed)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -1535,21 +1552,25 @@ void App::render_menu(gfx::Renderer& rn) {
     rn.begin(W, H);
     rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.72f));
     int n = (int)menu_items_.size();
-    float iw = std::min(560.f*s, W*0.8f), ih = 58*s, gap = 8*s;
-    float ph = 60*s + n*(ih+gap);
+    // Settings rows carry a "Label:  Value" so they need more room than the
+    // context menu; widen that panel to keep values from crowding the edge.
+    float iw = std::min((menu_kind_ == MenuKind::Settings ? 620.f : 560.f)*s, W*0.86f);
+    float ih = 58*s, gap = 8*s;
+    float title_h = 56*s, foot_h = 34*s;                 // reserve the footer inside the panel
+    float ph = title_h + n*(ih+gap) + foot_h;
     float px = (W-iw)/2, py = (H-ph)/2;
     rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
     std::string heading = (menu_kind_ == MenuKind::Main) ? "Menu"
                         : (menu_kind_ == MenuKind::Settings) ? "Settings"
-                          : font_body_->ellipsize(menu_target_.title, iw);
+                          : font_body_->ellipsize(menu_target_.title, iw - 4*s);
     rn.text(*font_body_, heading, px, py, theme_.text_dim);
-    float iy = py + 56*s;
+    float iy = py + title_h;
     for (int i = 0; i < n; ++i) {
         bool sel = (i == menu_sel_);
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
-        rn.text(*font_body_, menu_items_[i].label,
+        rn.text(*font_body_, font_body_->ellipsize(menu_items_[i].label, iw - 36*s),
                 px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,
                 sel ? theme_.text : theme_.text_dim);
         iy += ih + gap;
@@ -1558,13 +1579,14 @@ void App::render_menu(gfx::Renderer& rn) {
     for (auto& it : menu_items_)
         if (it.action == MenuAction::CycleMaxQuality || it.action == MenuAction::ToggleStats ||
             it.action == MenuAction::ToggleHideRestricted || it.action == MenuAction::ToggleHideShorts ||
-            it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView)
+            it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
+            it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec)
             has_value = true;
     const char* foot = (menu_kind_ == MenuKind::Settings)
                      ? "Left/Right: change    B: back"
                      : has_value ? "A: select    Left/Right: change    B: close"
                      : "A: select    B: close";
-    rn.text(*font_small_, foot, px, iy + 8*s, theme_.text_dim);
+    rn.text(*font_small_, foot, px, iy + 10*s, theme_.text_dim);
     rn.end();
 }
 
@@ -1656,9 +1678,15 @@ void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v,
         l3 = v.view_count_text;
         if (!age.empty()) l3 += (l3.empty()?"":"   -   ") + age;
     }
-    rn.text(*font_body_,  font_body_->ellipsize(l1, maxw),  x, y,        tc);
-    rn.text(*font_small_, font_small_->ellipsize(l2, maxw), x, y + 28*s, dc);
-    rn.text(*font_small_, font_small_->ellipsize(l3, maxw), x, y + 52*s, dc);
+    // Stack the three lines by their ACTUAL rendered heights. The fonts are baked at
+    // a clamped scale (floor 0.9) while s = H/720, so hardcoded *s offsets overlap on
+    // sub-720p screens (the 480p handhelds); line_height() tracks the real glyph size.
+    float lh1 = font_body_->line_height(), lh2 = font_small_->line_height();
+    float y2 = y + lh1 + 4*s;
+    float y3 = y2 + lh2 + 3*s;
+    rn.text(*font_body_,  font_body_->ellipsize(l1, maxw),  x, y,  tc);
+    rn.text(*font_small_, font_small_->ellipsize(l2, maxw), x, y2, dc);
+    rn.text(*font_small_, font_small_->ellipsize(l3, maxw), x, y3, dc);
 }
 
 // Header bar (title + subtitle + count) and the channel/Home tab strip, drawn at
@@ -1681,11 +1709,18 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
     } else if (!view_label_.empty()) sub = view_label_;
     else if (query_.empty())         sub = "Home";
     else                             sub = "search: " + query_;
-    rn.text(*font_body_, font_body_->ellipsize(sub, W - 240*s - 160*s), 240*s, hy+32*s, theme_.text_dim);
+    // Right-aligned count/status; measure it first so the subtitle can be ellipsized
+    // to the exact gap and never slides under it (the count grows with "loading more...").
     std::string count = std::to_string(results_.size()) + " results";
     if (more_running_) count += "  -  loading more...";
     if (refresh_running_) count = "loading...";
-    rn.text(*font_small_, count, W - font_small_->text_width(count) - 32*s, hy+34*s, theme_.text_dim);
+    float count_w = font_small_->text_width(count);
+    rn.text(*font_small_, count, W - count_w - 32*s, hy+34*s, theme_.text_dim);
+    // Subtitle starts clear of the logo (its real width), ends clear of the count.
+    float sub_x = std::max(240*s, 32*s + font_title_->text_width("ytnative") + 28*s);
+    float sub_w = (W - count_w - 32*s - 20*s) - sub_x;
+    if (sub_w > 40*s)
+        rn.text(*font_body_, font_body_->ellipsize(sub, sub_w), sub_x, hy+32*s, theme_.text_dim);
 
     if (channel_tabs_active() || home_tabs_active()) {
         int active_tab = channel_tabs_active() ? chan_tab_ : home_tab_;
@@ -1795,16 +1830,24 @@ void App::render_grid(gfx::Renderer& rn) {
             32*s, H - fh + 12*s, theme_.text_dim);
 
     // Transient status banner (e.g. "This live event will begin in 3 days.").
-    if (!status_msg_.empty() && SDL_GetTicks() < status_until_) {
-        float tw = font_body_->text_width(status_msg_);
-        float bw = tw + 48*s, bh = 52*s;
-        float bx = (W - bw)/2, by = hbar + 22*s;
-        rn.quad({bx, by, bw, bh}, theme_.panel);
-        rn.quad({bx, by, 5*s, bh}, theme_.accent);
-        rn.text(*font_body_, status_msg_, bx + 24*s, by + (bh-font_body_->line_height())/2 + 3*s,
-                theme_.text);
-    }
+    draw_status_banner(rn, hbar + 22*s, s);
     rn.end();
+}
+
+// Transient status banner (resolve errors, "Added X to favorites", etc.). Width is
+// clamped to the screen and the message ellipsized, so a long channel name never
+// runs off both edges. Shared by every view's render.
+void App::draw_status_banner(gfx::Renderer& rn, float top_y, float s) {
+    if (status_msg_.empty() || SDL_GetTicks() >= status_until_) return;
+    const int W = win_->width();
+    std::string msg = font_body_->ellipsize(status_msg_, W - 96*s);
+    float tw = font_body_->text_width(msg);
+    float bw = tw + 48*s, bh = 52*s;
+    float bx = (W - bw)/2;
+    rn.quad({bx, top_y, bw, bh}, theme_.panel);
+    rn.quad({bx, top_y, 5*s, bh}, theme_.accent);
+    rn.text(*font_body_, msg, bx + 24*s, top_y + (bh-font_body_->line_height())/2 + 3*s,
+            theme_.text);
 }
 
 // Shared empty/loading centre text for the non-grid views. Returns true if it drew
@@ -1873,11 +1916,7 @@ void App::render_carousel(gfx::Renderer& rn) {
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
     rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
-    if (!status_msg_.empty() && SDL_GetTicks() < status_until_) {
-        float tw = font_body_->text_width(status_msg_);
-        rn.quad({(W-tw-48*s)/2, hbar+16*s, tw+48*s, 46*s}, theme_.panel);
-        rn.text(*font_body_, status_msg_, (W-tw)/2, hbar+26*s, theme_.text);
-    }
+    draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
 }
 
@@ -1951,11 +1990,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
     rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
-    if (!status_msg_.empty() && SDL_GetTicks() < status_until_) {
-        float tw = font_body_->text_width(status_msg_);
-        rn.quad({(W-tw-48*s)/2, hbar+16*s, tw+48*s, 46*s}, theme_.panel);
-        rn.text(*font_body_, status_msg_, (W-tw)/2, hbar+26*s, theme_.text);
-    }
+    draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
 }
 
@@ -2037,11 +2072,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
     rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
-    if (!status_msg_.empty() && SDL_GetTicks() < status_until_) {
-        float tw = font_body_->text_width(status_msg_);
-        rn.quad({(W-tw-48*s)/2, hbar+16*s, tw+48*s, 46*s}, theme_.panel);
-        rn.text(*font_body_, status_msg_, (W-tw)/2, hbar+26*s, theme_.text);
-    }
+    draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
 }
 
@@ -2164,11 +2195,7 @@ void App::render_player(gfx::Renderer& rn) {
     }
 
     // Transient status banner (e.g. resolve errors surfaced during playback).
-    if (!status_msg_.empty() && SDL_GetTicks() < status_until_) {
-        float tw = font_body_->text_width(status_msg_);
-        rn.quad({(W-tw-48*s)/2, 24*s, tw+48*s, 46*s}, theme_.panel);
-        rn.text(*font_body_, status_msg_, (W-tw)/2, 34*s, theme_.text);
-    }
+    draw_status_banner(rn, 24*s, s);
     rn.end();
 }
 
@@ -2246,11 +2273,18 @@ void App::render_search(gfx::Renderer& rn) {
     float bx = 32*s, by = hbar + 28*s, bw = W - 64*s, bh = 54*s;
     rn.quad({bx, by, bw, bh}, theme_.card);
     rn.quad({bx, by, 4*s, bh}, theme_.accent);
-    std::string shown = query_input_.empty() ? "" : query_input_;
-    rn.text(*font_body_, font_body_->ellipsize(shown, bw - 40*s),
-            bx + 18*s, by + 14*s, theme_.text);
-    float caret_x = bx + 18*s + font_body_->text_width(query_input_);
-    if ((SDL_GetTicks() / 500) % 2 == 0 && caret_x < bx + bw - 16*s)
+    // Show a right-anchored (tail) view when the query overflows, so the caret and the
+    // most-recently-typed text stay visible instead of being ellipsized away.
+    float avail = bw - 40*s;
+    std::string shown = query_input_;
+    while (font_body_->text_width(shown) > avail && !shown.empty()) {
+        size_t adv = 1; uint8_t c = (uint8_t)shown[0];   // drop one leading codepoint
+        if ((c>>5)==0x6) adv=2; else if ((c>>4)==0xE) adv=3; else if ((c>>3)==0x1E) adv=4;
+        shown.erase(0, adv);
+    }
+    rn.text(*font_body_, shown, bx + 18*s, by + 14*s, theme_.text);
+    float caret_x = bx + 18*s + font_body_->text_width(shown);
+    if ((SDL_GetTicks() / 500) % 2 == 0)
         rn.quad({caret_x + 2*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
     if (query_input_.empty())
         rn.text(*font_body_, "type to search...", bx + 18*s, by + 14*s, theme_.text_dim);
@@ -2289,6 +2323,9 @@ void App::request_playback() {
     if (!v || v->video_id.empty()) return;   // only videos are playable
     now_playing_item_ = *v;                      // context for the player options menu
     stats_for_nerds_ = false;                    // per-video: reset for each new video
+    playback_speed_ = 1.0;                       // per-video: speed back to normal
+    // (replay_current, used for quality changes, does NOT reset these -> speed persists
+    //  across a re-resolve of the same video.)
     // Ask-to-resume: if a position was saved for this video, prompt before playing.
     if (ask_resume_) {
         double rp = it_.resume_pos(v->video_id);
@@ -2437,6 +2474,7 @@ void App::poll_resolve() {
         mode_ = Mode::Grid; status_msg_ = "player failed to start"; return;
     }
     player_.set_volume(volume_);                 // apply the app-local volume level
+    player_.set_speed(playback_speed_);          // apply speed (persists across re-resolve)
     now_playing_title_ = r.title;
     now_playing_desc_ = r.description;          // free: came with the resolve
     playing_paced_ = r.paced;

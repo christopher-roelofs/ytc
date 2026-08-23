@@ -227,6 +227,21 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VOLTEST done\n");
             return 0;
         }
+        if (const char* pid = std::getenv("YTNATIVE_SPEEDTEST")) {
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(2500); app.input(ui::App::Action::Select); settle(8000);
+            app.input(ui::App::Action::Menu);                          // options menu
+            app.render(rn); win->screenshot(std::string(shot) + "_menu.png");
+            // Find + cycle the Speed row: walk down and Right a couple times.
+            for (int i = 0; i < 5; ++i) app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Right); app.input(ui::App::Action::Right);
+            app.render(rn); win->screenshot(std::string(shot) + "_speed.png");
+            std::fprintf(stderr, "SPEEDTEST done\n");
+            return 0;
+        }
         if (const char* pid = std::getenv("YTNATIVE_STATSTEST")) {
             yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
             app.set_results({sr});

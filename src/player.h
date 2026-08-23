@@ -48,6 +48,9 @@ public:
     // var, if set, always overrides this. Typical: "auto-copy-safe" / "no".
     void set_hwdec(const std::string& mode);
 
+    // Playback speed multiplier (mpv "speed"); 1.0 = normal. Applied live.
+    void set_speed(double mult);
+
     bool active() const;      // a file is loaded
     bool paused() const;
     double position() const;  // seconds
