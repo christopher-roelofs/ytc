@@ -182,7 +182,7 @@ static int open_fn(void*, char* uri, mpv_stream_cb_info* info) {
 }
 
 void register_stream(mpv_handle* mpv) {
-    mpv_stream_cb_add_ro(mpv, "ytn", nullptr, open_fn);
+    mpv_stream_cb_add_ro(mpv, "ytc", nullptr, open_fn);
 }
 
 std::string wrap_url(const std::string& url, const std::string& user_agent) {
