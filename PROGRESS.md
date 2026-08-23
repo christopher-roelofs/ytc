@@ -252,6 +252,15 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### Clear History + keyboard tab-switch (2026-08-23)
+- Clear History: options menu (Select) on a tile in the History view gains a
+  "Clear History" item (guarded `view_label_ == "History" && !Playing`) ->
+  `Innertube::clear_history()` deletes history.json, view reloads empty. Not shown
+  in other views or during playback.
+- Tab switching: gamepad L/R shoulders already call `cycle_tab` (device pad maps
+  leftshoulder:b6/rightshoulder:b7); added keyboard Q/E as the L/R equivalent for
+  local testing. Top-strip d-pad Left/Right still works; both no-op during playback.
+
 ### Video Decode toggle in Settings (Hardware/Software) (2026-08-23)
 - Need: the Intel-VAAPI-only artifacts on the laptop dev machine (see below) made a
   user-facing decode switch worth having; also useful if a specific device's hwdec is

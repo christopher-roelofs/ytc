@@ -190,7 +190,7 @@ private:
                             GoHome, GoFavorites, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
-                            CycleView, CycleVolume, CycleHwdec, Quit };
+                            CycleView, CycleVolume, CycleHwdec, ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value

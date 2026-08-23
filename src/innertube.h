@@ -191,6 +191,7 @@ public:
 
     // Watch history, persisted in history.json (most-recent first, deduped, capped).
     void add_history(const std::string& video_id, const std::string& title);
+    void clear_history();     // wipe the whole watch history (deletes history.json)
 
     // Per-video resume positions, persisted in resume.json (for ask-to-resume).
     double resume_pos(const std::string& video_id);              // seconds, 0 if none

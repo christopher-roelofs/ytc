@@ -1111,6 +1111,10 @@ void Innertube::add_history(const std::string& video_id, const std::string& titl
     o << cfg.dump(2) << "\n";
 }
 
+void Innertube::clear_history() {
+    std::remove((config_dir_ + "/history.json").c_str());
+}
+
 double Innertube::resume_pos(const std::string& video_id) {
     std::ifstream f(config_dir_ + "/resume.json");
     if (!f) return 0;

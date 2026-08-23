@@ -557,6 +557,23 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "MENUSHOT done\n");
             return 0;
         }
+        if (std::getenv("YTNATIVE_CLEARHISTTEST")) {
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            app.open_main_menu();
+            for (int i = 0; i < 3; ++i) app.input(ui::App::Action::Down);   // -> History
+            app.input(ui::App::Action::Select);                            // open History view
+            settle(1200);
+            app.input(ui::App::Action::Menu);                              // options on first tile
+            app.render(rn); win->screenshot(std::string(shot) + "_histmenu.png");
+            // Walk to the "Clear History" row (last item) and activate it.
+            for (int i = 0; i < 8; ++i) app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Select);
+            settle(600);
+            app.render(rn); win->screenshot(std::string(shot) + "_histcleared.png");
+            std::fprintf(stderr, "CLEARHISTTEST done\n");
+            return 0;
+        }
         if (std::getenv("YTNATIVE_SETTINGSSHOT")) {
             app.open_main_menu();
             for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);  // -> Settings
@@ -725,6 +742,10 @@ int main(int argc, char** argv) {
                     app.input(A::Search);            // open the keyboard
                 } else if (k == SDLK_v) {
                     app.toggle_view();               // grid <-> carousel
+                } else if (k == SDLK_q) {
+                    app.cycle_tab(-1);               // keyboard L-shoulder: prev tab
+                } else if (k == SDLK_e) {
+                    app.cycle_tab(+1);               // keyboard R-shoulder: next tab
                 } else {
                     handle(map_key(k));
                 }

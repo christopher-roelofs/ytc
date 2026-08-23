@@ -909,6 +909,9 @@ void App::open_menu() {
         if (mode_ != Mode::Playing && !t.channel_id.empty())
             menu_items_.push_back({"Go to Channel", MenuAction::OpenChannel});
     }
+    // Clear the whole watch history — only from a tile in the History view.
+    if (mode_ != Mode::Playing && view_label_ == "History")
+        menu_items_.push_back({"Clear History", MenuAction::ClearHistory});
     if (menu_items_.empty()) return;
     menu_sel_ = 0;   // adjust_setting saves/restores this across in-place rebuilds
     // Pause the player while the options menu is up (resumed on close). Don't re-pause
@@ -1008,6 +1011,13 @@ void App::menu_activate() {
         }
         case MenuAction::GoSettings:
             open_settings();              // switch this overlay to the settings submenu
+            return;
+        case MenuAction::ClearHistory:
+            menu_open_ = false; menu_paused_ = false;
+            it_.clear_history();
+            load_history();               // reload the (now empty) view
+            status_msg_ = "History cleared";
+            status_until_ = SDL_GetTicks() + 3000;
             return;
         case MenuAction::CycleMaxQuality:
         case MenuAction::ToggleStats:
