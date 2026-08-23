@@ -21,10 +21,6 @@ source $controlfolder/control.txt
 [ -f "${controlfolder}/mod_${CFW_NAME}.txt" ] && source "${controlfolder}/mod_${CFW_NAME}.txt"
 get_controls
 
-# Older PortMaster builds (e.g. AmberELEC 2023) don't export DEVICE_ARCH; fall back
-# to uname so the binary/libs names resolve. Our port is aarch64.
-[ -z "$DEVICE_ARCH" ] && DEVICE_ARCH="$(uname -m)"
-
 GAMEDIR="/$directory/ports/ytc"
 cd "$GAMEDIR"
 
@@ -38,9 +34,8 @@ export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
 export YTC_MAXHEIGHT=480
 
 $GPTOKEYB "ytc.${DEVICE_ARCH}" &
-# pm_platform_helper / pm_finish only exist on newer PortMaster — guard them.
-command -v pm_platform_helper >/dev/null 2>&1 && pm_platform_helper "$GAMEDIR/ytc.${DEVICE_ARCH}"
+pm_platform_helper "$GAMEDIR/ytc.${DEVICE_ARCH}"
 
 ./ytc.${DEVICE_ARCH}
 
-command -v pm_finish >/dev/null 2>&1 && pm_finish
+pm_finish
