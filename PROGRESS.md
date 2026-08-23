@@ -252,6 +252,17 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### Captions (CC) + Up-next/Autoplay (2026-08-23)
+- Captions: Innertube::caption_tracks() (/player captionTracks) + caption_vtt()
+  (base_url&fmt=vtt). Player options "Captions: Off/<lang>" cycles Left/Right; the
+  chosen track's WebVTT is downloaded OFF-THREAD (start async + poll_caption_download,
+  guarded by still-selected lang), written to /tmp, sub-add+select. Never blocks the UI.
+- Autoplay (Settings toggle, default On): on natural EOF, play the next playable item in
+  the current list ("Up next" toast); at end of list, async /next related_videos() and
+  play the first (results_ becomes the related set -> keeps chaining); else grid. Back
+  during the related fetch cancels. related_videos parses compactVideoRenderer.
+- Verified: caption fetch (6 tracks, valid VTT) + async sub-add on RockNIX; related=30.
+
 ### Unified portable media-stack bundle for ALL devices (2026-08-23)
 - Problem: launching a video crashed on RockNIX with `libavutil 58.29.100 -> 58.2.100`
   then Abort — the earlier RockNIX libmpv relied on the device's OLDER ffmpeg 6.x minor;
