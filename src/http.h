@@ -6,6 +6,12 @@
 #include <vector>
 #include <utility>
 
+// First existing CA-bundle path across common CFW locations (or a CURL_CA_BUNDLE /
+// SSL_CERT_FILE env override), cached. nullptr if none found. Used to pin
+// CURLOPT_CAINFO so TLS works on CFWs whose CA path differs from the compiled-in
+// default (e.g. RockNIX). Shared by HttpClient and the ytc:// stream fetcher.
+const char* http_ca_bundle();
+
 class HttpClient {
 public:
     HttpClient();

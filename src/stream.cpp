@@ -1,4 +1,5 @@
 #include "stream.h"
+#include "http.h"                // http_ca_bundle() — portable CA path across CFWs
 #include <mpv/client.h>
 #include <mpv/stream_cb.h>
 #include <curl/curl.h>
@@ -110,6 +111,7 @@ static int64_t read_fn(void* cookie, char* buf, uint64_t nbytes) {
         curl_easy_setopt(s->curl, CURLOPT_TCP_KEEPALIVE, 1L);
         curl_easy_setopt(s->curl, CURLOPT_CONNECTTIMEOUT, 15L);
         curl_easy_setopt(s->curl, CURLOPT_TIMEOUT, 20L);
+        if (const char* ca = http_ca_bundle()) curl_easy_setopt(s->curl, CURLOPT_CAINFO, ca);
         curl_easy_setopt(s->curl, CURLOPT_FRESH_CONNECT, attempt > 0 ? 1L : 0L);
 
         CURLcode rc = curl_easy_perform(s->curl);
