@@ -252,6 +252,23 @@ Single self-contained app. Targets Anbernic-class handhelds (muOS, aarch64).
   a "check your connection" banner. Verified: forced network failure (dead proxy) now
   exits 0 with "[innertube] search failed", was exit 134 (terminate) before.
 
+### Unified portable media-stack bundle for ALL devices (2026-08-23)
+- Problem: launching a video crashed on RockNIX with `libavutil 58.29.100 -> 58.2.100`
+  then Abort — the earlier RockNIX libmpv relied on the device's OLDER ffmpeg 6.x minor;
+  mpv's version check aborts on the mismatch. Relying on device ffmpeg is fragile.
+- Fix (per user: bundle matched libmpv+ffmpeg for all devices, loaded app-only so the
+  system is untouched): built a CLEAN plain ffmpeg 6.1 (no rkmpp/vaapi/v4l2/vdpau, no
+  avdevice/X11, no lzma/bz2) + render-only libmpv 0.36 against it (VO backends + lua/
+  pulse/caca/jack/openal/sndio/oss all disabled). Bundled 7 libs (~20 MB) named by
+  SONAME into the SHARED portmaster/port/libs.aarch64/ (libmpv + libav*/libsw*).
+- Rely on device for libass.so.9, libasound.so.2 (ALSA), libc/m/z/dl/pthread. NEVER
+  bundle GPU libs (EGL/GLESv2/mali/gbm/drm) — render-only libmpv needs none.
+- muOS now uses the bundle too (unified; overrides its ffmpeg-4 system libmpv). Deployed
+  to both; `mpv_initialize()=0` verified on muOS AND RockNIX (no abort), ffmpeg resolves
+  to the bundled libs. Recipe in docs/MPV_BUILD.md; obsolete prebuilt/rocknix/ removed.
+- Tradeoff: software decode everywhere (fine at 480p/720p). RK3588 hwdec = future
+  device-specific rkmpp variant. Build on oldest-glibc host (Pi Debian 11) for portability.
+
 ### Second device: RockNIX (Adreno) support + render-only libmpv bundle (2026-08-23)
 - Target 2: RockNIX handheld (Retroid Pocket, Snapdragon 865 / Adreno), aarch64, at
   192.168.86.249 (root/rocknix; DHCP — was expected at .246). Has SDL2, GLES/EGL,

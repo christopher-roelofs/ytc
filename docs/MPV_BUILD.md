@@ -80,3 +80,53 @@ libjpeg, libz, libc/m/dl/pthread.
       (software) with the bundled stack.
 - [ ] Enumerate + bundle the libass chain; ldd the final yt_ui to confirm nothing
       outside the device-provided set is unresolved.
+
+## Portable render-only bundle — all devices (2026-08-23)
+
+The port now BUNDLES a matched libmpv + ffmpeg in `portmaster/port/libs.aarch64/`,
+loaded app-only via the launch script's `LD_LIBRARY_PATH` (system untouched). This
+replaces relying on the device's libmpv — which failed on CFWs that ship none
+(RockNIX/Adreno) and hit ffmpeg-version-mismatch aborts (`libavutil 58.29 -> 58.2`)
+when relying on a device's older ffmpeg minor.
+
+Design rules:
+- Bundle ONLY the media stack: `libmpv.so.2` + ffmpeg 6.1 (`libavcodec.so.60`,
+  `libavformat.so.60`, `libavutil.so.58`, `libswscale.so.7`, `libswresample.so.4`,
+  `libavfilter.so.9`), named by SONAME. ~20 MB.
+- NEVER bundle GPU/windowing libs (libEGL/GLESv2/mali/gbm/drm) — device-specific;
+  the render-only libmpv needs none (renders via the app's SDL GL context).
+- Rely on the device for universal libs: libass.so.9, libasound.so.2 (ALSA),
+  libc/m/z/dl/pthread. (Both muOS and RockNIX ship libass; if a target lacks it the
+  app won't launch — bundle the libass tree then.)
+- Build on the OLDEST-glibc host (Orange Pi 5, Debian 11 / glibc 2.31) for forward
+  compatibility with newer devices (RockNIX glibc 2.40).
+- Tradeoff: plain ffmpeg = SOFTWARE decode everywhere (fine at 480p/720p panels).
+  Hardware decode (RK3588 rkmpp) would be a separate device-specific variant.
+
+### Clean ffmpeg (no rkmpp / no X11 / no lzma-bz2), in ~/mpvbuild/ffmpeg (n6.1):
+```
+./configure --prefix=$HOME/mpvbuild/prefix-clean --enable-shared --disable-static \
+  --disable-programs --disable-doc --disable-avdevice \
+  --disable-rkmpp --disable-vaapi --disable-v4l2-m2m --disable-vdpau \
+  --disable-lzma --disable-bzlib
+make -j8 && make install
+# verify: readelf -d prefix-clean/lib/libavcodec.so.60 | grep NEEDED  (no rkmpp/drm/lzma)
+```
+
+### Render-only libmpv against that ffmpeg, in ~/mpvbuild/mpv (0.36):
+```
+PKG_CONFIG_PATH=$HOME/mpvbuild/prefix-clean/lib/pkgconfig meson setup build-clean \
+  -Dlibmpv=true -Dcplayer=false \
+  -Ddrm=disabled -Dgbm=disabled -Degl=disabled -Djpeg=disabled \
+  -Dvulkan=disabled -Dvaapi=disabled -Dlibavdevice=disabled \
+  -Dlua=disabled -Dpulse=disabled -Dcaca=disabled -Djack=disabled \
+  -Dopenal=disabled -Dsndio=disabled -Doss-audio=disabled --buildtype=release
+ninja -C build-clean
+# verify NEEDED = libass + libav*/libsw* + libasound + libdl/m/z/pthread/c ONLY
+# (no drm/gbm/egl/mali/jpeg/avdevice/lua/pulse/caca)
+```
+Bundle `build-clean/libmpv.so.2.1.0` as `libmpv.so.2`, and the six ffmpeg libs from
+`prefix-clean/lib/<name>.so.<ver>` named by their SONAME.
+
+Verified 2026-08-23: `mpv_initialize()=0` (no abort) with the bundle on BOTH muOS
+(.248, ffmpeg-4 device) and RockNIX (.249, Adreno, no system libmpv).

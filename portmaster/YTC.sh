@@ -1,7 +1,9 @@
 #!/bin/bash
-# PortMaster launch script for ytc.
-# Uses the CFW's SDL2, GLES2 and libmpv (SONAME libmpv.so.2, mpv 0.35+);
-# curl/TLS and the rest are static in the binary. Needs network.
+# PortMaster launch script for YTC.
+# Uses the CFW's SDL2 + GLES2/EGL (device GPU driver) and libass/ALSA. libmpv +
+# ffmpeg 6.1 are BUNDLED in libs.${DEVICE_ARCH} (render-only libmpv, software
+# decode, GPU-agnostic) so playback works on CFWs that ship no libmpv (RockNIX)
+# and avoids ffmpeg-version mismatches. curl/TLS static in the binary. Needs network.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
