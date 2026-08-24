@@ -47,6 +47,7 @@ enum class Str {
     CcUnavailable, AddedFav, RemovedFav, AddedWatchLater, RemovedWatchLater, HistoryCleared,
     NoRecentUploads, PlaylistUnavailable, Cancelled, SkippedPrefix, SeekLimited,
     FindingNext, NoMoreVideos, PacedResuming, NoMpv, PlayerFailed,
+    ResumeFrom, StartOver,
     COUNT
 };
 

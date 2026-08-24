@@ -790,8 +790,9 @@ void App::render_resume_prompt(gfx::Renderer& rn) {
     rn.quad({px-20*s, py-20*s, pw+40*s, 4*s}, theme_.accent);
     rn.text(*font_body_, font_body_->ellipsize(resume_prompt_item_.title, pw), px, py, theme_.text);
     int m = (int)resume_prompt_pos_/60, sec = (int)resume_prompt_pos_%60;
-    char t[32]; std::snprintf(t, sizeof t, "Resume from %d:%02d", m, sec);
-    const char* opts[2] = {t, "Start from beginning"};
+    char tb[16]; std::snprintf(tb, sizeof tb, "%d:%02d", m, sec);
+    std::string opts[2] = { std::string(i18n::tr(i18n::Str::ResumeFrom)) + " " + tb,
+                            i18n::tr(i18n::Str::StartOver) };
     float iy = py + 60*s, ih = 56*s, gap = 10*s;
     for (int i = 0; i < 2; ++i) {
         bool sel = (i == resume_prompt_sel_);

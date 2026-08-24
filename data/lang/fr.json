@@ -106,5 +106,7 @@
   "NoMoreVideos": "Plus de vidéos",
   "PacedResuming": "Flux limité : reprise près du début",
   "NoMpv": "lecture indisponible (pas de libmpv dans cette version)",
-  "PlayerFailed": "le lecteur n'a pas démarré"
+  "PlayerFailed": "le lecteur n'a pas démarré",
+  "ResumeFrom": "Reprendre à",
+  "StartOver": "Recommencer depuis le début"
 }

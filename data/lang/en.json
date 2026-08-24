@@ -106,5 +106,7 @@
   "NoMoreVideos": "No more videos",
   "PacedResuming": "Paced stream: resuming near the start",
   "NoMpv": "playback unavailable (no libmpv in this build)",
-  "PlayerFailed": "player failed to start"
+  "PlayerFailed": "player failed to start",
+  "ResumeFrom": "Resume from",
+  "StartOver": "Start from beginning"
 }

@@ -106,5 +106,7 @@
   "NoMoreVideos": "Keine weiteren Videos",
   "PacedResuming": "Gedrosselter Stream: Fortsetzung nahe dem Anfang",
   "NoMpv": "Wiedergabe nicht verfügbar (kein libmpv in diesem Build)",
-  "PlayerFailed": "Player konnte nicht starten"
+  "PlayerFailed": "Player konnte nicht starten",
+  "ResumeFrom": "Fortsetzen ab",
+  "StartOver": "Von vorne beginnen"
 }

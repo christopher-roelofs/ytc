@@ -106,5 +106,7 @@
   "NoMoreVideos": "No hay más vídeos",
   "PacedResuming": "Transmisión pausada: reanudando cerca del inicio",
   "NoMpv": "reproducción no disponible (sin libmpv en esta versión)",
-  "PlayerFailed": "el reproductor no pudo iniciar"
+  "PlayerFailed": "el reproductor no pudo iniciar",
+  "ResumeFrom": "Reanudar desde",
+  "StartOver": "Empezar desde el principio"
 }

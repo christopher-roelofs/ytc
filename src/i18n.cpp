@@ -37,6 +37,7 @@ const char* kKeys[(int)Str::COUNT] = {
     "CcUnavailable","AddedFav","RemovedFav","AddedWatchLater","RemovedWatchLater","HistoryCleared",
     "NoRecentUploads","PlaylistUnavailable","Cancelled","SkippedPrefix","SeekLimited",
     "FindingNext","NoMoreVideos","PacedResuming","NoMpv","PlayerFailed",
+    "ResumeFrom","StartOver",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -80,6 +81,7 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Playlist unavailable","cancelled","Skipped","Seeking limited on this video (paced stream)",
     "Finding next video...","No more videos","Paced stream: resuming near the start",
     "playback unavailable (no libmpv in this build)","player failed to start",
+    "Resume from","Start from beginning",
 };
 
 struct Lang {
