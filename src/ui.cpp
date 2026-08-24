@@ -1898,13 +1898,14 @@ void App::draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
         if (auto* tex = v.thumbnail_url.empty() ? nullptr : thumbs_.get(v.thumbnail_url))
             rn.textured_cover(r, *tex, tint);
         else rn.text(*font_small_, "loading...", r.x + 12*s, r.y + r.h/2 - 9*s, A(theme_.text_dim));
-        std::string pill = v.is_playlist() ? v.view_count_text
-                         : v.is_short      ? std::string("SHORT")
+        // No badge on Shorts; videos show duration, playlists show the item count.
+        std::string pill = v.is_short ? std::string()
+                         : v.is_playlist() ? v.view_count_text
                                            : v.length_text;
         if (!pill.empty()) {
             float pw = font_small_->text_width(pill) + 12*s;
             gfx::Rect pr{r.x + r.w - pw - 8*s, r.y + r.h - 26*s, pw, 22*s};
-            rn.quad(pr, v.is_short ? A(theme_.accent) : gfx::Color{0,0,0,0.75f*alpha});
+            rn.quad(pr, gfx::Color{0,0,0,0.75f*alpha});
             rn.text(*font_small_, pill, pr.x + 6*s, pr.y + 2*s, A(theme_.text));
         }
     }
@@ -2112,10 +2113,11 @@ void App::render_grid(gfx::Renderer& rn) {
         if (y + cardh < 0 || y > H) continue;       // cull offscreen (header scrolls away)
         bool sel = (i == sel_) && !tab_focus_;
 
-        // Card background + selection ring.
+        // Card background + selection ring. The meta/footer keeps its normal color
+        // when selected — the accent border alone marks the highlight.
         gfx::Rect card{x, y, cardw, cardh};
         if (sel) rn.quad({x-4*s, y-4*s, cardw+8*s, cardh+8*s}, theme_.accent);
-        rn.quad(card, sel ? theme_.card_sel : theme_.card);
+        rn.quad(card, theme_.card);
 
         const auto& v = results_[i];
         draw_thumb(rn, v, {x, y, cardw, thumbh}, s, 1.0f);
