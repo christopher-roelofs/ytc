@@ -1015,7 +1015,7 @@ void App::render_description(gfx::Renderer& rn) {
         // Play glyph in the corner.
         rn.text(*font_small_, post_focus_ == 0 ? "Press A to play" : "",
                 vr.x, vr.y + vr.h + 6*s, theme_.text_dim);
-        body_top = vr.y + vr.h + 34*s;   // text starts below the thumbnail
+        body_top = vr.y + vr.h + 56*s;   // text starts well below the hint
     }
     if (desc_loading_) {
         rn.text(*font_small_, "Loading description...", tx, body_top, theme_.text_dim);
@@ -1481,6 +1481,10 @@ void App::input(Action a) {
                     }
                     break;
                 case Action::Back:
+                    // On the text: first B returns to the video; a second B closes.
+                    if (post_focus_ == 1) { post_focus_ = 0; desc_scroll_ = 0; }
+                    else close_desc();
+                    break;
                 case Action::Menu:  close_desc(); break;
                 default: break;
             }
