@@ -41,6 +41,7 @@ public:
 private:
     struct Pending { std::string url; std::vector<uint8_t> bytes; bool ok; };
     void worker();
+    void evict_lru();                               // GL-thread: cap resident textures
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::mutex m_;
@@ -48,6 +49,9 @@ private:
     std::vector<Pending> done_;
     std::unordered_map<std::string, std::unique_ptr<gfx::Texture>> tex_;
     std::unordered_map<std::string, bool> requested_;
+    std::unordered_map<std::string, uint64_t> used_;   // url -> last-used tick (LRU)
+    uint64_t tick_ = 0;
+    static constexpr size_t kMaxTextures = 128;         // ~30MB of mqdefault textures
 };
 
 // Async per-channel metadata (video count) for channel tiles. Worker thread calls

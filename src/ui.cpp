@@ -65,7 +65,24 @@ void ThumbCache::request(const std::string& url) {
 }
 gfx::Texture* ThumbCache::get(const std::string& url) {
     auto it = tex_.find(url);
-    return it == tex_.end() ? nullptr : it->second.get();
+    if (it == tex_.end()) return nullptr;
+    used_[url] = ++tick_;            // mark most-recently-used (visible this frame)
+    return it->second.get();
+}
+// Evict least-recently-used textures once over the cap. A scrolled-back tile just
+// re-downloads. Called on the GL thread (pump) so freeing GL textures is safe.
+void ThumbCache::evict_lru() {
+    while (tex_.size() > kMaxTextures) {
+        auto victim = tex_.begin(); uint64_t oldest = UINT64_MAX;
+        for (auto it = tex_.begin(); it != tex_.end(); ++it) {
+            uint64_t u = used_.count(it->first) ? used_[it->first] : 0;
+            if (u < oldest) { oldest = u; victim = it; }
+        }
+        std::string url = victim->first;
+        tex_.erase(victim);
+        used_.erase(url);
+        { std::lock_guard<std::mutex> lk(m_); requested_.erase(url); }  // allow re-request
+    }
 }
 void ThumbCache::worker() {
     HttpClient http;
@@ -93,8 +110,9 @@ void ThumbCache::pump(int max_uploads) {
         auto t = gfx::Texture::from_encoded(p.bytes.data(), p.bytes.size());
         if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[thumb] decode %.40s -> %s\n", p.url.c_str(), t ? "OK" : "FAIL");
-        if (t) tex_[p.url] = std::move(t);
+        if (t) { tex_[p.url] = std::move(t); used_[p.url] = ++tick_; }
     }
+    evict_lru();
 }
 
 // ---------- ChannelMetaCache ----------
@@ -291,10 +309,10 @@ void App::set_results(std::vector<yt::SearchResult> r) {
     filter_hidden(r);
     results_ = std::move(r);
     sel_ = 0; scroll_ = 0;
-    for (const auto& v : results_) {
-        thumbs_.request(v.thumbnail_url);
+    // Thumbnails are requested lazily per-viewport by the renderers (bounded memory);
+    // channel metadata is small, so fetch it up front.
+    for (const auto& v : results_)
         if (v.is_channel()) chan_meta_.request(v.channel_id);   // async video count
-    }
     queue_restricted_checks();   // judge unknown channels in the background
 }
 void App::search(const std::string& query) {
@@ -1228,7 +1246,7 @@ bool App::pop_view() {
     channel_info_ = v.channel_info;
     sel_ = v.sel; scroll_ = v.scroll;
     tab_focus_ = false;
-    for (auto& r : results_) thumbs_.request(r.thumbnail_url);
+    // Thumbnails re-requested lazily per-viewport by the renderer.
     return true;
 }
 
@@ -2012,6 +2030,14 @@ void App::render_grid(gfx::Renderer& rn) {
         int col = i % cols_, row = i / cols_;
         float x = pad + col*(cardw+gutter);
         float y = top + row*rowstep - scroll_;
+        // Prefetch thumbnails for a band around the viewport (~2 rows of slack), so we
+        // only ever download/keep textures near what's on screen (LRU caps the rest).
+        if (y + cardh > -2*rowstep && y < H + 2*rowstep) {
+            const yt::SearchResult& pv = results_[i];
+            if (!pv.thumbnail_url.empty()) thumbs_.request(pv.thumbnail_url);
+            else if (pv.is_channel()) { std::string a = chan_meta_.avatar(pv.channel_id);
+                                        if (!a.empty()) thumbs_.request(a); }
+        }
         if (y + cardh < 0 || y > H) continue;       // cull offscreen (header scrolls away)
         bool sel = (i == sel_) && !tab_focus_;
 
