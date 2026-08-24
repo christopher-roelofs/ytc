@@ -764,6 +764,11 @@ int main(int argc, char** argv) {
     // release). Speeds up after 2.5s of holding.
     int   seek_dir = 0;             // -1 rewinding, +1 fast-forwarding, 0 idle
     Uint32 seek_hold_start = 0, seek_last_rep = 0;
+    // Hold-to-navigate in the grid/carousel: the d-pad doesn't auto-repeat, so track a
+    // held direction and inject repeated moves that ACCELERATE the longer it's held.
+    A nav_action = A::None;
+    Uint8 nav_btn = 255;
+    Uint32 nav_hold_start = 0, nav_last_rep = 0;
     SDL_StartTextInput();   // enable SDL_TEXTINPUT events for the OSK
     while (running) {
         SDL_Event e;
@@ -832,12 +837,21 @@ int main(int argc, char** argv) {
                     seek_dir = (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) ? -1 : +1;
                     seek_hold_start = seek_last_rep = SDL_GetTicks();
                 }
+                // Begin hold-to-navigate tracking (grid/carousel browse, menu closed).
+                if (app.mode() == M::Grid && !app.menu_open()) {
+                    A na = map_button(b);
+                    if (na == A::Up || na == A::Down || na == A::Left || na == A::Right) {
+                        nav_action = na; nav_btn = b;
+                        nav_hold_start = nav_last_rep = SDL_GetTicks();
+                    }
+                }
             }
             else if (e.type == SDL_CONTROLLERBUTTONUP) {
                 Uint8 b = e.cbutton.button;
                 if ((b == SDL_CONTROLLER_BUTTON_DPAD_LEFT  && seek_dir < 0) ||
                     (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && seek_dir > 0))
                     seek_dir = 0;
+                if (b == nav_btn) { nav_action = A::None; nav_btn = 255; }
             }
         }
         if (app.wants_quit()) running = false;   // Exit chosen from the Start menu
@@ -853,6 +867,22 @@ int main(int argc, char** argv) {
                 if (held > 350 && now - seek_last_rep >= interval) {
                     app.input(seek_dir < 0 ? A::Left : A::Right);
                     seek_last_rep = now;
+                }
+            }
+        }
+        // Hold-to-navigate repeats with ACCELERATION: after a ~300ms hold the cursor
+        // starts stepping ~150ms apart and speeds up to ~40ms the longer it's held.
+        if (nav_action != A::None) {
+            if (app.mode() != M::Grid || app.menu_open()) {
+                nav_action = A::None; nav_btn = 255;   // context changed; stop
+            } else {
+                Uint32 now = SDL_GetTicks();
+                Uint32 held = now - nav_hold_start;
+                long interval = 150 - (long)(held / 12);   // ramp down as it's held
+                if (interval < 40) interval = 40;
+                if (held > 300 && now - nav_last_rep >= (Uint32)interval) {
+                    app.input(nav_action);
+                    nav_last_rep = now;
                 }
             }
         }
