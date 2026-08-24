@@ -15,19 +15,24 @@ static const bool kDbg = getenv("YTC_DEBUG") != nullptr;
 
 // ---------- On-screen keyboard layout ----------
 namespace {
-enum KType { KCHAR, KSPACE, KDEL, KCLEAR, KSUBMIT };
+enum KType { KCHAR, KSPACE, KDEL, KSUBMIT, KSHIFT, KLEFT, KRIGHT };
 struct Key { const char* label; KType type; char ch; int span; };
-// Rows navigable by D-pad; `span` widens a key (space/search) for layout + nav.
+// Android-TV-style QWERTY, but keeping a dedicated number row on top. `span` widens a
+// key (space/search) for layout + nav. Each row totals 10 units.
 const std::vector<std::vector<Key>> KB = {
     {{"1",KCHAR,'1',1},{"2",KCHAR,'2',1},{"3",KCHAR,'3',1},{"4",KCHAR,'4',1},{"5",KCHAR,'5',1},
      {"6",KCHAR,'6',1},{"7",KCHAR,'7',1},{"8",KCHAR,'8',1},{"9",KCHAR,'9',1},{"0",KCHAR,'0',1}},
     {{"q",KCHAR,'q',1},{"w",KCHAR,'w',1},{"e",KCHAR,'e',1},{"r",KCHAR,'r',1},{"t",KCHAR,'t',1},
      {"y",KCHAR,'y',1},{"u",KCHAR,'u',1},{"i",KCHAR,'i',1},{"o",KCHAR,'o',1},{"p",KCHAR,'p',1}},
     {{"a",KCHAR,'a',1},{"s",KCHAR,'s',1},{"d",KCHAR,'d',1},{"f",KCHAR,'f',1},{"g",KCHAR,'g',1},
-     {"h",KCHAR,'h',1},{"j",KCHAR,'j',1},{"k",KCHAR,'k',1},{"l",KCHAR,'l',1}},
-    {{"z",KCHAR,'z',1},{"x",KCHAR,'x',1},{"c",KCHAR,'c',1},{"v",KCHAR,'v',1},{"b",KCHAR,'b',1},
-     {"n",KCHAR,'n',1},{"m",KCHAR,'m',1}},
-    {{"space",KSPACE,' ',4},{"del",KDEL,0,2},{"clear",KCLEAR,0,2},{"SEARCH",KSUBMIT,0,2}},
+     {"h",KCHAR,'h',1},{"j",KCHAR,'j',1},{"k",KCHAR,'k',1},{"l",KCHAR,'l',1},{".",KCHAR,'.',1}},
+    {{"\xE2\x87\xA7",KSHIFT,0,1},                                             // U+21E7 shift
+     {"z",KCHAR,'z',1},{"x",KCHAR,'x',1},{"c",KCHAR,'c',1},{"v",KCHAR,'v',1},{"b",KCHAR,'b',1},
+     {"n",KCHAR,'n',1},{"m",KCHAR,'m',1},{",",KCHAR,',',1},
+     {"\xE2\x8C\xAB",KDEL,0,1}},                                             // U+232B backspace
+    {{"\xE2\x97\x80",KLEFT,0,1},{"\xE2\x96\xB6",KRIGHT,0,1},                  // U+25C0 / U+25B6
+     {"space",KSPACE,' ',4},{"-",KCHAR,'-',1},{"_",KCHAR,'_',1},
+     {"Search",KSUBMIT,0,2}},
 };
 } // namespace
 
@@ -2503,20 +2508,36 @@ void App::render_player(gfx::Renderer& rn) {
 void App::open_search() {
     mode_ = Mode::Search;
     query_input_ = query_;      // seed with the current query for quick edits
+    kb_caret_ = (int)query_input_.size();
+    kb_shift_ = false;
     kb_row_ = 1; kb_col_ = 0;   // start on 'q'
     status_msg_.clear();
 }
 void App::input_text(const std::string& s) {
-    for (char c : s) if (c >= 32 && c <= 126) query_input_ += c;   // ASCII-only atlas
+    for (char c : s) if (c >= 32 && c <= 126) {   // ASCII-only atlas
+        query_input_.insert(query_input_.begin() + kb_caret_, c);
+        kb_caret_++;
+    }
 }
-void App::backspace() { if (!query_input_.empty()) query_input_.pop_back(); }
+void App::backspace() {
+    if (kb_caret_ > 0) { query_input_.erase(query_input_.begin() + (kb_caret_-1)); kb_caret_--; }
+}
 void App::kb_activate() {
     const Key& k = KB[kb_row_][kb_col_];
     switch (k.type) {
-        case KCHAR:   query_input_ += k.ch; break;
-        case KSPACE:  query_input_ += ' '; break;
+        case KCHAR: {
+            char c = k.ch;
+            if (kb_shift_ && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+            query_input_.insert(query_input_.begin() + kb_caret_, c);
+            kb_caret_++;
+            kb_shift_ = false;                       // one-shot capital
+            break;
+        }
+        case KSPACE:  query_input_.insert(query_input_.begin() + kb_caret_, ' '); kb_caret_++; break;
         case KDEL:    backspace(); break;
-        case KCLEAR:  query_input_.clear(); break;
+        case KLEFT:   if (kb_caret_ > 0) kb_caret_--; break;
+        case KRIGHT:  if (kb_caret_ < (int)query_input_.size()) kb_caret_++; break;
+        case KSHIFT:  kb_shift_ = !kb_shift_; break;
         case KSUBMIT: submit_search(); break;
     }
 }
@@ -2574,39 +2595,60 @@ void App::render_search(gfx::Renderer& rn) {
     float bx = 32*s, by = hbar + 28*s, bw = W - 64*s, bh = 54*s;
     rn.quad({bx, by, bw, bh}, theme_.card);
     rn.quad({bx, by, 4*s, bh}, theme_.accent);
-    // Show a right-anchored (tail) view when the query overflows, so the caret and the
-    // most-recently-typed text stay visible instead of being ellipsized away.
-    float avail = bw - 40*s;
-    std::string shown = query_input_;
-    while (font_body_->text_width(shown) > avail && !shown.empty()) {
-        size_t adv = 1; uint8_t c = (uint8_t)shown[0];   // drop one leading codepoint
-        if ((c>>5)==0x6) adv=2; else if ((c>>4)==0xE) adv=3; else if ((c>>3)==0x1E) adv=4;
-        shown.erase(0, adv);
+    // Window the text so the caret (at kb_caret_) stays visible even when it overflows.
+    float avail = bw - 36*s;
+    int csz = (int)query_input_.size();
+    int caret = std::max(0, std::min(kb_caret_, csz));
+    int start = 0;   // pull start rightward until the pre-caret text fits
+    while (start < caret &&
+           font_body_->text_width(query_input_.substr(start, caret - start)) > avail)
+        start++;
+    std::string shown;   // extend from start while it fits
+    for (int i = start; i < csz; ++i) {
+        std::string cand = shown; cand += query_input_[i];
+        if (font_body_->text_width(cand) > avail) break;
+        shown = std::move(cand);
     }
     rn.text(*font_body_, shown, bx + 18*s, by + 14*s, theme_.text);
-    float caret_x = bx + 18*s + font_body_->text_width(shown);
-    if ((SDL_GetTicks() / 500) % 2 == 0)
-        rn.quad({caret_x + 2*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
     if (query_input_.empty())
         rn.text(*font_body_, "type to search...", bx + 18*s, by + 14*s, theme_.text_dim);
+    float caret_x = bx + 18*s + font_body_->text_width(query_input_.substr(start, caret - start));
+    if ((SDL_GetTicks() / 500) % 2 == 0)
+        rn.quad({caret_x + 1*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
 
-    // Keyboard grid.
-    float gx = 32*s, gy = by + bh + 34*s;
-    float unit = 74*s;              // width of a span-1 key
-    float keyh = 66*s, gap = 10*s;
+    // Keyboard grid — centered, full-width; selected key drawn white (ATV style).
+    float gap = 10*s;
+    float gridW = W * 0.94f;
+    float unit = (gridW - 9*gap) / 10.f;    // every row totals 10 units
+    float keyh = 60*s;
+    float gy = by + bh + 28*s;
     for (int r = 0; r < (int)KB.size(); ++r) {
-        float x = gx;
+        float roww = -gap;   // true laid-out width (count each span's internal gaps too)
+        for (const auto& k : KB[r]) roww += unit * k.span + gap * k.span;
+        float x = (W - roww) / 2;
+        float ky = gy + r*(keyh+gap);
         for (int c = 0; c < (int)KB[r].size(); ++c) {
             const Key& k = KB[r][c];
             float kw = unit * k.span + gap * (k.span - 1);
             bool sel = (r == kb_row_ && c == kb_col_);
-            gfx::Rect kr{x, gy + r*(keyh+gap), kw, keyh};
-            if (sel) rn.quad({kr.x-3*s, kr.y-3*s, kr.w+6*s, kr.h+6*s}, theme_.accent);
-            rn.quad(kr, sel ? theme_.card_sel : theme_.card);
-            const gfx::Font& f = (k.type == KCHAR || k.type == KSPACE) ? *font_body_ : *font_small_;
-            float tw = f.text_width(k.label);
-            gfx::Color tc = (k.type == KSUBMIT) ? theme_.accent : theme_.text;
-            rn.text(f, k.label, kr.x + (kw - tw)/2, kr.y + (keyh - f.line_height())/2 + 4*s, tc);
+            gfx::Rect kr{x, ky, kw, keyh};
+            gfx::Color bg = sel ? theme_.text
+                          : (k.type == KSUBMIT) ? theme_.accent : theme_.card;
+            rn.quad(kr, bg);
+            if (k.type == KSPACE) {                       // draw a space bar, not text
+                float bar = kw * 0.42f;
+                rn.quad({kr.x + (kw-bar)/2, kr.y + keyh - 16*s, bar, 3*s},
+                        sel ? theme_.bg : theme_.text_dim);
+            } else {
+                std::string lbl = k.label;
+                if (k.type == KCHAR && kb_shift_ && lbl.size()==1 && lbl[0]>='a' && lbl[0]<='z')
+                    lbl[0] = (char)(lbl[0]-'a'+'A');
+                const gfx::Font& f = *font_body_;
+                gfx::Color tc = sel ? theme_.bg
+                              : (k.type == KSHIFT && kb_shift_) ? theme_.accent : theme_.text;
+                rn.text(f, lbl, kr.x + (kw - f.text_width(lbl))/2,
+                        kr.y + (keyh - f.line_height())/2 + 4*s, tc);
+            }
             x += kw + gap;
         }
     }
@@ -2614,7 +2656,7 @@ void App::render_search(gfx::Renderer& rn) {
     // Footer hints.
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, "D-Pad: move    A: type    Y: submit    B: cancel    (or just type)",
+    rn.text(*font_small_, "D-Pad: move    A: type    Y: search    B: cancel    (or just type)",
             32*s, H - fh + 12*s, theme_.text_dim);
     rn.end();
 }

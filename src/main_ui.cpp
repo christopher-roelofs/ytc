@@ -794,6 +794,7 @@ int main(int argc, char** argv) {
     Uint8 nav_btn = 255;
     Uint32 nav_hold_start = 0, nav_last_rep = 0;
     SDL_StartTextInput();   // enable SDL_TEXTINPUT events for the OSK
+    bool swallow_text = false;  // eat the "/" TEXTINPUT that follows opening search via slash
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -824,6 +825,7 @@ int main(int argc, char** argv) {
                     if (app.menu_open()) app.input(A::Back); else app.open_main_menu(); // top-level menu
                 } else if (k == SDLK_SLASH) {
                     app.input(A::Search);            // open the keyboard
+                    swallow_text = true;             // don't let this "/" land in the query
                 } else if (k == SDLK_v) {
                     app.toggle_view();               // grid <-> carousel
                 } else if (k == SDLK_q) {
@@ -835,6 +837,7 @@ int main(int argc, char** argv) {
                 }
             }
             else if (e.type == SDL_TEXTINPUT) {
+                if (swallow_text) { swallow_text = false; continue; }
                 if (app.mode() == M::Search) app.input_text(e.text.text);
             }
             else if (e.type == SDL_JOYBUTTONDOWN) {

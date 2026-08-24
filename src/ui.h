@@ -434,6 +434,8 @@ private:
     // On-screen keyboard (Search mode).
     std::string query_input_;
     int kb_row_ = 0, kb_col_ = 0;
+    int  kb_caret_ = 0;        // insertion index into query_input_ (ASCII, byte==char)
+    bool kb_shift_ = false;    // one-shot uppercase for the next letter
 
     // Async resolve (Select -> background thread -> play on the GL thread).
     std::thread resolve_thread_;
