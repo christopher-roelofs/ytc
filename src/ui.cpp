@@ -1526,6 +1526,12 @@ void App::input(Action a) {
     if (a == Action::Search) { open_search(); return; }
     if (a == Action::Menu) { open_menu(); return; }   // options for the highlighted item
     if (a == Action::Back) {
+        // First B jumps to the top of the list (first tile selected); only a second B
+        // (already at the first tile) does the view's normal back.
+        if (!results_.empty() && sel_ != 0) {
+            sel_ = 0; scroll_ = 0; carousel_pos_ = 0; ensure_visible();
+            return;
+        }
         if (pop_view()) return;                    // unwind one subview level
         // Nothing to go back to: a top-level view that isn't Home falls back to
         // Home; on Home itself, Back does nothing (never quits).
