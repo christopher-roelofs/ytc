@@ -54,5 +54,6 @@
   "FooterResume": "Πάνω/Κάτω: επιλ.    A: OK    B: ακύρ.",
   "FooterDesc": "Αρ/Δε: αλλαγή    B: πίσω",
   "FooterPlayerPlay": "[A] παύση    [Select] επιλογές    [<>] ±10δ    [Start] μενού    [B] πίσω",
-  "FooterPlayerPause": "[A] συνέχεια    [Select] επιλογές    [<>] ±10δ    [Start] μενού    [B] πίσω"
+  "FooterPlayerPause": "[A] συνέχεια    [Select] επιλογές    [<>] ±10δ    [Start] μενού    [B] πίσω",
+  "CcTranslate": "Μετάφραση"
 }

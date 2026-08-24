@@ -54,5 +54,6 @@
   "FooterResume": "Hoch/Runter: wählen    A: bestätigen    B: abbrechen",
   "FooterDesc": "Links/Rechts: ändern    B: zurück",
   "FooterPlayerPlay": "[A] Pause    [Select] Optionen    [<>] 10s springen    [Start] Menü    [B] zurück",
-  "FooterPlayerPause": "[A] Fortsetzen    [Select] Optionen    [<>] 10s springen    [Start] Menü    [B] zurück"
+  "FooterPlayerPause": "[A] Fortsetzen    [Select] Optionen    [<>] 10s springen    [Start] Menü    [B] zurück",
+  "CcTranslate": "Übersetzen"
 }

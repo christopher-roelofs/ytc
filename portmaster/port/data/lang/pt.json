@@ -54,5 +54,6 @@
   "FooterResume": "Cima/Baixo: escolher    A: confirmar    B: cancelar",
   "FooterDesc": "Esq/Dir: mudar    B: voltar",
   "FooterPlayerPlay": "[A] pausar    [Select] opções    [<>] pular 10s    [Start] menu    [B] voltar",
-  "FooterPlayerPause": "[A] retomar    [Select] opções    [<>] pular 10s    [Start] menu    [B] voltar"
+  "FooterPlayerPause": "[A] retomar    [Select] opções    [<>] pular 10s    [Start] menu    [B] voltar",
+  "CcTranslate": "Traduzir"
 }

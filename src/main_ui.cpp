@@ -297,6 +297,24 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "CCPLAYTEST done\n");
             return 0;
         }
+        if (const char* pid = std::getenv("YTC_CCTRANSTEST")) {   // translated captions
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);
+            yt::SearchResult sr; sr.video_id = pid; sr.title = pid;
+            app.set_results({sr});
+            app.input(ui::App::Action::Select); settle(8000);      // play + async cc-track fetch
+            app.input(ui::App::Action::Menu);                       // options menu
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down); // -> Captions row
+            app.input(ui::App::Action::Left);                       // Off -> wraps to Translate entry
+            app.render(rn); win->screenshot(std::string(shot) + "_cc_menu.png");
+            settle(10000);                                          // fetch tlang VTT + apply
+            app.input(ui::App::Action::Back);                       // close menu -> subs on video
+            settle(3000);
+            app.render(rn); win->screenshot(std::string(shot) + "_cc_on.png");
+            std::fprintf(stderr, "CCTRANSTEST done\n");
+            return 0;
+        }
         if (const char* pid = std::getenv("YTC_SBPLAYTEST")) {
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };

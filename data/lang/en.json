@@ -54,5 +54,6 @@
   "FooterResume": "Up/Down: choose    A: confirm    B: cancel",
   "FooterDesc": "Left/Right: change    B: back",
   "FooterPlayerPlay": "[A] pause    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
-  "FooterPlayerPause": "[A] resume    [Select] options    [<>] seek 10s    [Start] menu    [B] back"
+  "FooterPlayerPause": "[A] resume    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
+  "CcTranslate": "Translate"
 }

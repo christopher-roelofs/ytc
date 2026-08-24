@@ -30,6 +30,7 @@ enum class Str {
     // Footers (whole-string per context)
     FooterBrowse, FooterSubview, FooterSearch, FooterHomeMin, FooterResume, FooterDesc,
     FooterPlayerPlay, FooterPlayerPause,
+    CcTranslate,
     COUNT
 };
 

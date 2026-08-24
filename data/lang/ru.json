@@ -54,5 +54,6 @@
   "FooterResume": "Вверх/Вниз: выбор    A: ок    B: отмена",
   "FooterDesc": "Влево/Вправо: изменить    B: назад",
   "FooterPlayerPlay": "[A] пауза    [Select] опции    [<>] ±10с    [Start] меню    [B] назад",
-  "FooterPlayerPause": "[A] продолжить    [Select] опции    [<>] ±10с    [Start] меню    [B] назад"
+  "FooterPlayerPause": "[A] продолжить    [Select] опции    [<>] ±10с    [Start] меню    [B] назад",
+  "CcTranslate": "Перевод"
 }

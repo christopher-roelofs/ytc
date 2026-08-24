@@ -1576,13 +1576,16 @@ std::vector<SearchResult> Innertube::related_videos(const std::string& video_id)
     } catch (...) { return {}; }
 }
 
-std::string Innertube::caption_vtt(const std::string& base_url) {
+std::string Innertube::caption_vtt(const std::string& base_url, const std::string& tlang) {
     if (base_url.empty()) return "";
     try {
         HttpClient http;   // LOCAL: thread-safe
         std::string url = base_url;
         if (url.find("&fmt=") == std::string::npos && url.find("?fmt=") == std::string::npos)
             url += "&fmt=vtt";
+        // tlang => YouTube auto-translates the track into that language server-side.
+        if (!tlang.empty() && url.find("&tlang=") == std::string::npos)
+            url += "&tlang=" + tlang;
         auto r = http.get(url);
         if (!r.ok()) return "";
         return r.body;

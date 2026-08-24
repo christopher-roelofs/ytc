@@ -25,6 +25,7 @@ const char* kKeys[(int)Str::COUNT] = {
     "PressAToPlay","UpNext","LoadingDescription","LoadingCaptions",
     "FooterBrowse","FooterSubview","FooterSearch","FooterHomeMin","FooterResume","FooterDesc",
     "FooterPlayerPlay","FooterPlayerPause",
+    "CcTranslate",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -49,6 +50,7 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Left/Right: change    B: back",
     "[A] pause    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
     "[A] resume    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
+    "Translate",
 };
 
 struct Lang {

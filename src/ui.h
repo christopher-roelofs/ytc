@@ -271,6 +271,7 @@ private:
     void start_captions(const std::string& video_id);
     void poll_captions();
     void apply_caption_selection();        // off / cached sub-add / kick async download
+    std::string cc_current_key() const;    // cache key for the active CC selection
     void poll_caption_download();          // install a finished VTT if still selected
 
     // Autoplay: when a video ends, play the next one automatically.

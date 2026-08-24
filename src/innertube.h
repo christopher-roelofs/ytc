@@ -275,7 +275,9 @@ public:
     // Caption/subtitle tracks for a video (one /player call). Thread-safe; empty on
     // none/failure. Fetch a track's WebVTT text with caption_vtt(track.base_url).
     std::vector<CaptionTrack> caption_tracks(const std::string& video_id);
-    std::string caption_vtt(const std::string& base_url);   // WebVTT text ("" on fail)
+    // WebVTT text ("" on fail). tlang (e.g. "es") asks YouTube to auto-translate the
+    // track into that language server-side; "" fetches the track's own language.
+    std::string caption_vtt(const std::string& base_url, const std::string& tlang = "");
 
     // Related / up-next videos for a video (one /next call). Thread-safe; video rows
     // only (channels/playlists filtered out). Empty on failure. For autoplay.
