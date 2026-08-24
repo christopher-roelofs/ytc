@@ -100,6 +100,7 @@ public:
     App(const std::string& config_path, gfx::Window* win);
     ~App();
     void set_results(std::vector<yt::SearchResult> r);
+    void test_end_playback(int idx);   // TEST-ONLY: simulate EOF of results_[idx]
     void search(const std::string& query);
     void load_home();            // "Home": RSS feed from favorite channels (empty by default)
     void load_favorites();       // favorite channels as tiles (local channels.json)
@@ -254,15 +255,25 @@ private:
     void poll_caption_download();          // install a finished VTT if still selected
 
     // Autoplay: when a video ends, play the next one automatically.
-    bool autoplay_ = true;                 // setting "autoplay" (default on)
+    bool autoplay_ = false;                // setting "autoplay" (default off)
     int  now_playing_index_ = -1;          // index in results_ the playing video came from
     std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
     std::atomic<bool> rel_running_{false}, rel_done_{false};
     std::mutex rel_m_;
     std::vector<yt::SearchResult> rel_pending_;
     bool rel_autoplay_pending_ = false;    // a related-autoplay fetch is in flight
-    void handle_playback_ended();          // EOF: autoplay next / related / back to grid
-    bool autoplay_next_in_list();          // play next playable item in results_; false if none
+    // Staged autoplay: after a video ends we wait for the last popup to clear, show an
+    // "Up next: <title>" popup on the grid, then start the next video.
+    enum class AutoState { None, WaitClear, ShowUpNext };
+    AutoState auto_state_ = AutoState::None;
+    unsigned auto_show_until_ = 0;
+    yt::SearchResult auto_next_item_;
+    int auto_next_index_ = -1;
+    void handle_playback_ended();          // EOF: arm autoplay / related / back to grid
+    int  find_next_playable(int from_index) const;  // next video row after index, or -1
+    void arm_upnext(const yt::SearchResult& v, int index);  // stage the up-next sequence
+    void step_autoplay();                  // WaitClear -> ShowUpNext -> play (in pump_async)
+    void cancel_autoplay();                // any user input during the countdown cancels it
     void start_related_autoplay(const std::string& video_id);
     void poll_related_autoplay();
     void play_item(const yt::SearchResult& v, int index);  // launch a video (no resume prompt)

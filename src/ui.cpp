@@ -266,7 +266,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
-    autoplay_ = it_.setting_int("autoplay", 1) != 0;          // default ON
+    autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
@@ -1488,7 +1488,8 @@ void App::input(Action a) {
         if (kb_col_ >= (int)KB[kb_row_].size()) kb_col_ = KB[kb_row_].size()-1;
         return;
     }
-    // Grid / carousel browse.
+    // Grid / carousel browse. Any user input here cancels a pending autoplay countdown.
+    cancel_autoplay();
     if (a == Action::Search) { open_search(); return; }
     if (a == Action::Menu) { open_menu(); return; }   // options for the highlighted item
     if (a == Action::Back) {
@@ -1578,6 +1579,7 @@ void App::pump_async() {
     poll_captions();
     poll_caption_download();
     poll_related_autoplay();
+    step_autoplay();
     // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
     // (non-debounced) seek to the segment end; each segment skips at most once per
     // play so a deliberate seek back in doesn't fight the user.
@@ -2520,6 +2522,13 @@ void App::request_playback() {
     start_resolve(v->video_id, v->title, 0);
 }
 
+void App::test_end_playback(int idx) {
+    if (idx >= 0 && idx < (int)results_.size()) {
+        now_playing_item_ = results_[idx]; now_playing_index_ = idx;
+    }
+    handle_playback_ended();
+}
+
 // Launch a specific video (autoplay path) without the resume prompt.
 void App::play_item(const yt::SearchResult& v, int index) {
     now_playing_item_ = v;
@@ -2529,34 +2538,62 @@ void App::play_item(const yt::SearchResult& v, int index) {
     start_resolve(v.video_id, v.title, 0);
 }
 
-// Called when playback ends naturally (EOF). Autoplay the next video if enabled:
-// next playable item in the current list, else a related video, else back to grid.
+// Called when playback ends naturally (EOF). If autoplay is on, pick the next video
+// (next in the current list, else a related video) and ARM the staged up-next sequence
+// instead of playing immediately; otherwise return to the grid.
 void App::handle_playback_ended() {
     if (!now_playing_item_.video_id.empty())
         it_.clear_resume_pos(now_playing_item_.video_id);   // finished -> forget resume
     player_.stop();
     has_pending_seek_ = false; pending_seek_ = 0;
-    if (autoplay_ && autoplay_next_in_list()) return;       // next in list (start_resolve -> Loading)
-    if (autoplay_) { start_related_autoplay(now_playing_item_.video_id); return; }
-    mode_ = Mode::Grid;
+    if (!autoplay_) { mode_ = Mode::Grid; return; }
+    int idx = find_next_playable(now_playing_index_);
+    if (idx >= 0) { arm_upnext(results_[idx], idx); return; }  // next in the current list
+    start_related_autoplay(now_playing_item_.video_id);        // end of list -> related
 }
 
-// Play the next playable video after now_playing_index_ in results_. False if none.
-bool App::autoplay_next_in_list() {
-    int start = now_playing_index_ >= 0 ? now_playing_index_ + 1 : (int)results_.size();
+// Index of the next playable video row after from_index in results_, or -1.
+int App::find_next_playable(int from_index) const {
+    int start = from_index >= 0 ? from_index + 1 : (int)results_.size();
     for (int i = start; i < (int)results_.size(); ++i) {
         const yt::SearchResult& v = results_[i];
-        if (v.video_id.empty() || v.is_channel() || v.is_playlist() || v.is_post()) continue;
-        sel_ = i; ensure_visible();
-        status_msg_ = "Up next: " + v.title;
-        status_until_ = SDL_GetTicks() + 3500;
-        play_item(v, i);
-        return true;
+        if (!v.video_id.empty() && !v.is_channel() && !v.is_playlist() && !v.is_post())
+            return i;
     }
-    return false;
+    return -1;
 }
 
-// End of list: fetch related videos off-thread and autoplay the first one.
+// Stage the up-next sequence: land on the grid with the next item selected; step_autoplay()
+// then waits for any current popup to clear, shows "Up next: <title>", and starts it.
+void App::arm_upnext(const yt::SearchResult& v, int index) {
+    auto_next_item_ = v;
+    auto_next_index_ = index;
+    if (index >= 0 && index < (int)results_.size()) { sel_ = index; ensure_visible(); }
+    mode_ = Mode::Grid;
+    auto_state_ = AutoState::WaitClear;
+}
+
+// Runs each frame (pump_async): advance the staged autoplay.
+void App::step_autoplay() {
+    if (auto_state_ == AutoState::None || mode_ != Mode::Grid) return;
+    unsigned now = SDL_GetTicks();
+    if (auto_state_ == AutoState::WaitClear) {
+        if (!status_msg_.empty() && now < status_until_) return;   // let the last popup finish
+        status_msg_ = "Up next: " + auto_next_item_.title;
+        status_until_ = now + 2600;
+        auto_show_until_ = now + 2600;
+        auto_state_ = AutoState::ShowUpNext;
+    } else if (auto_state_ == AutoState::ShowUpNext) {
+        if (now < auto_show_until_) return;                        // let "Up next" show
+        auto_state_ = AutoState::None;
+        play_item(auto_next_item_, auto_next_index_);              // now start the next video
+    }
+}
+void App::cancel_autoplay() {
+    if (auto_state_ != AutoState::None) { auto_state_ = AutoState::None; status_msg_.clear(); }
+}
+
+// End of list: fetch related videos off-thread, then arm the up-next sequence.
 void App::start_related_autoplay(const std::string& video_id) {
     if (video_id.empty()) { mode_ = Mode::Grid; return; }
     mode_ = Mode::Loading;
@@ -2580,12 +2617,10 @@ void App::poll_related_autoplay() {
     rel_autoplay_pending_ = false;
     if (r.empty()) { mode_ = Mode::Grid; status_msg_ = "No more videos";
                      status_until_ = SDL_GetTicks() + 2500; return; }
-    // Replace the list with the related set so subsequent autoplay chains through it.
+    // Replace the list with the related set so subsequent autoplay chains through it,
+    // then arm the same staged up-next sequence.
     results_ = std::move(r);
-    sel_ = 0; scroll_ = 0;
-    status_msg_ = "Up next: " + results_[0].title;
-    status_until_ = SDL_GetTicks() + 3500;
-    play_item(results_[0], 0);
+    arm_upnext(results_[0], 0);
 }
 
 // Save (or clear) the current playback position for ask-to-resume. Called when

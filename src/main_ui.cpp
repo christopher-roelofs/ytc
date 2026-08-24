@@ -227,6 +227,21 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VOLTEST done\n");
             return 0;
         }
+        if (std::getenv("YTC_AUTOPLAYSEQ")) {
+            std::vector<yt::SearchResult> rs(2);
+            rs[0].video_id = "aaaaaaaaaaa"; rs[0].title = "First Video (just ended)";
+            rs[1].video_id = "bbbbbbbbbbb"; rs[1].title = "Second Video Title Here";
+            rs[1].author = "Some Channel";
+            app.set_results(rs);
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(300);
+            app.test_end_playback(0);                 // simulate EOF of item 0
+            settle(200); app.render(rn); win->screenshot(std::string(shot) + "_armed.png");
+            settle(1200); app.render(rn); win->screenshot(std::string(shot) + "_upnext.png");
+            std::fprintf(stderr, "AUTOPLAYSEQ done\n");
+            return 0;
+        }
         if (const char* pid = std::getenv("YTC_CCPLAYTEST")) {
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
