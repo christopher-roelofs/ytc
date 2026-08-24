@@ -267,6 +267,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
     autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
+    home_source_ = it_.setting_int("home_source", 0) ? 1 : 0; // 0 favorites / 1 +history
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
@@ -443,7 +444,7 @@ void App::refresh_current_view(bool is_retry) {
                 else               f = it_.channel_feed(id);
             }
             else if (kind == RK_PLAYLIST)        f = it_.playlist_feed(id);
-            else if (kind == RK_HOME) { f.items = it_.home_feed();
+            else if (kind == RK_HOME) { f.items = it_.home_feed({}, 120, home_source_ == 1);
                 // ok unless we have favourites but couldn't reach the network
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else if (kind == RK_HOME_PLAYLISTS){ f.items = it_.home_playlists();
@@ -557,6 +558,9 @@ void App::open_settings() {
     menu_items_.push_back({std::string("Ask to Resume:  ")
                            + (ask_resume_ ? "On" : "Off"),
                            MenuAction::ToggleAskResume});
+    menu_items_.push_back({std::string("Home Feed:  ")
+                           + (home_source_ == 1 ? "Favorites + History" : "Favorites"),
+                           MenuAction::CycleHomeSource});
     menu_items_.push_back({std::string("Autoplay:  ")
                            + (autoplay_ ? "On" : "Off"),
                            MenuAction::ToggleAutoplay});
@@ -624,6 +628,15 @@ void App::adjust_setting(MenuAction a, int dir) {
     if (a == MenuAction::ToggleAutoplay) {
         autoplay_ = !autoplay_;
         it_.set_setting_int("autoplay", autoplay_ ? 1 : 0);
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::CycleHomeSource) {
+        home_source_ = home_source_ ? 0 : 1;
+        it_.set_setting_int("home_source", home_source_);
+        // If we're viewing Home, re-fetch with the new source.
+        if (query_.empty() && view_label_.empty() && !in_channel_view_)
+            refresh_current_view();
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
@@ -1175,6 +1188,7 @@ void App::menu_activate() {
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
         case MenuAction::ToggleAutoplay:
+        case MenuAction::CycleHomeSource:
             return;   // value rows change with Left/Right only; A does nothing
         case MenuAction::Quit:
             menu_open_ = false;
@@ -1424,7 +1438,8 @@ void App::input(Action a) {
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
-                    act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay)
+                    act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
+                    act == MenuAction::CycleHomeSource)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -1728,7 +1743,18 @@ void App::render_menu(gfx::Renderer& rn) {
     float iw = std::min((menu_kind_ == MenuKind::Settings ? 620.f : 560.f)*s, W*0.86f);
     float ih = 58*s, gap = 8*s;
     float title_h = 56*s, foot_h = 34*s;                 // reserve the footer inside the panel
-    float ph = title_h + n*(ih+gap) + foot_h;
+    // Clamp to the screen and scroll the item list when it's too tall to fit.
+    float margin = 22*s;
+    float items_budget = (float)H - 2*margin - 48*s - title_h - foot_h;
+    int max_vis = std::max(1, (int)(items_budget / (ih + gap)));
+    int vis = std::min(n, max_vis);
+    int first = 0;
+    if (n > vis) {                                        // keep the selection in view
+        first = menu_sel_ - vis / 2;
+        if (first < 0) first = 0;
+        if (first > n - vis) first = n - vis;
+    }
+    float ph = title_h + vis*(ih+gap) + foot_h;
     float px = (W-iw)/2, py = (H-ph)/2;
     rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
@@ -1736,8 +1762,13 @@ void App::render_menu(gfx::Renderer& rn) {
                         : (menu_kind_ == MenuKind::Settings) ? "Settings"
                           : font_body_->ellipsize(menu_target_.title, iw - 4*s);
     rn.text(*font_body_, heading, px, py, theme_.text_dim);
+    // Scroll hints (more items above/below the window).
+    if (first > 0) rn.text(*font_small_, "▲", px + iw - 18*s, py, theme_.text_dim);
+    if (first + vis < n) rn.text(*font_small_, "▼", px + iw - 18*s,
+                                 py + title_h + vis*(ih+gap) - 20*s, theme_.text_dim);
     float iy = py + title_h;
-    for (int i = 0; i < n; ++i) {
+    for (int k = 0; k < vis; ++k) {
+        int i = first + k;
         bool sel = (i == menu_sel_);
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
@@ -2778,7 +2809,8 @@ void App::poll_resolve() {
     // resolved title; fall back to the tile's title if resolve returned nothing.
     if (!now_playing_item_.video_id.empty())
         it_.add_history(now_playing_item_.video_id,
-                        r.title.empty() ? now_playing_item_.title : r.title);
+                        r.title.empty() ? now_playing_item_.title : r.title,
+                        now_playing_item_.channel_id, now_playing_item_.author);
 }
 
 void App::ensure_visible() {

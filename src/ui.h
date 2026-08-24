@@ -194,7 +194,7 @@ private:
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
-                            ClearHistory, Quit };
+                            CycleHomeSource, ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -256,6 +256,7 @@ private:
 
     // Autoplay: when a video ends, play the next one automatically.
     bool autoplay_ = false;                // setting "autoplay" (default off)
+    int  home_source_ = 0;                 // "home_source": 0 Favorites, 1 Favorites+History
     int  now_playing_index_ = -1;          // index in results_ the playing video came from
     std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
     std::atomic<bool> rel_running_{false}, rel_done_{false};

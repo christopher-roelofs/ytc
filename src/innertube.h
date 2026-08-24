@@ -171,8 +171,11 @@ public:
     // "Home": merged latest uploads (videos + Shorts) from the favorite channels via
     // the Innertube tabs (rich metadata), dated/ordered via each channel's RSS.
     // channel_ids empty -> favorites from channels.json. Never throws.
+    // include_history: also merge in channels from watch history (distinct, recent,
+    // capped), unioned with favorites. Only applies when channel_ids is empty.
     std::vector<SearchResult> home_feed(std::vector<std::string> channel_ids = {},
-                                        int max_results = 120);
+                                        int max_results = 120,
+                                        bool include_history = false);
     // Playlists from all favorite channels (parallel; grouped per channel). Never throws.
     std::vector<SearchResult> home_playlists(std::vector<std::string> channel_ids = {});
 
@@ -204,8 +207,12 @@ public:
     std::vector<std::pair<std::string,std::string>> history();       // (video_id, title), recent first
 
     // Watch history, persisted in history.json (most-recent first, deduped, capped).
-    void add_history(const std::string& video_id, const std::string& title);
+    void add_history(const std::string& video_id, const std::string& title,
+                     const std::string& channel_id = "", const std::string& channel_name = "");
     void clear_history();     // wipe the whole watch history (deletes history.json)
+    // Distinct channels from watch history, most-recent first (empty ids skipped),
+    // capped. (id, name) — name may be "" for older entries lacking it.
+    std::vector<std::pair<std::string,std::string>> history_channels(int max_channels = 12);
 
     // Per-video resume positions, persisted in resume.json (for ask-to-resume).
     double resume_pos(const std::string& video_id);              // seconds, 0 if none

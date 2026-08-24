@@ -726,10 +726,18 @@ static long long approx_age_secs(const std::string& s) {
 }
 
 std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_ids,
-                                               int max_results) {
+                                               int max_results, bool include_history) {
     std::vector<SearchResult> out;
     try {
-        if (channel_ids.empty()) channel_ids = favorite_channel_ids();
+        if (channel_ids.empty()) {
+            channel_ids = favorite_channel_ids();
+            if (include_history) {   // union in distinct recent history channels
+                std::unordered_map<std::string,bool> have;
+                for (auto& id : channel_ids) have[id] = true;
+                for (auto& [cid, nm] : history_channels())
+                    if (!have.count(cid)) { have[cid] = true; channel_ids.push_back(cid); }
+            }
+        }
         if (channel_ids.empty()) return out;
         ensure_visitor_data();   // warm ONCE; workers then only read the cached token
 
@@ -786,9 +794,13 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
         for (int w = 0; w < nw; ++w) threads.emplace_back(work);
         for (auto& t : threads) t.join();
 
-        // Channel-tab lockups don't name their own uploader — fill from favorites.
+        // Channel-tab lockups don't name their own uploader — fill from favorites,
+        // and from history channels (for the Favorites+History source).
         std::unordered_map<std::string, std::string> cname;
         for (auto& [cid, nm] : favorites()) cname[cid] = nm;
+        if (include_history)
+            for (auto& [cid, nm] : history_channels())
+                if (!nm.empty() && !cname.count(cid)) cname[cid] = nm;
 
         std::vector<SearchResult> all;
         for (auto& id : channel_ids) {
@@ -1109,7 +1121,8 @@ std::vector<std::pair<std::string,std::string>> Innertube::history() {
     return out;
 }
 
-void Innertube::add_history(const std::string& video_id, const std::string& title) {
+void Innertube::add_history(const std::string& video_id, const std::string& title,
+                            const std::string& channel_id, const std::string& channel_name) {
     if (video_id.empty()) return;
     const int kMaxHistory = 200;
     std::string path = config_dir_ + "/history.json";
@@ -1121,11 +1134,31 @@ void Innertube::add_history(const std::string& video_id, const std::string& titl
     json keep = json::array();
     for (const auto& v : cfg["videos"])
         if (v.value("id", "") != video_id) keep.push_back(v);
-    keep.insert(keep.begin(), json{{"id", video_id}, {"title", title}});
+    json entry{{"id", video_id}, {"title", title}};
+    if (!channel_id.empty())   entry["channel_id"] = channel_id;
+    if (!channel_name.empty()) entry["channel"] = channel_name;
+    keep.insert(keep.begin(), entry);
     while ((int)keep.size() > kMaxHistory) keep.erase(keep.end() - 1);
     cfg["videos"] = keep;
     std::ofstream o(path); if (!o) return;
     o << cfg.dump(2) << "\n";
+}
+
+std::vector<std::pair<std::string,std::string>> Innertube::history_channels(int max_channels) {
+    std::vector<std::pair<std::string,std::string>> out;
+    std::ifstream f(config_dir_ + "/history.json");
+    if (!f) return out;
+    json cfg = json::parse(f, nullptr, false);
+    if (cfg.is_discarded()) return out;
+    std::unordered_map<std::string,bool> seen;
+    for (const auto& v : cfg.value("videos", json::array())) {   // most-recent first
+        std::string cid = v.value("channel_id", "");
+        if (cid.empty() || seen.count(cid)) continue;
+        seen[cid] = true;
+        out.emplace_back(cid, v.value("channel", ""));
+        if ((int)out.size() >= max_channels) break;
+    }
+    return out;
 }
 
 void Innertube::clear_history() {
