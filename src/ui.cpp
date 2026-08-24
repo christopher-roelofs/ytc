@@ -767,6 +767,7 @@ void App::open_description(const yt::SearchResult& v) {
     desc_text_.clear();
     desc_lines_.clear();
     desc_scroll_ = 0; desc_wrap_w_ = 0;
+    post_has_video_ = false;   // plain description, not the post-with-video layout
     desc_open_ = true;
     // Playing video: the description arrived with the resolve — no fetch needed.
     if (mode_ == Mode::Playing && !v.is_playlist() &&
@@ -887,6 +888,7 @@ void App::open_channel_description(const std::string& channel_id, const std::str
     desc_text_.clear();
     desc_lines_.clear();
     desc_scroll_ = 0; desc_wrap_w_ = 0;
+    post_has_video_ = false;   // plain description, not the post-with-video layout
     desc_open_ = true;
     desc_loading_ = true;
     if (desc_running_) return;
@@ -911,6 +913,11 @@ void App::open_post(const yt::SearchResult& p) {
     desc_text_ = p.post_text.empty() ? "(no text)" : p.post_text;
     desc_lines_.clear(); desc_wrap_w_ = 0; desc_scroll_ = 0;
     desc_loading_ = false;
+    // Attached video: show its thumbnail (selected) on top; A plays it, Down -> text.
+    post_has_video_ = !p.video_id.empty();
+    post_thumb_url_ = p.thumbnail_url;
+    post_focus_ = 0;
+    if (post_has_video_ && !post_thumb_url_.empty()) thumbs_.request(post_thumb_url_);
     desc_open_ = true;   // desc_paused_ is managed by the caller (menu path)
 }
 
@@ -995,6 +1002,21 @@ void App::render_description(gfx::Renderer& rn) {
             tx, my + 16*s, theme_.text);
     float body_top = my + 62*s, body_bot = my + ph - 46*s;
     float wrap_w = pw - pad*2;
+    // Post with an attached video: a selectable thumbnail on top (A plays it).
+    if (post_has_video_) {
+        float tw = std::min(pw - pad*2, 360*s);
+        float th = tw * 9.f/16.f;
+        gfx::Rect vr{tx, body_top, tw, th};
+        if (post_focus_ == 0)   // selection border
+            rn.quad({vr.x-4*s, vr.y-4*s, vr.w+8*s, vr.h+8*s}, theme_.accent);
+        rn.quad(vr, theme_.thumb_bg);
+        gfx::Texture* vt = post_thumb_url_.empty() ? nullptr : thumbs_.get(post_thumb_url_);
+        if (vt) rn.textured_cover(vr, *vt, {1,1,1,1});
+        // Play glyph in the corner.
+        rn.text(*font_small_, post_focus_ == 0 ? "Press A to play" : "",
+                vr.x, vr.y + vr.h + 6*s, theme_.text_dim);
+        body_top = vr.y + vr.h + 34*s;   // text starts below the thumbnail
+    }
     if (desc_loading_) {
         rn.text(*font_small_, "Loading description...", tx, body_top, theme_.text_dim);
     } else {
@@ -1024,7 +1046,8 @@ void App::render_description(gfx::Renderer& rn) {
             rn.quad({mx + pw - 8*s, ky, 4*s, knob_h}, theme_.accent);
         }
     }
-    rn.text(*font_small_, "Up/Down: scroll    B: close",
+    rn.text(*font_small_, post_has_video_ ? "A: play video    Up/Down: move    B: close"
+                                          : "Up/Down: scroll    B: close",
             tx, my + ph - 34*s, theme_.text_dim);
     rn.end();
 }
@@ -1436,17 +1459,39 @@ void App::input(Action a) {
     // Description overlay consumes input while open (topmost).
     if (desc_open_) {
         float step = font_small_ ? (font_small_->line_height() + 4) * 3 : 60;
+        auto close_desc = [&]{
+            desc_open_ = false; desc_loading_ = false;
+            if (desc_paused_ && mode_ == Mode::Playing) player_.set_pause(false);
+            desc_paused_ = false;
+        };
+        // Post with an attached video: navigate between the video (top) and the text.
+        if (post_has_video_) {
+            switch (a) {
+                case Action::Up:
+                    if (post_focus_ == 1) { if (desc_scroll_ > 0) desc_scroll_ -= step;
+                                            else post_focus_ = 0; }
+                    break;
+                case Action::Down:
+                    if (post_focus_ == 0) post_focus_ = 1; else desc_scroll_ += step;
+                    break;
+                case Action::Select:
+                    if (post_focus_ == 0) {          // play the attached video
+                        close_desc();
+                        request_playback();          // selected() is the post; plays its video
+                    }
+                    break;
+                case Action::Back:
+                case Action::Menu:  close_desc(); break;
+                default: break;
+            }
+            return;
+        }
         switch (a) {
             case Action::Up:     desc_scroll_ -= step; break;
             case Action::Down:   desc_scroll_ += step; break;
             case Action::Back:
             case Action::Menu:
-            case Action::Select:
-                desc_open_ = false;
-                desc_loading_ = false;
-                if (desc_paused_ && mode_ == Mode::Playing) player_.set_pause(false);
-                desc_paused_ = false;
-                break;
+            case Action::Select: close_desc(); break;
             default: break;
         }
         return;

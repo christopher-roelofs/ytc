@@ -227,6 +227,30 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VOLTEST done\n");
             return 0;
         }
+        if (std::getenv("YTC_POSTVIDTEST")) {
+            yt::SearchResult p;
+            p.kind = yt::SearchResult::Kind::Post;
+            p.video_id = "dQw4w9WgXcQ";
+            p.title = "Big announcement — check out our new video! #update";
+            p.post_text = "Big announcement — check out our new video! #update\n\n"
+                          "Thanks everyone for the support. We put together a longer "
+                          "explanation below that should scroll past a couple of lines "
+                          "so we can see the post text focus state working correctly.";
+            p.thumbnail_url = "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg";
+            p.published_text = "2 days ago";
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.set_results({p});
+            app.input(ui::App::Action::Select);      // open the post view
+            settle(1500);
+            app.render(rn); win->screenshot(std::string(shot) + "_video.png");
+            app.input(ui::App::Action::Down);        // focus the post text
+            settle(200);
+            app.render(rn); win->screenshot(std::string(shot) + "_text.png");
+            std::fprintf(stderr, "POSTVIDTEST done\n");
+            return 0;
+        }
         if (std::getenv("YTC_AUTOPLAYSEQ")) {
             std::vector<yt::SearchResult> rs(2);
             rs[0].video_id = "aaaaaaaaaaa"; rs[0].title = "First Video (just ended)";

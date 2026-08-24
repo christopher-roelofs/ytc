@@ -226,6 +226,11 @@ private:
 
     // Description overlay (over the grid or the player).
     bool desc_open_ = false, desc_loading_ = false, desc_paused_ = false;
+    // Post-with-video overlay: a selectable video thumbnail on top + the post text
+    // below. post_focus_ 0 = video (A plays), 1 = text (Up/Down scrolls).
+    bool post_has_video_ = false;
+    int  post_focus_ = 0;
+    std::string post_thumb_url_;
     std::string desc_title_, desc_text_;
     std::vector<std::string> desc_lines_;   // word-wrapped cache
     float desc_wrap_w_ = 0, desc_scroll_ = 0;
