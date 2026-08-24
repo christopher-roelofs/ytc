@@ -1909,12 +1909,6 @@ void App::draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
             rn.text(*font_small_, pill, pr.x + 6*s, pr.y + 2*s, A(theme_.text));
         }
     }
-    // FAV badge only on favorite CHANNEL tiles.
-    if (v.is_channel() && !v.channel_id.empty() && fav_ids_.count(v.channel_id)) {
-        float bw = font_small_->text_width("FAV") + 12*s;
-        rn.quad({r.x + 6*s, r.y + 6*s, bw, 22*s}, A(theme_.accent));
-        rn.text(*font_small_, "FAV", r.x + 12*s, r.y + 8*s, A(theme_.bg));
-    }
 }
 
 // Compose the raw metadata lines for one result (no ellipsize — that's width-dependent
