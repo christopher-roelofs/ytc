@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <mutex>
 #include "http.h"
 
 namespace yt {
@@ -256,21 +257,26 @@ public:
 
     // True once we've obtained a session token — a proxy for "network reachable"
     // (every Innertube call needs it; it's empty until the first success).
-    bool has_visitor_data() const { return !visitor_data_.empty(); }
+    bool has_visitor_data() const { std::lock_guard<std::mutex> lk(visitor_m_); return !visitor_data_.empty(); }
 
     // visitorData is cached after first fetch; call to force refresh (e.g. on 403).
     void refresh_visitor_data();
 
 private:
-    HttpClient http_;
     std::string api_key_;
     std::string config_dir_;      // dir of clients.json (to find channels.json)
     std::vector<ClientFingerprint> clients_;
     ClientFingerprint search_client_;
     bool has_search_client_ = false;
+    // visitorData is fetched once then reused by many worker threads. All access goes
+    // through the mutex (fetch is serialized; reads take a copy) — no torn reads, and
+    // no shared CURL handle (every network call uses a local HttpClient).
+    mutable std::mutex visitor_m_;
     std::string visitor_data_;
 
-    std::string ensure_visitor_data();
+    std::string ensure_visitor_data();      // token (fetch if needed), thread-safe
+    std::string visitor_token() const;      // current token copy under the lock
+    void refresh_visitor_data_locked();     // fetch; caller holds visitor_m_
     VideoInfo try_client(const ClientFingerprint& fp, const std::string& video_id);
     std::vector<std::string> client_headers(const ClientFingerprint& fp) const;
     // One /browse call (thread-safe: local HttpClient; only READS visitor_data_,

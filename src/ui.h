@@ -151,8 +151,15 @@ private:
     // Shared per-tile drawing (grid/carousel/coverflow) — parity by construction.
     void draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
                     const gfx::Rect& r, float s, float alpha);
-    void draw_meta(gfx::Renderer& rn, const yt::SearchResult& v,
+    void draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
                    float x, float y, float maxw, float s, float alpha);
+    // Precomputed metadata lines per result (composed + humanize_age done ONCE, not
+    // every frame). Rebuilt when results_ changes; draw_meta ellipsizes on demand.
+    struct TileLines { std::string l1, l2, l3; };
+    std::vector<TileLines> tile_lines_;
+    std::vector<int> vis_;   // reused scratch for carousel/coverflow visible indices
+    void build_tile_lines();
+    static TileLines compose_lines(const yt::SearchResult& v, ChannelMetaCache& cmeta);
     void render_browse_chrome(gfx::Renderer& rn, float hy);  // header + tab strip (shared)
     bool browse_empty_overlay(gfx::Renderer& rn);            // centre empty/loading text
     void draw_status_banner(gfx::Renderer& rn, float top_y, float s); // transient msg, clamped

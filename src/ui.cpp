@@ -10,6 +10,9 @@
 
 namespace ui {
 
+// Debug logging flag, read once (avoid getenv() on the per-frame render path).
+static const bool kDbg = getenv("YTC_DEBUG") != nullptr;
+
 // ---------- On-screen keyboard layout ----------
 namespace {
 enum KType { KCHAR, KSPACE, KDEL, KCLEAR, KSUBMIT };
@@ -106,11 +109,13 @@ void ThumbCache::pump(int max_uploads) {
       for (int i = 0; i < max_uploads && !done_.empty(); ++i) {
           ready.push_back(std::move(done_.back())); done_.pop_back(); } }
     for (auto& p : ready) {
-        if (!p.ok || p.bytes.empty()) continue;
-        auto t = gfx::Texture::from_encoded(p.bytes.data(), p.bytes.size());
+        std::unique_ptr<gfx::Texture> t;
+        if (p.ok && !p.bytes.empty())
+            t = gfx::Texture::from_encoded(p.bytes.data(), p.bytes.size());
         if (getenv("YTC_DEBUG"))
             std::fprintf(stderr, "[thumb] decode %.40s -> %s\n", p.url.c_str(), t ? "OK" : "FAIL");
         if (t) { tex_[p.url] = std::move(t); used_[p.url] = ++tick_; }
+        else { std::lock_guard<std::mutex> lk(m_); requested_.erase(p.url); }  // failed -> allow retry
     }
     evict_lru();
 }
@@ -309,6 +314,7 @@ void App::set_results(std::vector<yt::SearchResult> r) {
     filter_hidden(r);
     results_ = std::move(r);
     sel_ = 0; scroll_ = 0;
+    build_tile_lines();          // precompute metadata lines once (not per frame)
     // Thumbnails are requested lazily per-viewport by the renderers (bounded memory);
     // channel metadata is small, so fetch it up front.
     for (const auto& v : results_)
@@ -791,8 +797,9 @@ void App::open_description(const yt::SearchResult& v) {
 void App::start_sponsorblock(const std::string& video_id) {
     { std::lock_guard<std::mutex> lk(sb_m_); sb_segments_.clear(); sb_skipped_.clear(); }
     if (!sponsorblock_ || video_id.empty()) return;
+    if (sb_running_) return;   // previous fetch still in flight; don't block the UI thread
     int sig = ++sb_sig_;
-    if (sb_thread_.joinable()) sb_thread_.join();
+    if (sb_thread_.joinable()) sb_thread_.join();   // finished -> instant
     sb_running_ = true; sb_done_ = false;
     sb_thread_ = std::thread([this, video_id, sig]() {
         std::vector<yt::SponsorSegment> segs;
@@ -816,8 +823,9 @@ void App::start_captions(const std::string& video_id) {
     { std::lock_guard<std::mutex> lk(cc_m_); cc_tracks_.clear(); }
     cc_sel_ = 0; cc_paths_.clear();
     if (video_id.empty()) return;
+    if (cc_running_) return;   // previous track-list fetch still in flight; don't block UI
     int sig = ++cc_sig_;
-    if (cc_thread_.joinable()) cc_thread_.join();
+    if (cc_thread_.joinable()) cc_thread_.join();   // finished -> instant
     cc_running_ = true; cc_done_ = false;
     cc_thread_ = std::thread([this, video_id, sig]() {
         std::vector<yt::CaptionTrack> t;
@@ -1246,6 +1254,7 @@ bool App::pop_view() {
     channel_info_ = v.channel_info;
     sel_ = v.sel; scroll_ = v.scroll;
     tab_focus_ = false;
+    build_tile_lines();          // recompute metadata lines for the restored list
     // Thumbnails re-requested lazily per-viewport by the renderer.
     return true;
 }
@@ -1382,6 +1391,7 @@ void App::poll_more() {
     if (channel_tabs_active())         // channel-tab rows omit the uploader
         for (auto& r : results_)
             if (r.author.empty()) r.author = query_;
+    build_tile_lines();                // refresh metadata-line cache for the grown list
     cont_token_ = next.continuation;   // new token, or "" at the end of the feed
     queue_restricted_checks();
     if (getenv("YTC_DEBUG"))
@@ -1857,36 +1867,61 @@ void App::draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
     }
 }
 
-// Draw the 3 metadata lines for one item at (x,y), width maxw, tinted by alpha.
-void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v,
+// Compose the raw metadata lines for one result (no ellipsize — that's width-dependent
+// and done at draw time). Called once per item when results_ changes, so humanize_age
+// and the string building don't run every frame.
+App::TileLines App::compose_lines(const yt::SearchResult& v, ChannelMetaCache& cmeta) {
+    TileLines t;
+    if (v.is_channel()) {
+        t.l1 = v.title; t.l2 = v.subs_text;
+        t.l3 = cmeta.video_count(v.channel_id); if (t.l3.empty()) t.l3 = v.author;
+    } else if (v.is_post()) {
+        t.l1 = v.title.substr(0, v.title.find('\n'));
+        t.l2 = v.view_count_text;
+        if (!v.published_text.empty()) t.l2 += (t.l2.empty()?"":"   -   ") + v.published_text;
+        t.l3 = v.video_id.empty() ? "Post" : "Post - has video";
+    } else if (v.is_playlist()) {
+        t.l1 = v.title; t.l2 = v.author; t.l3 = "Playlist";
+    } else {
+        t.l1 = v.title; t.l2 = v.author;
+        std::string age = humanize_age(v.published_text);
+        t.l3 = v.view_count_text;
+        if (!age.empty()) t.l3 += (t.l3.empty()?"":"   -   ") + age;
+    }
+    return t;
+}
+void App::build_tile_lines() {
+    tile_lines_.clear();
+    tile_lines_.reserve(results_.size());
+    for (const auto& v : results_) tile_lines_.push_back(compose_lines(v, chan_meta_));
+}
+// Draw the 3 metadata lines for item idx at (x,y), width maxw, tinted by alpha. Uses
+// the precomputed raw lines and only allocates a truncated string when text overflows.
+void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
                     float x, float y, float maxw, float s, float alpha) {
     gfx::Color tc = theme_.text.with_a(alpha), dc = theme_.text_dim.with_a(alpha);
-    std::string l1, l2, l3;
-    if (v.is_channel()) {
-        l1 = v.title; l2 = v.subs_text;
-        l3 = chan_meta_.video_count(v.channel_id); if (l3.empty()) l3 = v.author;
-    } else if (v.is_post()) {
-        l1 = v.title.substr(0, v.title.find('\n'));
-        l2 = v.view_count_text;
-        if (!v.published_text.empty()) l2 += (l2.empty()?"":"   -   ") + v.published_text;
-        l3 = v.video_id.empty() ? "Post" : "Post - has video";
-    } else if (v.is_playlist()) {
-        l1 = v.title; l2 = v.author; l3 = "Playlist";
-    } else {
-        l1 = v.title; l2 = v.author;
-        std::string age = humanize_age(v.published_text);
-        l3 = v.view_count_text;
-        if (!age.empty()) l3 += (l3.empty()?"":"   -   ") + age;
-    }
-    // Stack the three lines by their ACTUAL rendered heights. The fonts are baked at
-    // a clamped scale (floor 0.9) while s = H/720, so hardcoded *s offsets overlap on
-    // sub-720p screens (the 480p handhelds); line_height() tracks the real glyph size.
+    TileLines local;
+    const TileLines* t;
+    if (idx >= 0 && idx < (int)tile_lines_.size()) t = &tile_lines_[idx];
+    else { local = compose_lines(v, chan_meta_); t = &local; }   // fallback
+    // Channel video-count may arrive after the cache was built — refresh l3 live.
+    std::string chan_l3;
+    if (v.is_channel()) { chan_l3 = chan_meta_.video_count(v.channel_id);
+        if (chan_l3.empty()) chan_l3 = t->l3; }
+    const std::string& l1 = t->l1;
+    const std::string& l2 = t->l2;
+    const std::string& l3 = v.is_channel() ? chan_l3 : t->l3;
     float lh1 = font_body_->line_height(), lh2 = font_small_->line_height();
-    float y2 = y + lh1 + 4*s;
-    float y3 = y2 + lh2 + 3*s;
-    rn.text(*font_body_,  font_body_->ellipsize(l1, maxw),  x, y,  tc);
-    rn.text(*font_small_, font_small_->ellipsize(l2, maxw), x, y2, dc);
-    rn.text(*font_small_, font_small_->ellipsize(l3, maxw), x, y3, dc);
+    float y2 = y + lh1 + 4*s, y3 = y2 + lh2 + 3*s;
+    // Emit without copying when the line already fits (ellipsize() copies unconditionally).
+    auto emit = [&](gfx::Font& f, const std::string& raw, float yy, gfx::Color c) {
+        if (raw.empty()) return;
+        if (f.text_width(raw) <= maxw) rn.text(f, raw, x, yy, c);
+        else rn.text(f, f.ellipsize(raw, maxw), x, yy, c);
+    };
+    emit(*font_body_,  l1, y,  tc);
+    emit(*font_small_, l2, y2, dc);
+    emit(*font_small_, l3, y3, dc);
 }
 
 // Header bar (title + subtitle + count) and the channel/Home tab strip, drawn at
@@ -2006,7 +2041,14 @@ void App::render_grid(gfx::Renderer& rn) {
     float pad = m.pad, top = m.top, gutter = m.gutter, cardw = m.cardw,
           thumbh = m.thumbh, cardh = m.cardh, rowstep = m.rowstep;
 
-    for (int i = 0; i < (int)results_.size(); ++i) {
+    // Iterate only the rows in (and just around) the viewport instead of all N — the
+    // prefetch band is ~2 rows, so ±3 rows of margin covers it.
+    int ncards = (int)results_.size();
+    int first_row = std::max(0, (int)((scroll_ - top) / rowstep) - 3);
+    int last_row  = (int)((scroll_ - top + H) / rowstep) + 3;
+    int first_i = first_row * cols_;
+    int last_i  = std::min(ncards, (last_row + 1) * cols_);
+    for (int i = first_i; i < last_i; ++i) {
         int col = i % cols_, row = i / cols_;
         float x = pad + col*(cardw+gutter);
         float y = top + row*rowstep - scroll_;
@@ -2028,7 +2070,7 @@ void App::render_grid(gfx::Renderer& rn) {
 
         const auto& v = results_[i];
         draw_thumb(rn, v, {x, y, cardw, thumbh}, s, 1.0f);
-        draw_meta(rn, v, x + 12*s, y + thumbh + 8*s, cardw - 24*s, s, 1.0f);
+        draw_meta(rn, v, i, x + 12*s, y + thumbh + 8*s, cardw - 24*s, s, 1.0f);
     }
 
     // Footer hint bar.
@@ -2097,9 +2139,11 @@ void App::render_carousel(gfx::Renderer& rn) {
     for (int i = std::max(0, sel_-4); i < std::min(n, sel_+5); ++i)
         thumbs_.request(results_[i].thumbnail_url);
 
-    std::vector<int> vis;
-    for (int i = 0; i < n; ++i)
-        if (std::abs(i - carousel_pos_) <= 3.2f) vis.push_back(i);
+    auto& vis = vis_; vis.clear();       // reused scratch; compute range, don't scan all n
+    { int lo = std::max(0, (int)std::floor(carousel_pos_ - 3.2f));
+      int hi = std::min(n-1, (int)std::ceil(carousel_pos_ + 3.2f));
+      for (int i = lo; i <= hi; ++i)
+          if (std::abs(i - carousel_pos_) <= 3.2f) vis.push_back(i); }
     std::sort(vis.begin(), vis.end(), [&](int a, int b){
         return std::abs(a - carousel_pos_) > std::abs(b - carousel_pos_); });
 
@@ -2116,7 +2160,7 @@ void App::render_carousel(gfx::Renderer& rn) {
     // Centered item metadata below the strip (full, kind-aware, centered-ish).
     const auto& v = results_[sel_];
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + big_h/2 + 24*s;
-    draw_meta(rn, v, mx, my, mw, s, 1.0f);
+    draw_meta(rn, v, sel_, mx, my, mw, s, 1.0f);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 
@@ -2152,9 +2196,11 @@ void App::render_carousel3d(gfx::Renderer& rn) {
     for (int i = std::max(0, sel_-5); i < std::min(n, sel_+6); ++i)
         thumbs_.request(results_[i].thumbnail_url);
 
-    std::vector<int> vis;
-    for (int i = 0; i < n; ++i)
-        if (std::abs(i - carousel_pos_) <= 4.5f) vis.push_back(i);
+    auto& vis = vis_; vis.clear();       // reused scratch; compute range, don't scan all n
+    { int lo = std::max(0, (int)std::floor(carousel_pos_ - 4.5f));
+      int hi = std::min(n-1, (int)std::ceil(carousel_pos_ + 4.5f));
+      for (int i = lo; i <= hi; ++i)
+          if (std::abs(i - carousel_pos_) <= 4.5f) vis.push_back(i); }
     std::sort(vis.begin(), vis.end(), [&](int a, int b){
         return std::abs(a - carousel_pos_) > std::abs(b - carousel_pos_); });
 
@@ -2190,7 +2236,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
 
     // Centre metadata below the flow.
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + cardH*0.5f + 30*s;
-    draw_meta(rn, results_[sel_], mx, my, mw, s, 1.0f);
+    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 
@@ -2230,9 +2276,11 @@ void App::render_coverflow(gfx::Renderer& rn) {
     for (int i = std::max(0, sel_-8); i < std::min(n, sel_+9); ++i)
         thumbs_.request(results_[i].thumbnail_url);
 
-    std::vector<int> vis;
-    for (int i = 0; i < n; ++i)
-        if (std::abs(i - carousel_pos_) <= 6.5f) vis.push_back(i);
+    auto& vis = vis_; vis.clear();       // reused scratch; compute range, don't scan all n
+    { int lo = std::max(0, (int)std::floor(carousel_pos_ - 6.5f));
+      int hi = std::min(n-1, (int)std::ceil(carousel_pos_ + 6.5f));
+      for (int i = lo; i <= hi; ++i)
+          if (std::abs(i - carousel_pos_) <= 6.5f) vis.push_back(i); }
     std::sort(vis.begin(), vis.end(), [&](int a, int b){
         return std::abs(a - carousel_pos_) > std::abs(b - carousel_pos_); });
 
@@ -2272,7 +2320,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
     }
 
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + hhC + 30*s;
-    draw_meta(rn, results_[sel_], mx, my, mw, s, 1.0f);
+    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 
@@ -2299,7 +2347,7 @@ void App::render_player(gfx::Renderer& rn) {
     float s = H / 720.f;
     // mpv paints the video frame into the framebuffer first...
     static int fc = 0;
-    if (getenv("YTC_DEBUG") && (fc++ % 20 == 0))
+    if (kDbg && (fc++ % 20 == 0))
         std::fprintf(stderr, "[play] frame %d pos=%.1f dur=%.1f\n", fc, player_.position(), player_.duration());
     // Full-screen video (mpv paints the frame first)...
     player_.render(W, H);
@@ -2623,10 +2671,11 @@ void App::cancel_autoplay() {
 // End of list: fetch related videos off-thread, then arm the up-next sequence.
 void App::start_related_autoplay(const std::string& video_id) {
     if (video_id.empty()) { mode_ = Mode::Grid; return; }
+    if (rel_running_) { mode_ = Mode::Grid; return; }   // a related fetch is already running
     mode_ = Mode::Loading;
     status_msg_ = "Finding next video..."; status_until_ = SDL_GetTicks() + 6000;
     rel_autoplay_pending_ = true;
-    if (rel_thread_.joinable()) rel_thread_.join();
+    if (rel_thread_.joinable()) rel_thread_.join();   // finished -> instant
     rel_running_ = true; rel_done_ = false;
     rel_thread_ = std::thread([this, video_id]() {
         std::vector<yt::SearchResult> r;

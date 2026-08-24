@@ -96,16 +96,23 @@ std::vector<std::string> Innertube::client_headers(const ClientFingerprint& fp) 
         "User-Agent: " + fp.user_agent,
         "X-YouTube-Client-Name: " + std::to_string(fp.client_name_id),
         "X-YouTube-Client-Version: " + fp.innertube_client_version,
-        "X-Goog-Visitor-Id: " + visitor_data_};
+        "X-Goog-Visitor-Id: " + visitor_token()};
 }
 
 std::string Innertube::ensure_visitor_data() {
-    if (!visitor_data_.empty()) return visitor_data_;
-    refresh_visitor_data();
+    std::lock_guard<std::mutex> lk(visitor_m_);
+    if (visitor_data_.empty()) refresh_visitor_data_locked();
     return visitor_data_;
 }
-
-void Innertube::refresh_visitor_data() {
+std::string Innertube::visitor_token() const {
+    std::lock_guard<std::mutex> lk(visitor_m_);
+    return visitor_data_;
+}
+void Innertube::refresh_visitor_data() {   // public: force a refresh (e.g. on 403)
+    std::lock_guard<std::mutex> lk(visitor_m_);
+    refresh_visitor_data_locked();
+}
+void Innertube::refresh_visitor_data_locked() {   // caller holds visitor_m_
     // Use the first client's identity to request a visitor id.
     const auto& fp = clients_.front();
     json body = {
@@ -120,7 +127,8 @@ void Innertube::refresh_visitor_data() {
     std::string url = std::string(kInnertubeBase) + "/visitor_id";
     if (!api_key_.empty()) url += "?key=" + api_key_;
 
-    auto r = http_.post(url, body.dump(), headers);
+    HttpClient http;   // local handle — never share a CURL handle across threads
+    auto r = http.post(url, body.dump(), headers);
     if (!r.ok()) throw std::runtime_error("visitor_id HTTP " + std::to_string(r.status));
     auto j = json::parse(r.body, nullptr, false);
     if (j.is_discarded())
@@ -180,7 +188,8 @@ VideoInfo Innertube::try_client(const ClientFingerprint& fp,
     std::string url = std::string(kInnertubeBase) + "/player";
     if (!api_key_.empty()) url += "?key=" + api_key_;
 
-    auto r = http_.post(url, body.dump(), client_headers(fp));
+    HttpClient http;   // local handle — resolve() runs on a worker thread
+    auto r = http.post(url, body.dump(), client_headers(fp));
     if (!r.ok()) {
         out.status = "HTTP_ERROR";
         out.status_reason = "HTTP " + std::to_string(r.status);
@@ -537,7 +546,7 @@ Innertube::Feed Innertube::browse_tab(const std::string& browse_id, const char* 
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         json client = json::parse(fp.context_json);
-        std::string vd = visitor_data_;   // pre-warmed by callers; read-only here
+        std::string vd = visitor_token();   // pre-warmed by callers; read-only here
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
         json body = {{"browseId", browse_id}, {"context", {{"client", client}}}};
@@ -608,7 +617,7 @@ Innertube::Feed Innertube::continue_feed(const Feed& prev) {
     try {
         HttpClient http;   // LOCAL handle: continue_feed runs on a worker thread
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
-        std::string vd = visitor_data_;         // cached by the initial search/browse
+        std::string vd = visitor_token();         // cached by the initial search/browse
         if (vd.empty()) return feed;
         json client = json::parse(fp.context_json);
         client["visitorData"] = vd;
@@ -663,8 +672,9 @@ std::vector<SearchResult> Innertube::latest(std::vector<std::string> channel_ids
             }
         }
         // published (ISO-8601) sorts lexicographically == chronologically.
+        HttpClient http;   // local handle (this may run on a worker thread)
         for (const auto& id : channel_ids) {
-            auto r = http_.get("https://www.youtube.com/feeds/videos.xml?channel_id=" + id);
+            auto r = http.get("https://www.youtube.com/feeds/videos.xml?channel_id=" + id);
             if (!r.ok()) continue;
             const std::string& xml = r.body;
             // Skip the leading channel-level <title>; entries follow.
@@ -888,7 +898,7 @@ ChannelInfo Innertube::channel_info(const std::string& channel_id) {
     try {
         HttpClient http;   // LOCAL handle: safe to call from a worker thread
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
-        std::string vd = visitor_data_;   // reuse the cached session token if present
+        std::string vd = visitor_token();   // reuse the cached session token if present
         if (vd.empty()) {
             json vb = {{"context", {{"client", {{"clientName", fp.innertube_client_name},
                         {"clientVersion", fp.innertube_client_version}}}}}};
@@ -1217,7 +1227,7 @@ int Innertube::check_video_restricted(const std::string& video_id) {
         if (!fp) return -1;
 
         HttpClient http;   // LOCAL: safe from a worker thread
-        std::string vd = visitor_data_;   // reuse cached session token if present
+        std::string vd = visitor_token();   // reuse cached session token if present
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
@@ -1251,7 +1261,7 @@ std::string Innertube::video_description(const std::string& video_id) {
         if (!fp && !clients_.empty()) fp = &clients_.back();
         if (!fp) return "";
         HttpClient http;   // LOCAL: safe from a worker thread
-        std::string vd = visitor_data_;
+        std::string vd = visitor_token();
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
@@ -1280,7 +1290,7 @@ std::vector<CaptionTrack> Innertube::caption_tracks(const std::string& video_id)
         if (!fp && !clients_.empty()) fp = &clients_.back();
         if (!fp) return out;
         HttpClient http;   // LOCAL: safe from a worker thread
-        std::string vd = visitor_data_;
+        std::string vd = visitor_token();
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
@@ -1323,7 +1333,7 @@ std::vector<SearchResult> Innertube::related_videos(const std::string& video_id)
         // WEB (search_client) returns the richest watch-next secondaryResults.
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         HttpClient http;   // LOCAL: thread-safe
-        std::string vd = visitor_data_;
+        std::string vd = visitor_token();
         json client = json::parse(fp.context_json);
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
@@ -1364,7 +1374,7 @@ std::string Innertube::playlist_description(const std::string& playlist_id) {
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         HttpClient http;   // LOCAL: safe from a worker thread
-        std::string vd = visitor_data_;
+        std::string vd = visitor_token();
         json client = json::parse(fp.context_json);
         if (!vd.empty()) client["visitorData"] = vd;
         client["hl"] = "en"; client["gl"] = "US";
