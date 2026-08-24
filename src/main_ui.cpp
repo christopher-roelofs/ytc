@@ -5,6 +5,7 @@
 // Headless mode uses the SDL "offscreen" driver so the exact GLES2 UI path is
 // exercised with no display, letting us verify the UI visually via screenshots.
 #include "ui.h"
+#include "i18n.h"
 #include <SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -71,6 +72,22 @@ int main(int argc, char** argv) {
     }
     auto win = gfx::Window::create(win_w, win_h, "YTC", driver);
     if (!win) { std::fprintf(stderr, "window create failed\n"); return 1; }
+
+    // Load UI translations before the App reads the saved language. Same data-dir
+    // search as the controller DB: cwd, <exe>/data, <exe>/../data, system dirs.
+    // YTC_LANGDIR overrides. English is baked in, so failure here is non-fatal.
+    {
+        std::string d = exe_dir();
+        const char* env = std::getenv("YTC_LANGDIR");
+        std::string cands[] = { env ? std::string(env) : std::string(),
+                                "data", d + "/data", d + "/../data",
+                                "/opt/ytc", "/usr/share/ytc" };
+        for (const auto& c : cands) {
+            if (c.empty()) continue;
+            if (i18n::load(c)) { std::fprintf(stderr, "i18n: loaded %d languages from %s/lang\n",
+                                              i18n::language_count(), c.c_str()); break; }
+        }
+    }
 
     gfx::Renderer rn;
     std::unique_ptr<ui::App> app_ptr;
@@ -345,6 +362,67 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 80; ++i) { app.input(ui::App::Action::Down); settle(120); }
             settle(3000);                                // let a load-more round finish
             std::fprintf(stderr, "HOMEPAGE after-scroll count=%d\n", app.results_count());
+            return 0;
+        }
+        if (std::getenv("YTC_CHANPAGE")) {  // channel: every tab should page on scroll
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1000);
+            app.open_main_menu();
+            app.input(ui::App::Action::Down);            // -> Favorite Channels
+            app.input(ui::App::Action::Select);
+            settle(1000);
+            app.input(ui::App::Action::Select);          // open first favorite channel
+            settle(3000);                                // channel All tab
+            const char* names[] = {"Videos", "Shorts", "Playlists", "Posts"};
+            for (int t = 0; t < 4; ++t) {
+                app.cycle_tab(+1);                       // -> next tab
+                settle(3000);
+                int before = app.results_count();
+                for (int i = 0; i < 40; ++i) { app.input(ui::App::Action::Down); settle(120); }
+                settle(2500);
+                int after = app.results_count();
+                std::fprintf(stderr, "CHANPAGE %-9s %d -> %d %s\n", names[t], before, after,
+                             after > before ? "PAGED" : "(no growth)");
+            }
+            return 0;
+        }
+        if (std::getenv("YTC_HOMEPOSTS")) {  // Home Posts sub-tab: load + scroll -> load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);
+            for (int i = 0; i < 4; ++i) app.cycle_tab(+1);   // All -> Posts (tab 4)
+            settle(4000);
+            app.render(rn); win->screenshot(std::string(shot) + "_posts.png");
+            std::fprintf(stderr, "HOMEPOSTS initial count=%d\n", app.results_count());
+            for (int i = 0; i < 60; ++i) { app.input(ui::App::Action::Down); settle(120); }
+            settle(3000);
+            std::fprintf(stderr, "HOMEPOSTS after-scroll count=%d\n", app.results_count());
+            return 0;
+        }
+        if (std::getenv("YTC_HOMEPL")) {  // Home Playlists sub-tab: scroll -> load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);
+            app.cycle_tab(+1); app.cycle_tab(+1); app.cycle_tab(+1);  // -> Playlists
+            settle(4000);
+            std::fprintf(stderr, "HOMEPL initial count=%d\n", app.results_count());
+            for (int i = 0; i < 60; ++i) { app.input(ui::App::Action::Down); settle(120); }
+            settle(3000);
+            std::fprintf(stderr, "HOMEPL after-scroll count=%d\n", app.results_count());
+            return 0;
+        }
+        if (std::getenv("YTC_HOMESHORTS")) {  // Home Shorts sub-tab: scroll -> load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);                                // let the home feed load
+            app.cycle_tab(+1);                           // All -> Videos
+            app.cycle_tab(+1);                           // Videos -> Shorts
+            settle(400);
+            std::fprintf(stderr, "HOMESHORTS initial count=%d\n", app.results_count());
+            for (int i = 0; i < 60; ++i) { app.input(ui::App::Action::Down); settle(120); }
+            settle(3000);
+            std::fprintf(stderr, "HOMESHORTS after-scroll count=%d\n", app.results_count());
             return 0;
         }
         if (std::getenv("YTC_FAVTABTEST")) {  // regression: favorites -> channel -> tab Right

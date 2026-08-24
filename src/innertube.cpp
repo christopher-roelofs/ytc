@@ -112,6 +112,18 @@ void Innertube::refresh_visitor_data() {   // public: force a refresh (e.g. on 4
     std::lock_guard<std::mutex> lk(visitor_m_);
     refresh_visitor_data_locked();
 }
+void Innertube::set_locale(const std::string& hl, const std::string& gl) {
+    std::lock_guard<std::mutex> lk(locale_m_);
+    hl_ = hl; gl_ = gl;
+}
+std::pair<std::string,std::string> Innertube::locale() const {
+    std::lock_guard<std::mutex> lk(locale_m_);
+    return {hl_, gl_};
+}
+// Stamp the localized hl/gl onto an Innertube client context.
+static void apply_ctx_locale(json& client, const std::pair<std::string,std::string>& lc) {
+    client["hl"] = lc.first; client["gl"] = lc.second;
+}
 void Innertube::refresh_visitor_data_locked() {   // caller holds visitor_m_
     // Use the first client's identity to request a visitor id.
     const auto& fp = clients_.front();
@@ -176,8 +188,7 @@ VideoInfo Innertube::try_client(const ClientFingerprint& fp,
 
     json client = json::parse(fp.context_json);
     client["visitorData"] = ensure_visitor_data();
-    client["hl"] = "en";
-    client["gl"] = "US";
+    apply_ctx_locale(client, locale());
 
     json body = {
         {"videoId", video_id},
@@ -518,7 +529,7 @@ Innertube::Feed Innertube::search_feed(const std::string& query) {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         json client = json::parse(fp.context_json);
         client["visitorData"] = ensure_visitor_data();
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"query", query}, {"context", {{"client", client}}}};
         std::string url = std::string(kInnertubeBase) + "/search";
         if (!api_key_.empty()) url += "?key=" + api_key_;
@@ -548,7 +559,7 @@ Innertube::Feed Innertube::browse_tab(const std::string& browse_id, const char* 
         json client = json::parse(fp.context_json);
         std::string vd = visitor_token();   // pre-warmed by callers; read-only here
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"browseId", browse_id}, {"context", {{"client", client}}}};
         if (params && *params) body["params"] = params;
         std::string url = std::string(kInnertubeBase) + "/browse";
@@ -621,7 +632,7 @@ Innertube::Feed Innertube::continue_feed(const Feed& prev) {
         if (vd.empty()) return feed;
         json client = json::parse(fp.context_json);
         client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"continuation", prev.continuation}, {"context", {{"client", client}}}};
         std::string url = std::string(kInnertubeBase) + "/" + prev.endpoint;
         if (!api_key_.empty()) url += "?key=" + api_key_;
@@ -817,7 +828,10 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
         if (cursor) {
             cursor->channel_ids = channel_ids;
             cursor->cname = cname;
-            for (auto& id : channel_ids) cursor->vids_cont[id] = per[id].vids.continuation;
+            for (auto& id : channel_ids) {
+                cursor->vids_cont[id]   = per[id].vids.continuation;
+                cursor->shorts_cont[id] = per[id].shorts.continuation;
+            }
         }
 
         std::vector<SearchResult> all;
@@ -861,36 +875,42 @@ std::vector<SearchResult> Innertube::home_feed_more(HomeCursor& cursor, int per_
         ensure_visitor_data();   // warm once; workers only read the cached token
 
         // Continue every channel that still has a token, in parallel. Each result page
-        // is the NEXT (older) slice of that channel's uploads.
-        struct Res { std::string id; Feed feed; };
-        std::vector<std::string> ids;
-        for (auto& id : cursor.channel_ids)
-            if (!cursor.vids_cont[id].empty()) ids.push_back(id);
-        std::vector<Res> results(ids.size());
+        // is the NEXT (older) slice of that channel's uploads. kind: 0 Videos, 1 Shorts.
+        struct Job { std::string id; int kind; };
+        struct Res { std::string id; int kind; Feed feed; };
+        std::vector<Job> jobs;
+        for (auto& id : cursor.channel_ids) {
+            if (!cursor.vids_cont[id].empty())   jobs.push_back({id, 0});
+            if (!cursor.shorts_cont[id].empty()) jobs.push_back({id, 1});
+        }
+        std::vector<Res> results(jobs.size());
         std::atomic<size_t> next{0};
         auto work = [&]() {
             size_t i;
-            while ((i = next.fetch_add(1)) < ids.size()) {
-                const std::string& id = ids[i];
-                Feed cur; cur.endpoint = "browse"; cur.channel_id = id;
-                cur.continuation = cursor.vids_cont[id];
+            while ((i = next.fetch_add(1)) < jobs.size()) {
+                const Job& job = jobs[i];
+                Feed cur; cur.endpoint = "browse"; cur.channel_id = job.id;
+                cur.continuation = job.kind == 0 ? cursor.vids_cont[job.id]
+                                                 : cursor.shorts_cont[job.id];
                 Feed f;
                 try { f = continue_feed(cur); } catch (...) {}
-                results[i] = {id, std::move(f)};
+                results[i] = {job.id, job.kind, std::move(f)};
             }
         };
-        int nw = (int)std::min<size_t>(4, ids.size());
+        int nw = (int)std::min<size_t>(4, jobs.size());
         std::vector<std::thread> threads;
         for (int w = 0; w < nw; ++w) threads.emplace_back(work);
         for (auto& t : threads) t.join();
 
-        // Merge the new pages; advance (or exhaust) each channel's token.
+        // Merge the new pages; advance (or exhaust) each channel's per-tab token.
         for (auto& r : results) {
-            cursor.vids_cont[r.id] = r.feed.continuation;   // "" -> that channel is done
+            if (r.kind == 0) cursor.vids_cont[r.id]   = r.feed.continuation;
+            else             cursor.shorts_cont[r.id] = r.feed.continuation;  // "" -> done
             const std::string& nm = cursor.cname[r.id];
             int taken = 0;
             for (auto& v : r.feed.items) {
                 if (v.is_channel()) continue;
+                if (r.kind == 1) v.is_short = true;   // Shorts-tab items type as Shorts
                 if (v.author.empty()) v.author = nm;
                 out.push_back(std::move(v));
                 if (++taken >= per_channel) break;
@@ -906,13 +926,15 @@ std::vector<SearchResult> Innertube::home_feed_more(HomeCursor& cursor, int per_
     return out;
 }
 
-std::vector<SearchResult> Innertube::home_playlists(std::vector<std::string> channel_ids) {
+std::vector<SearchResult> Innertube::home_playlists(std::vector<std::string> channel_ids,
+                                                    HomeCursor* cursor) {
     std::vector<SearchResult> out;
     try {
         if (channel_ids.empty()) channel_ids = favorite_channel_ids();
         if (channel_ids.empty()) return out;
         ensure_visitor_data();   // warm once; workers only read the cached token
         std::vector<std::vector<SearchResult>> per(channel_ids.size());
+        std::vector<std::string> conts(channel_ids.size());   // per-channel next-page token
         std::atomic<size_t> next{0};
         std::unordered_map<std::string, std::string> cname;
         for (auto& [cid, nm] : favorites()) cname[cid] = nm;
@@ -921,6 +943,7 @@ std::vector<SearchResult> Innertube::home_playlists(std::vector<std::string> cha
             while ((i = next.fetch_add(1)) < channel_ids.size()) {
                 try {
                     Feed f = channel_playlists_feed(channel_ids[i]);
+                    conts[i] = f.continuation;                          // keep for paging
                     if ((int)f.items.size() > 12) f.items.resize(12);   // cap per channel
                     // Playlists on a channel's own tab don't repeat the owner name.
                     auto it = cname.find(channel_ids[i]);
@@ -937,7 +960,143 @@ std::vector<SearchResult> Innertube::home_playlists(std::vector<std::string> cha
         for (auto& t : threads) t.join();
         for (auto& v : per) out.insert(out.end(),
             std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
+        if (cursor) {
+            cursor->channel_ids = channel_ids;
+            cursor->cname = cname;
+            for (size_t i = 0; i < channel_ids.size(); ++i)
+                cursor->pl_cont[channel_ids[i]] = conts[i];
+        }
     } catch (...) {}
+    return out;
+}
+
+std::vector<SearchResult> Innertube::home_playlists_more(HomeCursor& cursor, int per_channel) {
+    std::vector<SearchResult> out;
+    if (!cursor.has_more()) return out;
+    try {
+        ensure_visitor_data();
+        std::vector<std::string> ids;
+        for (auto& id : cursor.channel_ids)
+            if (!cursor.pl_cont[id].empty()) ids.push_back(id);
+        struct Res { std::string id; Feed feed; };
+        std::vector<Res> results(ids.size());
+        std::atomic<size_t> next{0};
+        auto work = [&]() {
+            size_t i;
+            while ((i = next.fetch_add(1)) < ids.size()) {
+                const std::string& id = ids[i];
+                Feed cur; cur.endpoint = "browse"; cur.channel_id = id;
+                cur.continuation = cursor.pl_cont[id];
+                Feed f;
+                try { f = continue_feed(cur); } catch (...) {}
+                results[i] = {id, std::move(f)};
+            }
+        };
+        int nw = (int)std::min<size_t>(4, ids.size());
+        std::vector<std::thread> threads;
+        for (int w = 0; w < nw; ++w) threads.emplace_back(work);
+        for (auto& t : threads) t.join();
+        // Grouped per channel (playlists have no useful cross-channel date order).
+        for (auto& r : results) {
+            cursor.pl_cont[r.id] = r.feed.continuation;   // "" -> that channel is done
+            const std::string& nm = cursor.cname[r.id];
+            int taken = 0;
+            for (auto& v : r.feed.items) {
+                if (!v.is_playlist()) continue;
+                if (v.author.empty()) v.author = nm;
+                out.push_back(std::move(v));
+                if (++taken >= per_channel) break;
+            }
+        }
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[innertube] home_playlists_more failed: %s\n", ex.what());
+    }
+    return out;
+}
+
+std::vector<SearchResult> Innertube::home_posts(std::vector<std::string> channel_ids,
+                                                HomeCursor* cursor) {
+    std::vector<SearchResult> out;
+    try {
+        if (channel_ids.empty()) channel_ids = favorite_channel_ids();
+        if (channel_ids.empty()) return out;
+        ensure_visitor_data();   // warm once; workers only read the cached token
+        std::vector<std::vector<SearchResult>> per(channel_ids.size());
+        std::vector<std::string> conts(channel_ids.size());
+        std::atomic<size_t> next{0};
+        std::unordered_map<std::string, std::string> cname;
+        for (auto& [cid, nm] : favorites()) cname[cid] = nm;
+        auto work = [&]() {
+            size_t i;
+            while ((i = next.fetch_add(1)) < channel_ids.size()) {
+                try {
+                    Feed f = channel_posts_feed(channel_ids[i]);
+                    conts[i] = f.continuation;
+                    if ((int)f.items.size() > 12) f.items.resize(12);   // cap per channel
+                    auto it = cname.find(channel_ids[i]);
+                    if (it != cname.end())
+                        for (auto& r : f.items) if (r.author.empty()) r.author = it->second;
+                    per[i] = std::move(f.items);
+                } catch (...) {}
+            }
+        };
+        int nw = (int)std::min<size_t>(4, channel_ids.size());
+        std::vector<std::thread> threads;
+        for (int w = 0; w < nw; ++w) threads.emplace_back(work);
+        for (auto& t : threads) t.join();
+        for (auto& v : per) out.insert(out.end(),
+            std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
+        if (cursor) {
+            cursor->channel_ids = channel_ids;
+            cursor->cname = cname;
+            for (size_t i = 0; i < channel_ids.size(); ++i)
+                cursor->posts_cont[channel_ids[i]] = conts[i];
+        }
+    } catch (...) {}
+    return out;
+}
+
+std::vector<SearchResult> Innertube::home_posts_more(HomeCursor& cursor, int per_channel) {
+    std::vector<SearchResult> out;
+    if (!cursor.has_more()) return out;
+    try {
+        ensure_visitor_data();
+        std::vector<std::string> ids;
+        for (auto& id : cursor.channel_ids)
+            if (!cursor.posts_cont[id].empty()) ids.push_back(id);
+        struct Res { std::string id; Feed feed; };
+        std::vector<Res> results(ids.size());
+        std::atomic<size_t> next{0};
+        auto work = [&]() {
+            size_t i;
+            while ((i = next.fetch_add(1)) < ids.size()) {
+                const std::string& id = ids[i];
+                Feed cur; cur.endpoint = "browse"; cur.channel_id = id;
+                cur.continuation = cursor.posts_cont[id];
+                Feed f;
+                try { f = continue_feed(cur); } catch (...) {}
+                results[i] = {id, std::move(f)};
+            }
+        };
+        int nw = (int)std::min<size_t>(4, ids.size());
+        std::vector<std::thread> threads;
+        for (int w = 0; w < nw; ++w) threads.emplace_back(work);
+        for (auto& t : threads) t.join();
+        for (auto& r : results) {
+            cursor.posts_cont[r.id] = r.feed.continuation;   // "" -> that channel is done
+            const std::string& nm = cursor.cname[r.id];
+            int taken = 0;
+            for (auto& v : r.feed.items) {
+                if (!v.is_post()) continue;
+                if (v.author.empty()) v.author = nm;
+                v.channel_id = r.id;                 // continuation loses chan_hint attribution
+                out.push_back(std::move(v));
+                if (++taken >= per_channel) break;
+            }
+        }
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[innertube] home_posts_more failed: %s\n", ex.what());
+    }
     return out;
 }
 
@@ -976,7 +1135,7 @@ ChannelInfo Innertube::channel_info(const std::string& channel_id) {
             std::fprintf(stderr, "[chinfo] fp=%s vd.len=%zu id=%s ctx.len=%zu\n",
                          fp.name.c_str(), vd.size(), channel_id.c_str(), fp.context_json.size());
         json client = json::parse(fp.context_json);
-        client["visitorData"] = vd; client["hl"] = "en"; client["gl"] = "US";
+        client["visitorData"] = vd; apply_ctx_locale(client, locale());
         json body = {{"browseId", channel_id}, {"context", {{"client", client}}}};
         std::vector<std::string> headers = {"Content-Type: application/json",
             "User-Agent: " + fp.user_agent,
@@ -1290,7 +1449,7 @@ int Innertube::check_video_restricted(const std::string& video_id) {
         std::string vd = visitor_token();   // reuse cached session token if present
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"videoId", video_id},
                      {"context", {{"client", client}}},
                      {"contentCheckOk", true}, {"racyCheckOk", true}};
@@ -1324,7 +1483,7 @@ std::string Innertube::video_description(const std::string& video_id) {
         std::string vd = visitor_token();
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"videoId", video_id}, {"context", {{"client", client}}},
                      {"contentCheckOk", true}, {"racyCheckOk", true}};
         std::vector<std::string> headers = {"Content-Type: application/json",
@@ -1353,7 +1512,7 @@ std::vector<CaptionTrack> Innertube::caption_tracks(const std::string& video_id)
         std::string vd = visitor_token();
         json client = json::parse(fp->context_json);
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"videoId", video_id}, {"context", {{"client", client}}},
                      {"contentCheckOk", true}, {"racyCheckOk", true}};
         std::vector<std::string> headers = {"Content-Type: application/json",
@@ -1396,7 +1555,7 @@ std::vector<SearchResult> Innertube::related_videos(const std::string& video_id)
         std::string vd = visitor_token();
         json client = json::parse(fp.context_json);
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"videoId", video_id}, {"context", {{"client", client}}}};
         std::string url = std::string(kInnertubeBase) + "/next";
         if (!api_key_.empty()) url += "?key=" + api_key_;
@@ -1437,7 +1596,7 @@ std::string Innertube::playlist_description(const std::string& playlist_id) {
         std::string vd = visitor_token();
         json client = json::parse(fp.context_json);
         if (!vd.empty()) client["visitorData"] = vd;
-        client["hl"] = "en"; client["gl"] = "US";
+        apply_ctx_locale(client, locale());
         json body = {{"browseId", "VL" + playlist_id}, {"context", {{"client", client}}}};
         std::string url = std::string(kInnertubeBase) + "/browse";
         if (!api_key_.empty()) url += "?key=" + api_key_;

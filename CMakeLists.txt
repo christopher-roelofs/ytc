@@ -35,7 +35,7 @@ if(BUILD_UI)
   pkg_check_modules(SDL2 sdl2)
   pkg_check_modules(GLES glesv2)
   if(SDL2_FOUND AND GLES_FOUND)
-    add_library(ytgfx STATIC src/gfx.cpp src/ui.cpp src/player.cpp src/stream.cpp)
+    add_library(ytgfx STATIC src/gfx.cpp src/ui.cpp src/player.cpp src/stream.cpp src/i18n.cpp)
     target_include_directories(ytgfx PUBLIC ${SDL2_INCLUDE_DIRS} ${GLES_INCLUDE_DIRS})
     target_link_libraries(ytgfx PUBLIC ytcore ${SDL2_LIBRARIES} ${GLES_LIBRARIES} Threads::Threads)
 

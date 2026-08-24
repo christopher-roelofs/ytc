@@ -11,6 +11,7 @@
 #include <vector>
 #include <optional>
 #include <mutex>
+#include <utility>
 #include <unordered_map>
 #include "http.h"
 
@@ -179,10 +180,16 @@ public:
     // demand (each channel's Videos tab is continued independently, then merged).
     struct HomeCursor {
         std::vector<std::string> channel_ids;
-        std::unordered_map<std::string, std::string> vids_cont;  // channel -> next-page token ("" = exhausted)
-        std::unordered_map<std::string, std::string> cname;      // channel -> display name
+        std::unordered_map<std::string, std::string> vids_cont;    // channel -> Videos next-page token ("" = exhausted)
+        std::unordered_map<std::string, std::string> shorts_cont;  // channel -> Shorts next-page token
+        std::unordered_map<std::string, std::string> pl_cont;      // channel -> Playlists next-page token
+        std::unordered_map<std::string, std::string> posts_cont;   // channel -> Posts next-page token
+        std::unordered_map<std::string, std::string> cname;        // channel -> display name
         bool has_more() const {
-            for (auto& kv : vids_cont) if (!kv.second.empty()) return true;
+            for (auto& kv : vids_cont)   if (!kv.second.empty()) return true;
+            for (auto& kv : shorts_cont) if (!kv.second.empty()) return true;
+            for (auto& kv : pl_cont)     if (!kv.second.empty()) return true;
+            for (auto& kv : posts_cont)  if (!kv.second.empty()) return true;
             return false;
         }
     };
@@ -196,7 +203,20 @@ public:
     // merges + date-sorts the new batch, and advances the cursor. Never throws.
     std::vector<SearchResult> home_feed_more(HomeCursor& cursor, int per_channel = 30);
     // Playlists from all favorite channels (parallel; grouped per channel). Never throws.
-    std::vector<SearchResult> home_playlists(std::vector<std::string> channel_ids = {});
+    // cursor (if non-null) captures each channel's Playlists-tab continuation for
+    // home_playlists_more().
+    std::vector<SearchResult> home_playlists(std::vector<std::string> channel_ids = {},
+                                             HomeCursor* cursor = nullptr);
+    // Next page of the aggregated Playlists feed: continues each channel's Playlists
+    // tab one page (grouped per channel), advances the cursor. Never throws.
+    std::vector<SearchResult> home_playlists_more(HomeCursor& cursor, int per_channel = 12);
+
+    // Community posts from all favorite channels (parallel; grouped per channel, newest
+    // first within a channel). cursor (if non-null) captures each channel's Posts-tab
+    // continuation for home_posts_more(). Never throws.
+    std::vector<SearchResult> home_posts(std::vector<std::string> channel_ids = {},
+                                         HomeCursor* cursor = nullptr);
+    std::vector<SearchResult> home_posts_more(HomeCursor& cursor, int per_channel = 12);
 
     // "Latest" feed: fetch each channel's public RSS (no login/key), merge newest
     // first. channel_ids empty -> read them from config/channels.json (next to the
@@ -280,6 +300,11 @@ public:
     // visitorData is cached after first fetch; call to force refresh (e.g. on 403).
     void refresh_visitor_data();
 
+    // UI language: drives the Innertube hl/gl so YouTube returns localized titles,
+    // metadata ("N views"/dates), and browse strings where available. Thread-safe.
+    // Call before kicking off fetches (e.g. at startup and when the setting changes).
+    void set_locale(const std::string& hl, const std::string& gl);
+
 private:
     std::string api_key_;
     std::string config_dir_;      // dir of clients.json (to find channels.json)
@@ -291,6 +316,11 @@ private:
     // no shared CURL handle (every network call uses a local HttpClient).
     mutable std::mutex visitor_m_;
     std::string visitor_data_;
+    // Locale for the Innertube client context (hl/gl). Guarded by its own mutex —
+    // rarely written (settings change), read by every request builder.
+    mutable std::mutex locale_m_;
+    std::string hl_ = "en", gl_ = "US";
+    std::pair<std::string,std::string> locale() const;   // (hl, gl) copy under the lock
 
     std::string ensure_visitor_data();      // token (fetch if needed), thread-safe
     std::string visitor_token() const;      // current token copy under the lock

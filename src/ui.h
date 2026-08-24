@@ -208,7 +208,7 @@ private:
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
-                            CycleHomeSource, ClearHistory, Quit };
+                            CycleHomeSource, CycleLanguage, ClearHistory, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -276,6 +276,7 @@ private:
     // Autoplay: when a video ends, play the next one automatically.
     bool autoplay_ = false;                // setting "autoplay" (default off)
     int  home_source_ = 0;                 // "home_source": 0 Favorites, 1 Favorites+History
+    int  lang_ = 0;                        // "lang": UI/content language index (i18n)
     int  now_playing_index_ = -1;          // index in results_ the playing video came from
     std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
     std::atomic<bool> rel_running_{false}, rel_done_{false};
@@ -337,6 +338,8 @@ private:
     std::vector<yt::SearchResult> home_items_;
     std::vector<yt::SearchResult> home_playlists_;
     bool home_playlists_loaded_ = false;
+    std::vector<yt::SearchResult> home_posts_;
+    bool home_posts_loaded_ = false;
     // Back stack: each subview push (channel or playlist) snapshots the full view
     // state, so channel -> playlist -> Back -> Back unwinds correctly at any depth.
     struct ViewState {
@@ -373,13 +376,17 @@ private:
 
     // Home feed pages via per-channel continuation (not a single token), so it gets
     // its own cursor + async "load more" worker, appending into home_items_.
-    yt::Innertube::HomeCursor home_cursor_;
+    yt::Innertube::HomeCursor home_cursor_;        // All/Videos/Shorts sub-tabs
+    yt::Innertube::HomeCursor home_pl_cursor_;     // Playlists sub-tab (separate feed)
+    yt::Innertube::HomeCursor home_posts_cursor_;  // Posts sub-tab (separate feed)
+    yt::Innertube::HomeCursor& home_cursor_for(int tab);  // pick the active tab's cursor
     std::thread home_more_thread_;
     std::atomic<bool> home_more_running_{false};
     std::atomic<bool> home_more_done_{false};
     std::mutex home_more_m_;
     std::vector<yt::SearchResult> home_more_pending_;
     yt::Innertube::HomeCursor home_more_cursor_pending_;   // cursor advanced by the worker
+    int home_more_tab_ = 0;                               // which sub-tab the in-flight page is for
 
     // Async view refresh (hide-filter toggled off -> re-fetch without blocking the UI).
     std::thread refresh_thread_;
