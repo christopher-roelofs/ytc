@@ -801,7 +801,7 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
                 if (it != cd.rss_date.end()) v.published_text = it->second;  // exact date
                 if (v.author.empty()) v.author = nm;
                 all.push_back(std::move(v));
-                if (++taken >= 10) break;                 // cap per channel
+                if (++taken >= 30) break;                 // cap per channel (~one browse page)
             }
             taken = 0;
             for (auto& s : cd.shorts.items) {
@@ -810,7 +810,7 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
                 s.published_text = it->second;
                 if (s.author.empty()) s.author = nm;
                 all.push_back(std::move(s));
-                if (++taken >= 5) break;                  // cap Shorts per channel
+                if (++taken >= 10) break;                 // cap Shorts per channel
             }
         }
         std::stable_sort(all.begin(), all.end(), [](const SearchResult& a, const SearchResult& b) {

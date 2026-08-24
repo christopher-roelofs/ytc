@@ -172,7 +172,7 @@ public:
     // the Innertube tabs (rich metadata), dated/ordered via each channel's RSS.
     // channel_ids empty -> favorites from channels.json. Never throws.
     std::vector<SearchResult> home_feed(std::vector<std::string> channel_ids = {},
-                                        int max_results = 60);
+                                        int max_results = 120);
     // Playlists from all favorite channels (parallel; grouped per channel). Never throws.
     std::vector<SearchResult> home_playlists(std::vector<std::string> channel_ids = {});
 
