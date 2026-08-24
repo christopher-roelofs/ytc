@@ -1291,7 +1291,7 @@ void App::load_channel_tab(int tab) {
     std::string id = channel_info_.channel_id;
     if (id.empty() || tab < 0 || tab > 4) return;
     chan_tab_ = tab;
-    tab_focus_ = true;
+    tab_focus_ = false;                                 // first video selected on load
     results_.clear(); cont_token_.clear();
     sel_ = 0; scroll_ = 0;
     refresh_current_view();
@@ -1302,7 +1302,7 @@ void App::load_channel_tab(int tab) {
 void App::load_home_tab(int tab) {
     if (tab < 0 || tab > 3) return;
     home_tab_ = tab;
-    tab_focus_ = true;
+    tab_focus_ = false;                                 // first video selected on load
     cont_token_.clear();
     if (tab == 3) {
         if (home_playlists_loaded_) {
@@ -1532,31 +1532,10 @@ void App::input(Action a) {
         if (!query_.empty() || !view_label_.empty()) load_home();
         return;
     }
-    // Tab strip (channel views AND Home): focused via Up from the top row; Left/Right
-    // switch tabs, Down/A drop focus back into the grid. Handled BEFORE the
-    // empty-results return so tabs stay reachable when a tab has no content.
-    bool tabs_here = channel_tabs_active() || home_tabs_active();
-    if (tabs_here && tab_focus_) {
-        int cur = channel_tabs_active() ? chan_tab_ : home_tab_;
-        int last = channel_tabs_active() ? 4 : 3;   // channels also have a Posts tab
-        auto switch_tab = [&](int t) {
-            if (channel_tabs_active()) load_channel_tab(t); else load_home_tab(t);
-        };
-        switch (a) {
-            case Action::Left:   if (cur > 0) switch_tab(cur - 1); break;
-            case Action::Right:  if (cur < last) switch_tab(cur + 1); break;
-            case Action::Down:
-            case Action::Select: if (!results_.empty()) { tab_focus_ = false; sel_ = 0; scroll_ = 0; }
-                                 break;
-            default: break;
-        }
-        return;
-    }
+    // Tabs (channel views AND Home) are switched only with the L/R shoulders
+    // (cycle_tab); the d-pad stays entirely in the grid.
     int n = (int)results_.size();
-    if (n == 0) {
-        if (tabs_here && a == Action::Up) tab_focus_ = true;
-        return;
-    }
+    if (n == 0) return;
     auto activate = [&]{
         const yt::SearchResult* v = selected();
         if (v && v->is_channel()) open_channel(*v);        // open channel -> its uploads
@@ -1565,11 +1544,9 @@ void App::input(Action a) {
         else request_playback();                            // play video
     };
     if (view_mode_ != ViewMode::Grid) {   // carousel & coverflow are 1-D strips
-        bool th = channel_tabs_active() || home_tabs_active();
         switch (a) {
             case Action::Left:  if (sel_ > 0) sel_--; break;
             case Action::Right: if (sel_ + 1 < n) sel_++; break;
-            case Action::Up:    if (th) tab_focus_ = true; break;
             case Action::Select: activate(); break;
             default: break;
         }
@@ -1578,10 +1555,7 @@ void App::input(Action a) {
     switch (a) {
         case Action::Left:  if (sel_ % cols_ != 0) sel_--; break;
         case Action::Right: if (sel_ % cols_ != cols_-1 && sel_+1 < n) sel_++; break;
-        case Action::Up:    if (sel_ - cols_ >= 0) sel_ -= cols_;
-                            else if (channel_tabs_active() || home_tabs_active())
-                                { tab_focus_ = true; scroll_ = 0; }
-                            break;
+        case Action::Up:    if (sel_ - cols_ >= 0) sel_ -= cols_; break;
         case Action::Down:  if (sel_ + cols_ < n) sel_ += cols_; break;
         case Action::Select: activate(); break;
         default: break;
@@ -1989,7 +1963,7 @@ void App::render_grid(gfx::Renderer& rn) {
             (home_tabs_active() && !home_items_.empty()) ||
             (home_tabs_active() && refresh_running_)) {
             l1 = refresh_running_ ? "Loading..." : "Nothing in this tab";
-            l2 = refresh_running_ ? "" : "Left/Right: switch tabs";
+            l2 = refresh_running_ ? "" : "L/R shoulders: switch tabs";
             l3 = "";
         } else if (view_label_ == "Favorite Channels") {
             l1 = "No favorite channels yet";
@@ -2142,7 +2116,7 @@ void App::render_carousel(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
+    rn.text(*font_small_, "Left/Right: browse    A: open    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
@@ -2216,7 +2190,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
+    rn.text(*font_small_, "Left/Right: browse    A: open    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
@@ -2298,7 +2272,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, "Left/Right: browse    A: open    Up: tabs    L/R: switch tabs    V: view    B: back",
+    rn.text(*font_small_, "Left/Right: browse    A: open    L/R: switch tabs    V: view    B: back",
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
