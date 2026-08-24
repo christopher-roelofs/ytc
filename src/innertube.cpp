@@ -1533,6 +1533,7 @@ std::vector<CaptionTrack> Innertube::caption_tracks(const std::string& video_id)
             ct.base_url = t.value("baseUrl", "");
             ct.language_code = t.value("languageCode", "");
             ct.auto_generated = (t.value("kind", "") == "asr");
+            ct.translatable = t.value("isTranslatable", false);
             if (t.contains("name")) {
                 const json& n = t["name"];
                 if (n.contains("simpleText")) ct.name = n["simpleText"].get<std::string>();

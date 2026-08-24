@@ -91,6 +91,7 @@ struct CaptionTrack {
     std::string name;            // "English" / "English (auto-generated)"
     std::string base_url;        // timedtext URL (append &fmt=vtt to fetch WebVTT)
     bool auto_generated = false; // kind == "asr"
+    bool translatable = false;   // isTranslatable — can be auto-translated via &tlang
 };
 
 struct VideoInfo {
