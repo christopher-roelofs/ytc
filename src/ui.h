@@ -133,6 +133,7 @@ public:
 
     const yt::SearchResult* selected() const;
     int selected_index() const { return sel_; }
+    int results_count() const { return (int)results_.size(); }
 
     enum class Mode { Grid, Loading, Playing, Search };
     Mode mode() const { return mode_; }
@@ -178,6 +179,8 @@ private:
     void poll_channel_info();           // GL thread: apply a finished channel-info fetch
     void maybe_load_more();             // kick off next-page fetch when near the bottom
     void poll_more();                   // GL thread: append a finished next page
+    void maybe_load_more_home();        // home feed: page each channel deeper near the bottom
+    void poll_more_home();              // GL thread: merge a finished home page into home_items_
     void refresh_favorites();           // reload the favorite-id cache from channels.json
     void refresh_watch_later();         // reload the watch-later id cache
     void filter_hidden(std::vector<yt::SearchResult>& items);  // drop restricted/Shorts per settings
@@ -368,12 +371,23 @@ private:
     std::mutex more_m_;
     yt::Innertube::Feed more_pending_;
 
+    // Home feed pages via per-channel continuation (not a single token), so it gets
+    // its own cursor + async "load more" worker, appending into home_items_.
+    yt::Innertube::HomeCursor home_cursor_;
+    std::thread home_more_thread_;
+    std::atomic<bool> home_more_running_{false};
+    std::atomic<bool> home_more_done_{false};
+    std::mutex home_more_m_;
+    std::vector<yt::SearchResult> home_more_pending_;
+    yt::Innertube::HomeCursor home_more_cursor_pending_;   // cursor advanced by the worker
+
     // Async view refresh (hide-filter toggled off -> re-fetch without blocking the UI).
     std::thread refresh_thread_;
     std::atomic<bool> refresh_running_{false};
     std::atomic<bool> refresh_done_{false};
     std::mutex refresh_m_;
     yt::Innertube::Feed refresh_pending_;
+    yt::Innertube::HomeCursor refresh_home_cursor_;   // home-feed cursor from the worker
     std::string refresh_sig_;           // view identity when the refresh was started
     int refresh_kind_ = 0;              // what the worker fetched (see refresh enum in .cpp)
     // Auto-retry with incremental backoff when a network fetch fails (e.g. app

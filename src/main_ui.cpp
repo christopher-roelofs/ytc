@@ -337,6 +337,16 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VIDPAGE done sel=%d\n", app.selected_index());
             return 0;
         }
+        if (std::getenv("YTC_HOMEPAGE")) {  // Home feed: scroll to bottom -> per-channel load-more
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3000);                                // let the home feed load
+            std::fprintf(stderr, "HOMEPAGE initial count=%d\n", app.results_count());
+            for (int i = 0; i < 80; ++i) { app.input(ui::App::Action::Down); settle(120); }
+            settle(3000);                                // let a load-more round finish
+            std::fprintf(stderr, "HOMEPAGE after-scroll count=%d\n", app.results_count());
+            return 0;
+        }
         if (std::getenv("YTC_FAVTABTEST")) {  // regression: favorites -> channel -> tab Right
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };

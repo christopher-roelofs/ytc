@@ -736,7 +736,8 @@ static long long approx_age_secs(const std::string& s) {
 }
 
 std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_ids,
-                                               int max_results, bool include_history) {
+                                               int max_results, bool include_history,
+                                               HomeCursor* cursor) {
     std::vector<SearchResult> out;
     try {
         if (channel_ids.empty()) {
@@ -812,6 +813,13 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
             for (auto& [cid, nm] : history_channels())
                 if (!nm.empty() && !cname.count(cid)) cname[cid] = nm;
 
+        // Hand back each channel's Videos-tab continuation so the UI can page deeper.
+        if (cursor) {
+            cursor->channel_ids = channel_ids;
+            cursor->cname = cname;
+            for (auto& id : channel_ids) cursor->vids_cont[id] = per[id].vids.continuation;
+        }
+
         std::vector<SearchResult> all;
         for (auto& id : channel_ids) {
             ChanData& cd = per[id];
@@ -842,6 +850,58 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
         if ((int)out.size() > max_results) out.resize(max_results);
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "[innertube] home_feed failed: %s\n", ex.what());
+    }
+    return out;
+}
+
+std::vector<SearchResult> Innertube::home_feed_more(HomeCursor& cursor, int per_channel) {
+    std::vector<SearchResult> out;
+    if (!cursor.has_more()) return out;
+    try {
+        ensure_visitor_data();   // warm once; workers only read the cached token
+
+        // Continue every channel that still has a token, in parallel. Each result page
+        // is the NEXT (older) slice of that channel's uploads.
+        struct Res { std::string id; Feed feed; };
+        std::vector<std::string> ids;
+        for (auto& id : cursor.channel_ids)
+            if (!cursor.vids_cont[id].empty()) ids.push_back(id);
+        std::vector<Res> results(ids.size());
+        std::atomic<size_t> next{0};
+        auto work = [&]() {
+            size_t i;
+            while ((i = next.fetch_add(1)) < ids.size()) {
+                const std::string& id = ids[i];
+                Feed cur; cur.endpoint = "browse"; cur.channel_id = id;
+                cur.continuation = cursor.vids_cont[id];
+                Feed f;
+                try { f = continue_feed(cur); } catch (...) {}
+                results[i] = {id, std::move(f)};
+            }
+        };
+        int nw = (int)std::min<size_t>(4, ids.size());
+        std::vector<std::thread> threads;
+        for (int w = 0; w < nw; ++w) threads.emplace_back(work);
+        for (auto& t : threads) t.join();
+
+        // Merge the new pages; advance (or exhaust) each channel's token.
+        for (auto& r : results) {
+            cursor.vids_cont[r.id] = r.feed.continuation;   // "" -> that channel is done
+            const std::string& nm = cursor.cname[r.id];
+            int taken = 0;
+            for (auto& v : r.feed.items) {
+                if (v.is_channel()) continue;
+                if (v.author.empty()) v.author = nm;
+                out.push_back(std::move(v));
+                if (++taken >= per_channel) break;
+            }
+        }
+        // Sort the batch newest-first among itself (browse lockups carry "N ago" text).
+        std::stable_sort(out.begin(), out.end(), [](const SearchResult& a, const SearchResult& b) {
+            return approx_age_secs(a.published_text) < approx_age_secs(b.published_text);
+        });
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[innertube] home_feed_more failed: %s\n", ex.what());
     }
     return out;
 }

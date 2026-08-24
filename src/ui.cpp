@@ -307,6 +307,7 @@ App::~App() {
     if (resolve_thread_.joinable()) resolve_thread_.join();
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
     if (more_thread_.joinable()) more_thread_.join();
+    if (home_more_thread_.joinable()) home_more_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
@@ -348,6 +349,7 @@ void App::load_home() {
     home_tab_ = 0;
     home_playlists_.clear(); home_playlists_loaded_ = false;
     home_items_.clear();
+    home_cursor_ = {};                    // drop any prior per-channel continuation
     results_.clear(); sel_ = 0; scroll_ = 0;
     // Fetch the merged home feed ASYNCHRONOUSLY (N favorites x 3 network calls) so
     // the window draws immediately; poll_refresh fills home_items_ + tiles when ready.
@@ -464,6 +466,7 @@ void App::refresh_current_view(bool is_retry) {
     if (refresh_thread_.joinable()) refresh_thread_.join();
     refresh_thread_ = std::thread([this, kind, id, query, tab]() {
         yt::Innertube::Feed f;
+        yt::Innertube::HomeCursor hc;
         try {   // all paths use thread-local HttpClients inside Innertube
             if (kind == RK_CHANNEL) {
                 if (tab == 0)      f = it_.channel_all_feed(id);
@@ -473,14 +476,15 @@ void App::refresh_current_view(bool is_retry) {
                 else               f = it_.channel_feed(id);
             }
             else if (kind == RK_PLAYLIST)        f = it_.playlist_feed(id);
-            else if (kind == RK_HOME) { f.items = it_.home_feed({}, 120, home_source_ == 1);
+            else if (kind == RK_HOME) { f.items = it_.home_feed({}, 120, home_source_ == 1, &hc);
                 // ok unless we have favourites but couldn't reach the network
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else if (kind == RK_HOME_PLAYLISTS){ f.items = it_.home_playlists();
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else                                 f = it_.search_feed(query);
         } catch (...) {}   // never let an exception escape the thread
-        { std::lock_guard<std::mutex> lk(refresh_m_); refresh_pending_ = std::move(f); }
+        { std::lock_guard<std::mutex> lk(refresh_m_);
+          refresh_pending_ = std::move(f); refresh_home_cursor_ = std::move(hc); }
         refresh_running_ = false;
         refresh_done_ = true;
     });
@@ -490,7 +494,9 @@ void App::poll_refresh() {
     if (!refresh_done_.exchange(false)) return;
     if (refresh_thread_.joinable()) refresh_thread_.join();
     yt::Innertube::Feed f;
-    { std::lock_guard<std::mutex> lk(refresh_m_); f = std::move(refresh_pending_); }
+    yt::Innertube::HomeCursor hc;
+    { std::lock_guard<std::mutex> lk(refresh_m_);
+      f = std::move(refresh_pending_); hc = std::move(refresh_home_cursor_); }
     bool fetch_ok = f.ok;
     if (view_sig() != refresh_sig_) {
         // Stale (user switched tab/view while fetching). If the current view is
@@ -501,6 +507,7 @@ void App::poll_refresh() {
     switch (refresh_kind_) {
         case RK_HOME:                        // refresh of the Home master feed
             home_items_ = std::move(f.items);
+            home_cursor_ = std::move(hc);    // per-channel tokens for "load more"
             cont_token_.clear();
             apply_home_tab();                // re-apply the active All/Videos/Shorts filter
             break;
@@ -1427,6 +1434,58 @@ void App::poll_more() {
                      cont_token_.empty() ? "END" : "more available");
 }
 
+// Home feed pages differently from search/channel: no single continuation token,
+// but a per-channel cursor. When the selection nears the bottom, continue every
+// channel one page on a worker, then merge the batch into home_items_ (append-only,
+// so the selection doesn't jump) and re-apply the active All/Videos/Shorts filter.
+void App::maybe_load_more_home() {
+    if (home_more_running_) return;
+    if (!(query_.empty() && view_label_.empty() && !in_channel_view_)) return;  // home master only
+    if (home_tab_ == 3) return;                 // playlists sub-tab isn't this feed
+    if (!home_cursor_.has_more()) return;
+    int n = (int)results_.size();
+    if (n == 0 || sel_ < n - cols_ * 2) return; // only when near the last rows
+    home_more_running_ = true; home_more_done_ = false;
+    if (home_more_thread_.joinable()) home_more_thread_.join();
+    yt::Innertube::HomeCursor cursor = home_cursor_;   // worker owns a copy
+    home_more_thread_ = std::thread([this, cursor]() mutable {
+        std::vector<yt::SearchResult> batch;
+        try { batch = it_.home_feed_more(cursor); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(home_more_m_);
+          home_more_pending_ = std::move(batch); home_more_cursor_pending_ = std::move(cursor); }
+        home_more_running_ = false; home_more_done_ = true;
+    });
+}
+void App::poll_more_home() {
+    if (!home_more_done_.exchange(false)) return;
+    if (home_more_thread_.joinable()) home_more_thread_.join();
+    std::vector<yt::SearchResult> batch;
+    { std::lock_guard<std::mutex> lk(home_more_m_);
+      batch = std::move(home_more_pending_); home_cursor_ = std::move(home_more_cursor_pending_); }
+    // Still on the home master view? (User may have navigated away mid-fetch.)
+    if (!(query_.empty() && view_label_.empty() && !in_channel_view_)) return;
+    filter_hidden(batch);
+    if (batch.empty()) return;
+    for (auto& v : batch) thumbs_.request(v.thumbnail_url);
+    size_t added = batch.size();
+    home_items_.insert(home_items_.end(), std::make_move_iterator(batch.begin()),
+                       std::make_move_iterator(batch.end()));
+    // Append the newcomers to results_ too (respecting the current tab filter) so the
+    // selection/scroll position is preserved — set_results would reset both to 0.
+    int base = (int)results_.size();
+    for (size_t i = home_items_.size() - added; i < home_items_.size(); ++i) {
+        const auto& r = home_items_[i];
+        if (home_tab_ == 1 && r.is_short) continue;   // Videos only
+        if (home_tab_ == 2 && !r.is_short) continue;  // Shorts only
+        results_.push_back(r);
+    }
+    if ((int)results_.size() > base) { build_tile_lines(); queue_restricted_checks(); }
+    if (getenv("YTC_DEBUG"))
+        std::fprintf(stderr, "[home-more] +%zu shown -> %zu (%s)\n",
+                     results_.size() - base, results_.size(),
+                     home_cursor_.has_more() ? "more available" : "END");
+}
+
 void App::poll_channel_info() {
     if (!chinfo_done_.exchange(false)) return;
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
@@ -1650,6 +1709,7 @@ void App::pump_async() {
     poll_resolve();
     poll_channel_info();
     poll_more();
+    poll_more_home();
     poll_refresh();
     poll_description();
     poll_sponsorblock();
@@ -1686,6 +1746,7 @@ void App::pump_async() {
         refresh_current_view(/*is_retry=*/true);
     }
     maybe_load_more();
+    maybe_load_more_home();
     // Apply freshly-arrived restricted verdicts to the visible list.
     if (hide_restricted_ && rcheck_.drain_dirty() && mode_ != Mode::Playing) {
         size_t before = results_.size();

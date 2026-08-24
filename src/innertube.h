@@ -11,6 +11,7 @@
 #include <vector>
 #include <optional>
 #include <mutex>
+#include <unordered_map>
 #include "http.h"
 
 namespace yt {
@@ -174,9 +175,26 @@ public:
     // channel_ids empty -> favorites from channels.json. Never throws.
     // include_history: also merge in channels from watch history (distinct, recent,
     // capped), unioned with favorites. Only applies when channel_ids is empty.
+    // Per-channel continuation state so the merged home feed can page deeper on
+    // demand (each channel's Videos tab is continued independently, then merged).
+    struct HomeCursor {
+        std::vector<std::string> channel_ids;
+        std::unordered_map<std::string, std::string> vids_cont;  // channel -> next-page token ("" = exhausted)
+        std::unordered_map<std::string, std::string> cname;      // channel -> display name
+        bool has_more() const {
+            for (auto& kv : vids_cont) if (!kv.second.empty()) return true;
+            return false;
+        }
+    };
+    // cursor (if non-null) is filled with each channel's Videos-tab continuation so
+    // home_feed_more() can fetch the next page later.
     std::vector<SearchResult> home_feed(std::vector<std::string> channel_ids = {},
                                         int max_results = 120,
-                                        bool include_history = false);
+                                        bool include_history = false,
+                                        HomeCursor* cursor = nullptr);
+    // Next page of the home feed: continues each channel's Videos tab one page,
+    // merges + date-sorts the new batch, and advances the cursor. Never throws.
+    std::vector<SearchResult> home_feed_more(HomeCursor& cursor, int per_channel = 30);
     // Playlists from all favorite channels (parallel; grouped per channel). Never throws.
     std::vector<SearchResult> home_playlists(std::vector<std::string> channel_ids = {});
 
