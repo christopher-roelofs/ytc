@@ -272,7 +272,6 @@ private:
     void poll_captions();
     void apply_caption_selection();        // off / cached sub-add / kick async download
     std::string cc_current_key() const;    // cache key for the active CC selection
-    int cc_translate_source() const;       // index of a track YouTube can auto-translate, or -1
     void poll_caption_download();          // install a finished VTT if still selected
 
     // Autoplay: when a video ends, play the next one automatically.

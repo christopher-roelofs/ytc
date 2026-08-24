@@ -721,11 +721,8 @@ void App::adjust_setting(MenuAction a, int dir) {
     }
     if (a == MenuAction::CycleCaptions) {
         int n = (int)cc_tracks_.size();
-        // 0=Off, 1..n tracks, then n+1 = "Translate -> UI language" (only when a
-        // translatable track exists — YouTube can't tlang an untranslatable one).
-        int opts = (n == 0) ? 1 : (n + 1 + (cc_translate_source() >= 0 ? 1 : 0));
-        if (opts > 1) {
-            cc_sel_ = (cc_sel_ + dir + opts) % opts;
+        if (n > 0) {
+            cc_sel_ = (cc_sel_ + dir + (n + 1)) % (n + 1);   // 0=Off, 1..n tracks; wraps
             apply_caption_selection();
         }
         int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label
@@ -892,38 +889,15 @@ void App::poll_captions() {
 // Apply the current caption selection WITHOUT blocking: Off hides; an already-cached
 // track is added instantly; an un-cached track is downloaded on a worker thread and
 // installed later by poll_caption_download().
-// Index of a track YouTube can auto-translate (isTranslatable). Prefer the
-// auto-generated (ASR) track — the most reliably translatable — else the first.
-int App::cc_translate_source() const {
-    int first = -1;
-    for (int i = 0; i < (int)cc_tracks_.size(); ++i)
-        if (cc_tracks_[i].translatable) {
-            if (cc_tracks_[i].auto_generated) return i;
-            if (first < 0) first = i;
-        }
-    return first;
-}
-// The cache key for the current CC selection ("" = Off/invalid). Native tracks key
-// on their language code; the translate entry keys on "tr_<uihl>" so it can't clash.
+// The cache key for the current CC selection ("" = Off/invalid) — a track's language code.
 std::string App::cc_current_key() const {
-    int n = (int)cc_tracks_.size();
-    if (cc_sel_ <= 0) return "";
-    if (cc_sel_ <= n) return cc_tracks_[cc_sel_ - 1].language_code;
-    if (cc_translate_source() >= 0) return std::string("tr_") + i18n::language_hl(i18n::language());
-    return "";
+    if (cc_sel_ <= 0 || cc_sel_ > (int)cc_tracks_.size()) return "";
+    return cc_tracks_[cc_sel_ - 1].language_code;
 }
 void App::apply_caption_selection() {
-    int n = (int)cc_tracks_.size();
-    int tsrc = cc_translate_source();
-    bool translate = (cc_sel_ == n + 1) && tsrc >= 0;
-    if (cc_sel_ <= 0 || cc_sel_ > n + 1 || (cc_sel_ == n + 1 && !translate)) {
-        player_.subtitles_off(); return;
-    }
-    // Native track uses its own baseUrl; the translate entry auto-translates a
-    // translatable track into the UI language via tlang.
-    std::string url  = translate ? cc_tracks_[tsrc].base_url : cc_tracks_[cc_sel_ - 1].base_url;
-    std::string tlang = translate ? std::string(i18n::language_hl(i18n::language())) : "";
-    std::string key  = cc_current_key();
+    if (cc_sel_ <= 0 || cc_sel_ > (int)cc_tracks_.size()) { player_.subtitles_off(); return; }
+    std::string url = cc_tracks_[cc_sel_ - 1].base_url;
+    std::string key = cc_current_key();
     auto it = cc_paths_.find(key);
     if (it != cc_paths_.end()) { player_.add_subtitle(it->second); return; }  // cached
     // Not cached: fetch off-thread. Hide until it arrives; show a brief status.
@@ -931,9 +905,9 @@ void App::apply_caption_selection() {
     status_msg_ = i18n::tr(i18n::Str::LoadingCaptions); status_until_ = SDL_GetTicks() + 4000;
     if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
     cc_dl_running_ = true; cc_dl_done_ = false;
-    cc_dl_thread_ = std::thread([this, url, key, tlang]() {
+    cc_dl_thread_ = std::thread([this, url, key]() {
         std::string vtt;
-        try { vtt = it_.caption_vtt(url, tlang); } catch (...) {}
+        try { vtt = it_.caption_vtt(url); } catch (...) {}
         { std::lock_guard<std::mutex> lk(cc_m_); cc_dl_vtt_ = std::move(vtt); cc_dl_lang_ = key; }
         cc_dl_running_ = false; cc_dl_done_ = true;
     });
@@ -1181,14 +1155,9 @@ void App::open_menu() {
             char sb[24]; std::snprintf(sb, sizeof sb, "Speed:  %gx", playback_speed_);
             menu_items_.push_back({sb, MenuAction::CycleSpeed});
             std::string cc = "Captions:  ";
-            int ccn = (int)cc_tracks_.size();
             if (cc_tracks_.empty()) cc += cc_running_ ? i18n::tr(i18n::Str::Loading) : "none";
             else if (cc_sel_ <= 0) cc += i18n::tr(i18n::Str::Off);
-            else if (cc_sel_ <= ccn) cc += cc_tracks_[cc_sel_ - 1].name;
-            else if (cc_translate_source() >= 0)
-                cc += std::string(i18n::tr(i18n::Str::CcTranslate)) + " \xE2\x86\x92 "
-                    + i18n::language_name(i18n::language());   // "Translate -> Espanol"
-            else cc += i18n::tr(i18n::Str::Off);
+            else cc += cc_tracks_[cc_sel_ - 1].name;   // track title, localized by YouTube (hl)
             menu_items_.push_back({cc, MenuAction::CycleCaptions});
             menu_items_.push_back({std::string("Stats for Nerds:  ")
                                    + (stats_for_nerds_ ? "Enabled" : "Disabled"),
