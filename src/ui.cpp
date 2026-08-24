@@ -920,7 +920,7 @@ void App::poll_caption_download() {
       cc_dl_vtt_.clear(); }
     bool still_selected = !lang.empty() && lang == cc_current_key();
     if (vtt.empty()) {
-        if (still_selected) { status_msg_ = "Captions unavailable";
+        if (still_selected) { status_msg_ = i18n::tr(i18n::Str::CcUnavailable);
             status_until_ = SDL_GetTicks() + 2500; cc_sel_ = 0; player_.subtitles_off(); }
         return;
     }
@@ -1097,8 +1097,8 @@ void App::render_description(gfx::Renderer& rn) {
             rn.quad({mx + pw - 8*s, ky, 4*s, knob_h}, theme_.accent);
         }
     }
-    rn.text(*font_small_, post_has_video_ ? "A: play video    Up/Down: move    B: close"
-                                          : "Up/Down: scroll    B: close",
+    rn.text(*font_small_, post_has_video_ ? i18n::tr(i18n::Str::FooterPostOverlay)
+                                          : i18n::tr(i18n::Str::FooterScrollOverlay),
             tx, my + ph - 34*s, theme_.text_dim);
     rn.end();
 }
@@ -1111,64 +1111,66 @@ void App::open_menu() {
     else { const yt::SearchResult* v = selected(); if (!v) return; menu_target_ = *v; }
 
     menu_items_.clear();
+    using i18n::tr; using S = i18n::Str;
     const yt::SearchResult& t = menu_target_;
     if (t.is_post()) {
-        menu_items_.push_back({"Read Post", MenuAction::ShowDescription});
+        menu_items_.push_back({tr(S::ReadPost), MenuAction::ShowDescription});
         if (!t.video_id.empty())
-            menu_items_.push_back({"Play Attached Video", MenuAction::PlayPostVideo});
+            menu_items_.push_back({tr(S::PlayAttachedVideo), MenuAction::PlayPostVideo});
     } else if (t.is_playlist()) {
         bool wl = wl_ids_.count(t.playlist_id) > 0;
-        menu_items_.push_back({wl ? "Remove from Watch Later"
-                                  : "Add to Watch Later", MenuAction::WatchLaterToggle});
-        menu_items_.push_back({"Show Description", MenuAction::ShowDescription});
+        menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
+                               MenuAction::WatchLaterToggle});
+        menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         if (!t.channel_id.empty())
-            menu_items_.push_back({"Show Channel Description",
+            menu_items_.push_back({tr(S::ShowChannelDescription),
                                    MenuAction::ShowChannelDescription});
     } else if (t.is_channel()) {
         bool fav = fav_ids_.count(t.channel_id) > 0;
-        menu_items_.push_back({fav ? "Remove Channel from Favorites"
-                                   : "Add Channel to Favorites", MenuAction::FavoriteToggle});
-        menu_items_.push_back({"Show Description", MenuAction::ShowChannelDescription});
+        menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
+                               MenuAction::FavoriteToggle});
+        menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowChannelDescription});
     } else {
         if (!t.channel_id.empty()) {
             bool fav = fav_ids_.count(t.channel_id) > 0;
-            menu_items_.push_back({fav ? "Remove Channel from Favorites"
-                                       : "Add Channel to Favorites", MenuAction::FavoriteToggle});
+            menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
+                                   MenuAction::FavoriteToggle});
         }
         bool wl = wl_ids_.count(t.video_id) > 0;
-        menu_items_.push_back({wl ? "Remove from Watch Later"
-                                  : "Add to Watch Later", MenuAction::WatchLaterToggle});
+        menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
+                               MenuAction::WatchLaterToggle});
         if (!t.video_id.empty())
-            menu_items_.push_back({"Show Description", MenuAction::ShowDescription});
+            menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         // Channel description on every video tile with a known uploader.
         if (!t.channel_id.empty())
-            menu_items_.push_back({"Show Channel Description",
+            menu_items_.push_back({tr(S::ShowChannelDescription),
                                    MenuAction::ShowChannelDescription});
         // The browsed playlist's description (playlist screens only).
         if (!subview_playlist_.empty() && mode_ != Mode::Playing)
-            menu_items_.push_back({"Show Playlist Description",
+            menu_items_.push_back({tr(S::ShowPlaylistDescription),
                                    MenuAction::ShowPlaylistDescription});
         // Quality + Speed + Stats (Left/Right) — only for the playing video.
         if (mode_ == Mode::Playing) {
-            menu_items_.push_back({"Quality:  " + quality_label(play_prefs_.max_height),
+            menu_items_.push_back({tr(S::MenuQuality) + std::string(":  ")
+                                   + quality_label(play_prefs_.max_height),
                                    MenuAction::CycleMaxQuality});
-            char sb[24]; std::snprintf(sb, sizeof sb, "Speed:  %gx", playback_speed_);
-            menu_items_.push_back({sb, MenuAction::CycleSpeed});
-            std::string cc = "Captions:  ";
-            if (cc_tracks_.empty()) cc += cc_running_ ? i18n::tr(i18n::Str::Loading) : "none";
-            else if (cc_sel_ <= 0) cc += i18n::tr(i18n::Str::Off);
+            char sb[24]; std::snprintf(sb, sizeof sb, ":  %gx", playback_speed_);
+            menu_items_.push_back({tr(S::MenuSpeed) + std::string(sb), MenuAction::CycleSpeed});
+            std::string cc = std::string(tr(S::MenuCaptions)) + ":  ";
+            if (cc_tracks_.empty()) cc += cc_running_ ? tr(S::Loading) : tr(S::CcNone);
+            else if (cc_sel_ <= 0) cc += tr(S::Off);
             else cc += cc_tracks_[cc_sel_ - 1].name;   // track title, localized by YouTube (hl)
             menu_items_.push_back({cc, MenuAction::CycleCaptions});
-            menu_items_.push_back({std::string("Stats for Nerds:  ")
-                                   + (stats_for_nerds_ ? "Enabled" : "Disabled"),
+            menu_items_.push_back({tr(S::MenuStats) + std::string(":  ")
+                                   + tr(stats_for_nerds_ ? S::Enabled : S::Disabled),
                                    MenuAction::ToggleStats});
         }
         if (mode_ != Mode::Playing && !t.channel_id.empty())
-            menu_items_.push_back({"Go to Channel", MenuAction::OpenChannel});
+            menu_items_.push_back({tr(S::GoToChannel), MenuAction::OpenChannel});
     }
     // Clear the whole watch history — only from a tile in the History view.
     if (mode_ != Mode::Playing && view_label_ == "History")
-        menu_items_.push_back({"Clear History", MenuAction::ClearHistory});
+        menu_items_.push_back({tr(S::ClearHistoryItem), MenuAction::ClearHistory});
     if (menu_items_.empty()) return;
     menu_sel_ = 0;   // adjust_setting saves/restores this across in-place rebuilds
     // Pause the player while the options menu is up (resumed on close). Don't re-pause
@@ -1183,9 +1185,9 @@ void App::menu_activate() {
         case MenuAction::FavoriteToggle: {
             std::string name = t.is_channel() ? t.title : t.author;
             if (fav_ids_.count(t.channel_id)) { it_.remove_favorite(t.channel_id);
-                status_msg_ = "Removed " + name + " from favorites"; }
+                status_msg_ = i18n::tr(i18n::Str::RemovedFav) + std::string(": ") + name; }
             else { it_.add_favorite(t.channel_id, name);
-                status_msg_ = "Added " + name + " to favorites"; }
+                status_msg_ = i18n::tr(i18n::Str::AddedFav) + std::string(": ") + name; }
             status_until_ = SDL_GetTicks() + 4000; refresh_favorites();
             // Un-favoriting a restricted channel makes it hideable again.
             if (hide_restricted_ && mode_ != Mode::Playing) {
@@ -1198,10 +1200,10 @@ void App::menu_activate() {
         case MenuAction::WatchLaterToggle: {
             std::string wid = t.is_playlist() ? t.playlist_id : t.video_id;
             if (wl_ids_.count(wid)) { it_.remove_watch_later(wid);
-                status_msg_ = "Removed from Watch Later"; }
+                status_msg_ = i18n::tr(i18n::Str::RemovedWatchLater); }
             else { it_.add_watch_later(wid, t.title, t.is_playlist(),
                                        t.thumbnail_url, t.author, t.view_count_text);
-                status_msg_ = "Added to Watch Later"; }
+                status_msg_ = i18n::tr(i18n::Str::AddedWatchLater); }
             status_until_ = SDL_GetTicks() + 4000; refresh_watch_later();
             break;
         }
@@ -1273,7 +1275,7 @@ void App::menu_activate() {
             menu_open_ = false; menu_paused_ = false;
             it_.clear_history();
             load_history();               // reload the (now empty) view
-            status_msg_ = "History cleared";
+            status_msg_ = i18n::tr(i18n::Str::HistoryCleared);
             status_until_ = SDL_GetTicks() + 3000;
             return;
         case MenuAction::CycleMaxQuality:
@@ -1352,7 +1354,7 @@ void App::open_channel(const yt::SearchResult& ch) {
     for (auto& r : results_)                             // channel-tab rows omit the uploader
         if (r.author.empty()) r.author = name;
     if (results_.empty()) {
-        status_msg_ = "No recent uploads (or channel unavailable)";
+        status_msg_ = i18n::tr(i18n::Str::NoRecentUploads);
         status_until_ = SDL_GetTicks() + 5000;
     }
     // Fetch full channel metadata (subs, video count) in the background so it
@@ -1430,7 +1432,7 @@ void App::open_playlist(const yt::SearchResult& pl) {
     cont_token_ = f.continuation; cont_endpoint_ = f.endpoint; cont_channel_id_ = f.channel_id;
     set_results(std::move(f.items));
     if (results_.empty()) {
-        status_msg_ = "Playlist unavailable";
+        status_msg_ = i18n::tr(i18n::Str::PlaylistUnavailable);
         status_until_ = SDL_GetTicks() + 5000;
     }
 }
@@ -1689,7 +1691,7 @@ void App::input(Action a) {
     if (mode_ == Mode::Loading) {
         // Back cancels the pending resolve (poll_resolve discards a late result
         // once mode has left Loading); the worker still finishes in the bg.
-        if (a == Action::Back) { mode_ = Mode::Grid; status_msg_ = "cancelled"; }
+        if (a == Action::Back) { mode_ = Mode::Grid; status_msg_ = i18n::tr(i18n::Str::Cancelled); }
         return;
     }
     if (mode_ == Mode::Search) {
@@ -1795,7 +1797,7 @@ void App::pump_async() {
                 if (getenv("YTC_DEBUG"))
                     std::fprintf(stderr, "[sponsorblock] skipped %s [%.1f-%.1f]\n",
                                  sg.category.c_str(), sg.start, sg.end);
-                status_msg_ = "Skipped " + sb_category_label(sg.category);
+                status_msg_ = std::string(i18n::tr(i18n::Str::SkippedPrefix)) + " " + sb_category_label(sg.category);
                 status_until_ = SDL_GetTicks() + 1600;
                 break;
             }
@@ -1837,7 +1839,7 @@ void App::pump_async() {
                     if (limit < p) limit = p;
                     if (target > limit) {
                         delta = limit - p;
-                        status_msg_ = "Seeking limited on this video (paced stream)";
+                        status_msg_ = i18n::tr(i18n::Str::SeekLimited);
                         status_until_ = SDL_GetTicks() + 4000;
                     }
                 } else if (delta < 0) {
@@ -1845,7 +1847,7 @@ void App::pump_async() {
                     if (floor_t < 0) floor_t = 0;
                     if (target < floor_t) {
                         delta = floor_t - p;
-                        status_msg_ = "Seeking limited on this video (paced stream)";
+                        status_msg_ = i18n::tr(i18n::Str::SeekLimited);
                         status_until_ = SDL_GetTicks() + 4000;
                     }
                 }
@@ -1971,8 +1973,8 @@ void App::render_menu(gfx::Renderer& rn) {
             has_value = true;
     const char* foot = (menu_kind_ == MenuKind::Settings)
                      ? i18n::tr(i18n::Str::FooterDesc)
-                     : has_value ? "A: select    Left/Right: change    B: close"
-                     : "A: select    B: close";
+                     : has_value ? i18n::tr(i18n::Str::FooterMenuValue)
+                     : i18n::tr(i18n::Str::FooterMenuPlain);
     rn.text(*font_small_, foot, px, iy + 10*s, theme_.text_dim);
     rn.end();
 }
@@ -2025,7 +2027,7 @@ void App::draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
         // video / short / playlist: cover image + a corner pill.
         if (auto* tex = v.thumbnail_url.empty() ? nullptr : thumbs_.get(v.thumbnail_url))
             rn.textured_cover(r, *tex, tint);
-        else rn.text(*font_small_, "loading...", r.x + 12*s, r.y + r.h/2 - 9*s, A(theme_.text_dim));
+        else rn.text(*font_small_, i18n::tr(i18n::Str::Loading), r.x + 12*s, r.y + r.h/2 - 9*s, A(theme_.text_dim));
         // No badge on Shorts; videos show duration, playlists show the item count.
         std::string pill = v.is_short ? std::string()
                          : v.is_playlist() ? v.view_count_text
@@ -2177,34 +2179,33 @@ void App::render_grid(gfx::Renderer& rn) {
     // Empty state: no videos yet (default startup, or an empty search). Guide the
     // user to search; the Latest feed populates once favorite channels are added.
     if (results_.empty()) {
-        const char* l1; const char* l2 = "Press Y  (or / )  to search"; const char* l3;
+        using S = i18n::Str;
+        const char* l1; const char* l2 = i18n::tr(S::SearchHint); const char* l3;
         if (retry_pending_ || (refresh_running_ && retry_attempt_ > 0)) {
-            l1 = "Waiting for network...";
-            l2 = "Reconnecting automatically";
+            l1 = i18n::tr(S::WaitingNetwork);
+            l2 = i18n::tr(S::Reconnecting);
             l3 = "";
         } else if (channel_tabs_active() ||
             (home_tabs_active() && !home_items_.empty()) ||
             (home_tabs_active() && refresh_running_)) {
-            l1 = refresh_running_ ? i18n::tr(i18n::Str::Loading) : i18n::tr(i18n::Str::NothingInTab);
-            l2 = refresh_running_ ? "" : "L/R shoulders: switch tabs";
+            l1 = refresh_running_ ? i18n::tr(S::Loading) : i18n::tr(S::NothingInTab);
+            l2 = refresh_running_ ? "" : i18n::tr(S::SwitchTabsHint);
             l3 = "";
         } else if (view_label_ == "Favorite Channels") {
-            l1 = i18n::tr(i18n::Str::NoFavorites);
-            l2 = "Open a channel, press Select, and Add to Favorites";
-            l3 = "Your favorites show up here for quick access";
+            l1 = i18n::tr(S::NoFavorites);
+            l2 = i18n::tr(S::FavHint2);
+            l3 = i18n::tr(S::FavHint3);
         } else if (view_label_ == "Watch Later") {
-            l1 = i18n::tr(i18n::Str::WatchLaterEmpty);
-            l2 = "Press Select on a video and Add to Watch Later";
-            l3 = "Saved videos show up here";
+            l1 = i18n::tr(S::WatchLaterEmpty);
+            l2 = i18n::tr(S::WlHint2);
+            l3 = i18n::tr(S::WlHint3);
         } else if (view_label_ == "History") {
-            l1 = i18n::tr(i18n::Str::NoHistory);
-            l2 = "Videos you play show up here";
-            l3 = "History is stored locally on this device";
+            l1 = i18n::tr(S::NoHistory);
+            l2 = i18n::tr(S::HistHint2);
+            l3 = i18n::tr(S::HistHint3);
         } else {
-            l1 = query_.empty() ? i18n::tr(i18n::Str::NoVideosYet) : i18n::tr(i18n::Str::NoResults);
-            l3 = query_.empty()
-                ? "Your Home feed fills in once you add favorite channels"
-                : "Try a different search, or check your connection";
+            l1 = query_.empty() ? i18n::tr(S::NoVideosYet) : i18n::tr(S::NoResults);
+            l3 = query_.empty() ? i18n::tr(S::HomeHint3) : i18n::tr(S::SearchHint3);
         }
         rn.text(*font_title_, l1, (W - font_title_->text_width(l1))/2, H*0.40f, theme_.text);
         rn.text(*font_body_,  l2, (W - font_body_->text_width(l2))/2,  H*0.40f + 52*s, theme_.accent);
@@ -2290,7 +2291,7 @@ bool App::browse_empty_overlay(gfx::Renderer& rn) {
     const int W = win_->width(), H = win_->height();
     float s = H / 720.f;
     const char* l1 = i18n::tr(i18n::Str::NoVideosYet);
-    if (retry_pending_ || (refresh_running_ && retry_attempt_ > 0)) l1 = "Waiting for network...";
+    if (retry_pending_ || (refresh_running_ && retry_attempt_ > 0)) l1 = i18n::tr(i18n::Str::WaitingNetwork);
     else if (refresh_running_) l1 = i18n::tr(i18n::Str::Loading);
     else if (!query_.empty()) l1 = i18n::tr(i18n::Str::NoResults);
     else if (view_label_ == "Watch Later") l1 = i18n::tr(i18n::Str::WatchLaterEmpty);
@@ -2744,7 +2745,7 @@ void App::render_search(gfx::Renderer& rn) {
     }
     rn.text(*font_body_, shown, bx + 18*s, by + 14*s, theme_.text);
     if (query_input_.empty())
-        rn.text(*font_body_, "type to search...", bx + 18*s, by + 14*s, theme_.text_dim);
+        rn.text(*font_body_, i18n::tr(i18n::Str::TypeToSearch), bx + 18*s, by + 14*s, theme_.text_dim);
     float caret_x = bx + 18*s + font_body_->text_width(query_input_.substr(start, caret - start));
     if ((SDL_GetTicks() / 500) % 2 == 0)
         rn.quad({caret_x + 1*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
@@ -2893,7 +2894,7 @@ void App::start_related_autoplay(const std::string& video_id) {
     if (video_id.empty()) { mode_ = Mode::Grid; return; }
     if (rel_running_) { mode_ = Mode::Grid; return; }   // a related fetch is already running
     mode_ = Mode::Loading;
-    status_msg_ = "Finding next video..."; status_until_ = SDL_GetTicks() + 6000;
+    status_msg_ = i18n::tr(i18n::Str::FindingNext); status_until_ = SDL_GetTicks() + 6000;
     rel_autoplay_pending_ = true;
     if (rel_thread_.joinable()) rel_thread_.join();   // finished -> instant
     rel_running_ = true; rel_done_ = false;
@@ -2911,7 +2912,7 @@ void App::poll_related_autoplay() {
     // If the user navigated away (Back left Loading), or autoplay was cancelled, drop it.
     if (!rel_autoplay_pending_ || mode_ != Mode::Loading) { rel_autoplay_pending_ = false; return; }
     rel_autoplay_pending_ = false;
-    if (r.empty()) { mode_ = Mode::Grid; status_msg_ = "No more videos";
+    if (r.empty()) { mode_ = Mode::Grid; status_msg_ = i18n::tr(i18n::Str::NoMoreVideos);
                      status_until_ = SDL_GetTicks() + 2500; return; }
     // Replace the list with the related set so subsequent autoplay chains through it,
     // then arm the same staged up-next sequence.
@@ -2940,7 +2941,7 @@ void App::replay_current(double at_seconds) {
         double safe = (15.0 * 1024 * 1024 * 8) / (double)playing_vbitrate_;
         if (at_seconds > safe) {
             at_seconds = safe;
-            status_msg_ = "Paced stream: resuming near the start";
+            status_msg_ = i18n::tr(i18n::Str::PacedResuming);
             status_until_ = SDL_GetTicks() + 5000;
         }
     }
@@ -2949,7 +2950,7 @@ void App::replay_current(double at_seconds) {
 
 void App::start_resolve(const std::string& video_id, const std::string& title, double start_pos) {
     if (!Player::available()) {
-        status_msg_ = "playback unavailable (no libmpv in this build)";
+        status_msg_ = i18n::tr(i18n::Str::NoMpv);
         return;
     }
     if (resolve_running_) return;               // one resolve at a time
@@ -3050,7 +3051,7 @@ void App::poll_resolve() {
     }
     double start_at = resume_pos_; resume_pos_ = 0;   // consume the resume point
     if (!player_.play(r.video_url, r.audio_url, r.user_agent, start_at, r.paced)) {
-        mode_ = Mode::Grid; status_msg_ = "player failed to start"; return;
+        mode_ = Mode::Grid; status_msg_ = i18n::tr(i18n::Str::PlayerFailed); return;
     }
     player_.set_volume(volume_);                 // apply the app-local volume level
     player_.set_speed(playback_speed_);          // apply speed (persists across re-resolve)
@@ -3062,7 +3063,7 @@ void App::poll_resolve() {
     playing_vbitrate_ = r.video_bitrate;
     played_max_ = start_at;                     // seek window anchors here
     if (playing_paced_) {
-        status_msg_ = "Limited seeking on this video (paced stream)";
+        status_msg_ = i18n::tr(i18n::Str::SeekLimited);
         status_until_ = SDL_GetTicks() + 5000;
         // Remember the channel verdict (restriction is channel-wide in practice);
         // the "Hide Restricted" filter picks it up like any checked verdict.

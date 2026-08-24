@@ -31,6 +31,22 @@ enum class Str {
     FooterBrowse, FooterSubview, FooterSearch, FooterHomeMin, FooterResume, FooterDesc,
     FooterPlayerPlay, FooterPlayerPause,
     CcTranslate,
+    // Context / options menu items
+    ReadPost, PlayAttachedVideo, AddWatchLater, RemoveWatchLater,
+    ShowDescription, ShowChannelDescription, ShowPlaylistDescription,
+    AddFavorite, RemoveFavorite, GoToChannel, ClearHistoryItem,
+    // Player options
+    MenuQuality, MenuSpeed, MenuCaptions, CcNone, MenuStats, Enabled, Disabled,
+    // Menu + overlay footers
+    FooterMenuValue, FooterMenuPlain, FooterPostOverlay, FooterScrollOverlay,
+    // Empty-state hints
+    SearchHint, WaitingNetwork, Reconnecting, SwitchTabsHint,
+    FavHint2, FavHint3, WlHint2, WlHint3, HistHint2, HistHint3, HomeHint3, SearchHint3,
+    TypeToSearch,
+    // Status toasts
+    CcUnavailable, AddedFav, RemovedFav, AddedWatchLater, RemovedWatchLater, HistoryCleared,
+    NoRecentUploads, PlaylistUnavailable, Cancelled, SkippedPrefix, SeekLimited,
+    FindingNext, NoMoreVideos, PacedResuming, NoMpv, PlayerFailed,
     COUNT
 };
 

@@ -26,6 +26,17 @@ const char* kKeys[(int)Str::COUNT] = {
     "FooterBrowse","FooterSubview","FooterSearch","FooterHomeMin","FooterResume","FooterDesc",
     "FooterPlayerPlay","FooterPlayerPause",
     "CcTranslate",
+    "ReadPost","PlayAttachedVideo","AddWatchLater","RemoveWatchLater",
+    "ShowDescription","ShowChannelDescription","ShowPlaylistDescription",
+    "AddFavorite","RemoveFavorite","GoToChannel","ClearHistoryItem",
+    "MenuQuality","MenuSpeed","MenuCaptions","CcNone","MenuStats","Enabled","Disabled",
+    "FooterMenuValue","FooterMenuPlain","FooterPostOverlay","FooterScrollOverlay",
+    "SearchHint","WaitingNetwork","Reconnecting","SwitchTabsHint",
+    "FavHint2","FavHint3","WlHint2","WlHint3","HistHint2","HistHint3","HomeHint3","SearchHint3",
+    "TypeToSearch",
+    "CcUnavailable","AddedFav","RemovedFav","AddedWatchLater","RemovedWatchLater","HistoryCleared",
+    "NoRecentUploads","PlaylistUnavailable","Cancelled","SkippedPrefix","SeekLimited",
+    "FindingNext","NoMoreVideos","PacedResuming","NoMpv","PlayerFailed",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -51,6 +62,24 @@ const char* kEnglish[(int)Str::COUNT] = {
     "[A] pause    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
     "[A] resume    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
     "Translate",
+    "Read Post","Play Attached Video","Add to Watch Later","Remove from Watch Later",
+    "Show Description","Show Channel Description","Show Playlist Description",
+    "Add Channel to Favorites","Remove Channel from Favorites","Go to Channel","Clear History",
+    "Quality","Speed","Captions","none","Stats for Nerds","Enabled","Disabled",
+    "A: select    Left/Right: change    B: close","A: select    B: close",
+    "A: play video    Up/Down: move    B: close","Up/Down: scroll    B: close",
+    "Press Y  (or / )  to search","Waiting for network...","Reconnecting automatically",
+    "L/R shoulders: switch tabs",
+    "Open a channel, press Select, and Add to Favorites","Your favorites show up here for quick access",
+    "Press Select on a video and Add to Watch Later","Saved videos show up here",
+    "Videos you play show up here","History is stored locally on this device",
+    "Your Home feed fills in once you add favorite channels","Try a different search, or check your connection",
+    "type to search...",
+    "Captions unavailable","Added to favorites","Removed from favorites","Added to Watch Later",
+    "Removed from Watch Later","History cleared","No recent uploads (or channel unavailable)",
+    "Playlist unavailable","cancelled","Skipped","Seeking limited on this video (paced stream)",
+    "Finding next video...","No more videos","Paced stream: resuming near the start",
+    "playback unavailable (no libmpv in this build)","player failed to start",
 };
 
 struct Lang {
