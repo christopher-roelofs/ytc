@@ -1590,6 +1590,7 @@ void App::poll_cast_discovery() {
     if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
     std::vector<yt::Cast::Device> devs;
     { std::lock_guard<std::mutex> lk(cast_disc_m_); devs = std::move(cast_disc_pending_); }
+    cast_all_ = devs;                     // keep the full list (names for code pairing)
     cast_devices_.clear();
     for (auto& d : devs) if (!d.needs_code()) cast_devices_.push_back(d);  // "ready" rows only
     if (cast_sel_ > (int)cast_devices_.size()) cast_sel_ = (int)cast_devices_.size();
@@ -1628,16 +1629,21 @@ void App::start_cast(const yt::Cast::Device& d) {
 }
 void App::submit_cast_code(const std::string& code) {
     if (cast_play_running_ || code.empty()) return;
-    cast_play_name_ = "TV";
+    // Name the pairing after the discovered device: if exactly one unpaired Cast
+    // device is on the network, the code is almost certainly for it (e.g. "SHIELD").
+    std::string name; int unpaired = 0;
+    for (auto& d : cast_all_) if (d.needs_code()) { name = d.name; unpaired++; }
+    if (unpaired != 1) name.clear();     // ambiguous -> fall back to the generic name
+    cast_play_name_ = name.empty() ? "TV" : name;
     cast_play_running_ = true; cast_play_done_ = false;
     if (cast_play_thread_.joinable()) cast_play_thread_.join();
-    std::string vid = cast_target_id_; int pos = cast_target_pos_;
-    cast_play_thread_ = std::thread([this, code, vid, pos]() {
+    std::string vid = cast_target_id_; int pos = cast_target_pos_; std::string nm = cast_play_name_;
+    cast_play_thread_ = std::thread([this, code, vid, pos, nm]() {
         yt::Cast::Session s;
         try {
-            std::string sid = cast_.pair_with_code(code, "");
+            std::string sid = cast_.pair_with_code(code, nm);
             if (!sid.empty()) {
-                yt::Cast::Device d; d.screen_id = sid; d.name = "TV"; d.kind = yt::Cast::Kind::CastDevice;
+                yt::Cast::Device d; d.screen_id = sid; d.name = nm; d.kind = yt::Cast::Kind::CastDevice;
                 s = cast_.play(d, vid, pos);
             }
         } catch (...) {}

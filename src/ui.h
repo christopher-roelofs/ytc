@@ -296,6 +296,7 @@ private:
     // ---- Casting (Option B: play on a TV's own YouTube app via the Lounge API) ----
     bool cast_picker_open_ = false;        // device-picker overlay is up
     std::vector<yt::Cast::Device> cast_devices_;   // ready rows (+ virtual "Add a device")
+    std::vector<yt::Cast::Device> cast_all_;        // full discovery (to name a code-paired device)
     int cast_sel_ = 0;
     std::string cast_target_id_, cast_target_title_;   // the video we're casting
     int cast_target_pos_ = 0;                          // hand-off position (seconds)
