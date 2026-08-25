@@ -1579,8 +1579,8 @@ void App::poll_more_home() {
 
 // ===================== Casting (Option B) =====================
 void App::open_cast_picker() {
-    cast_picker_open_ = true; cast_sel_ = 0;
-    cast_devices_.clear();
+    cast_picker_mode_ = PickerMode::Cast;
+    cast_picker_open_ = true; cast_sel_ = 0; cast_devices_.clear();
     if (cast_disc_running_) return;
     cast_disc_running_ = true; cast_disc_done_ = false;
     if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
@@ -1591,14 +1591,29 @@ void App::open_cast_picker() {
         cast_disc_running_ = false; cast_disc_done_ = true;
     });
 }
-void App::poll_cast_discovery() {
-    if (!cast_disc_done_.exchange(false)) return;
+void App::open_link_picker() {           // Linked Devices -> "Add a device": discover linkable TVs
+    cast_picker_mode_ = PickerMode::Link;
+    cast_picker_open_ = true; cast_sel_ = 0; cast_devices_.clear();
+    if (cast_disc_running_) return;
+    cast_disc_running_ = true; cast_disc_done_ = false;
     if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
-    std::vector<yt::Cast::Device> devs;
-    { std::lock_guard<std::mutex> lk(cast_disc_m_); devs = std::move(cast_disc_pending_); }
-    cast_all_ = devs;                     // keep the full list (names for code pairing)
+    cast_disc_thread_ = std::thread([this]() {
+        std::vector<yt::Cast::Device> devs;
+        try { devs = cast_.discover(3000); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cast_disc_m_); cast_disc_pending_ = std::move(devs); }
+        cast_disc_running_ = false; cast_disc_done_ = true;
+    });
+}
+void App::rebuild_picker_rows() {
     cast_devices_.clear();
-    for (auto& d : devs) {
+    if (cast_picker_mode_ == PickerMode::Link) {
+        // Only devices that can be code-linked: unpaired Cast/Android-TV devices.
+        for (auto& d : cast_all_)
+            if (d.kind == yt::Cast::Kind::CastDevice && d.screen_id.empty() && !d.ip.empty())
+                cast_devices_.push_back(d);
+        return;
+    }
+    for (auto& d : cast_all_) {
         if (d.kind == yt::Cast::Kind::DialYouTube) {
             cast_devices_.push_back(d);                 // smart TV: native, no code
         } else if (d.kind == yt::Cast::Kind::CastDevice) {
@@ -1609,9 +1624,30 @@ void App::poll_cast_discovery() {
             }
         }
     }
-    if (cast_sel_ > (int)cast_devices_.size()) cast_sel_ = (int)cast_devices_.size();
+}
+void App::poll_cast_discovery() {
+    if (!cast_disc_done_.exchange(false)) return;
+    if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
+    { std::lock_guard<std::mutex> lk(cast_disc_m_); cast_all_ = std::move(cast_disc_pending_); }
+    rebuild_picker_rows();
+    int maxsel = (int)cast_devices_.size() + (cast_picker_mode_ == PickerMode::Cast ? 1 : 0) - 1;
+    if (cast_sel_ > maxsel) cast_sel_ = std::max(0, maxsel);
 }
 void App::cast_activate() {
+    int n = (int)cast_devices_.size();
+    if (cast_picker_mode_ == PickerMode::Link) {   // pick a device to link -> code entry for it
+        if (cast_sel_ < 0 || cast_sel_ >= n) return;
+        cast_link_name_ = cast_devices_[cast_sel_].name;
+        open_search();
+        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
+        kb_mode_ = KbMode::LinkDevice;
+        kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
+        kb_placeholder_.clear();
+        return;
+    }
+    (void)n; return cast_activate_cast();
+}
+void App::cast_activate_cast() {
     int n = (int)cast_devices_.size();
     if (cast_sel_ == n) {   // "Add a device" -> on-screen keyboard in code mode
         open_search();
@@ -1708,12 +1744,8 @@ void App::open_manage_devices() {
 }
 void App::manage_activate() {
     int n = (int)cast_paired_.size();
-    if (cast_manage_sel_ == n) {   // "+ Link a device" -> code keyboard (link only, no cast)
-        open_search();
-        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
-        kb_mode_ = KbMode::LinkDevice;
-        kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
-        kb_placeholder_.clear();
+    if (cast_manage_sel_ == n) {   // "+ Add a device" -> discovery picker of linkable TVs
+        open_link_picker();
         return;
     }
     if (cast_manage_sel_ >= 0 && cast_manage_sel_ < n) {   // remove this device
@@ -1727,11 +1759,13 @@ void App::manage_activate() {
 }
 void App::link_device(const std::string& code) {
     if (cast_link_running_ || code.empty()) return;
+    cast_picker_open_ = false;              // done with the link picker -> back to the manage list
     cast_link_running_ = true; cast_link_done_ = false;
     if (cast_link_thread_.joinable()) cast_link_thread_.join();
-    cast_link_thread_ = std::thread([this, code]() {
+    std::string nm = cast_link_name_;       // the device we chose to link
+    cast_link_thread_ = std::thread([this, code, nm]() {
         std::string sid;
-        try { sid = cast_.pair_with_code(code, ""); } catch (...) {}
+        try { sid = cast_.pair_with_code(code, nm); } catch (...) {}
         { std::lock_guard<std::mutex> lk(cast_link_m_); cast_link_result_ = sid; }
         cast_link_running_ = false; cast_link_done_ = true;
     });
@@ -1808,12 +1842,13 @@ void App::input(Action a) {
     }
     // Device picker overlay (but not while the code keyboard is up over it).
     if (cast_picker_open_ && mode_ != Mode::Search) {
-        int rows = (int)cast_devices_.size() + 1;   // + "Add a device"
+        // Cast mode has a trailing "Add a device" row; Link mode is devices only.
+        int rows = (int)cast_devices_.size() + (cast_picker_mode_ == PickerMode::Cast ? 1 : 0);
         switch (a) {
             case Action::Up:     if (cast_sel_ > 0) cast_sel_--; break;
             case Action::Down:   if (cast_sel_ < rows - 1) cast_sel_++; break;
             case Action::Select: cast_activate(); break;
-            case Action::Back:   cast_picker_open_ = false; break;
+            case Action::Back:   cast_picker_open_ = false; break;   // Link mode: back to manage
             default: break;
         }
         return;
@@ -2242,27 +2277,30 @@ void App::render_menu(gfx::Renderer& rn) {
 void App::render_cast_picker(gfx::Renderer& rn) {
     const int W = win_->width(), H = win_->height();
     float s = H / 720.f;
+    bool link = (cast_picker_mode_ == PickerMode::Link);
     rn.begin(W, H);
     rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.72f));
-    int n = (int)cast_devices_.size() + 1;   // + "Add a device"
+    int addrow = link ? 0 : 1;               // Cast mode has a trailing "Add a device"
+    int n = (int)cast_devices_.size() + addrow;
     float iw = std::min(600.f*s, W*0.86f), ih = 58*s, gap = 8*s, title_h = 56*s, foot_h = 34*s;
-    float ph = title_h + n*(ih+gap) + foot_h;
+    float ph = title_h + std::max(1,n)*(ih+gap) + foot_h;
     float px = (W-iw)/2, py = (H-ph)/2;
     rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
-    rn.text(*font_body_, i18n::tr(i18n::Str::MenuCastToDevice), px, py, theme_.text_dim);
+    rn.text(*font_body_, i18n::tr(link ? i18n::Str::CastAddDevice : i18n::Str::MenuCastToDevice),
+            px, py, theme_.text_dim);
     float iy = py + title_h;
     for (int i = 0; i < n; ++i) {
         bool sel = (i == cast_sel_);
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
         std::string label;
-        if (i == (int)cast_devices_.size())
+        if (!link && i == (int)cast_devices_.size())
             label = std::string("+  ") + i18n::tr(i18n::Str::CastAddDevice);
         else {
             const auto& d = cast_devices_[i];
             label = d.name;
-            if (d.kind == yt::Cast::Kind::CastDevice && d.screen_id.empty())
+            if (!link && d.kind == yt::Cast::Kind::CastDevice && d.screen_id.empty())
                 label += "  \xC2\xB7  Chromecast";   // code-free web-receiver row
         }
         rn.text(*font_body_, font_body_->ellipsize(label, iw - 36*s),
@@ -2297,7 +2335,7 @@ void App::render_manage_devices(gfx::Renderer& rn) {
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
         std::string label = (i == (int)cast_paired_.size())
-            ? std::string("+  ") + i18n::tr(i18n::Str::CastLinkDevice)
+            ? std::string("+  ") + i18n::tr(i18n::Str::CastAddDevice)
             : cast_paired_[i].name;
         rn.text(*font_body_, font_body_->ellipsize(label, iw - 36*s),
                 px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,

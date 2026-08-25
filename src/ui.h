@@ -185,9 +185,12 @@ private:
 
     // Casting: picker + code entry + remote control (see the Cast module).
     void open_cast_picker();            // capture the current video, kick discovery, open the overlay
+    void open_link_picker();            // Linked Devices -> "Add a device": discover linkable TVs
+    void rebuild_picker_rows();         // build cast_devices_ from cast_all_ for the current mode
     void poll_cast_discovery();         // apply a finished discovery
     void poll_cast_play();              // apply a finished play() -> enter remote mode
-    void cast_activate();               // Select in the picker: cast to a device, or "Add a device"
+    void cast_activate();               // Select in the picker (dispatches by mode)
+    void cast_activate_cast();          // cast-mode Select: cast to a device, or "Add a device"
     void start_cast(const yt::Cast::Device& d);   // async play() the target on a device
     void submit_cast_code(const std::string& code);  // pair with the typed code, then cast
     void cast_command(const std::string& type, double arg = 0);  // remote command to the TV
@@ -301,9 +304,12 @@ private:
 
     // ---- Casting (Option B: play on a TV's own YouTube app via the Lounge API) ----
     bool cast_picker_open_ = false;        // device-picker overlay is up
-    std::vector<yt::Cast::Device> cast_devices_;   // ready rows (+ virtual "Add a device")
-    std::vector<yt::Cast::Device> cast_all_;        // full discovery (to name a code-paired device)
+    enum class PickerMode { Cast, Link };  // Cast = play here; Link = pair (from Linked Devices)
+    PickerMode cast_picker_mode_ = PickerMode::Cast;
+    std::vector<yt::Cast::Device> cast_devices_;   // the rows for the current mode
+    std::vector<yt::Cast::Device> cast_all_;        // full discovery
     int cast_sel_ = 0;
+    std::string cast_link_name_;           // device name chosen to link (for storage/toast)
     std::string cast_target_id_, cast_target_title_;   // the video we're casting
     int cast_target_pos_ = 0;                          // hand-off position (seconds)
     // async discovery

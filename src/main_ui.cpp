@@ -397,6 +397,10 @@ int main(int argc, char** argv) {
             app.input(ui::App::Action::Select);
             settle(400);
             app.render(rn); win->screenshot(std::string(shot) + "_manage.png");
+            for (int i = 0; i < 6; ++i) app.input(ui::App::Action::Down);   // -> "Add a device"
+            app.input(ui::App::Action::Select);
+            settle(4000);                                                   // link-picker discovery
+            app.render(rn); win->screenshot(std::string(shot) + "_linkpick.png");
             std::fprintf(stderr, "MANAGESHOT done\n");
             return 0;
         }
