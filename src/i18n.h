@@ -55,6 +55,7 @@ enum class Str {
     CastingTo, CastConnecting, CastFailed, CastPairFailed,
     FooterRemote, FooterCastPicker, FooterCastCode,
     CastCodeTitle, CastCodeHint, KbEnter,
+    SetLinkedDevices, CastLinkDevice, CastNoLinked, CastRemoved, FooterManage,
     COUNT
 };
 

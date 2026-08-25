@@ -195,6 +195,11 @@ private:
     double cast_est_pos() const;        // estimated TV position (base + elapsed) for seek
     void render_cast_picker(gfx::Renderer& rn);
     void render_remote(gfx::Renderer& rn);
+    void open_manage_devices();         // Settings -> Linked Devices
+    void manage_activate();             // Select in the manage list: remove, or link
+    void link_device(const std::string& code);   // async pair (no cast)
+    void poll_cast_link();              // apply a finished link
+    void render_manage_devices(gfx::Renderer& rn);
     void refresh_favorites();           // reload the favorite-id cache from channels.json
     void refresh_watch_later();         // reload the watch-later id cache
     void filter_hidden(std::vector<yt::SearchResult>& items);  // drop restricted/Shorts per settings
@@ -222,7 +227,8 @@ private:
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
-                            CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice, Quit };
+                            CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
+                            GoLinkedDevices, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -313,9 +319,18 @@ private:
     std::string cast_play_name_;           // device name being cast to (for the toast/remote)
     // The on-screen keyboard is generic: callers set the title + placeholder and a
     // mode that decides what submit does. The submit key always reads "Enter".
-    enum class KbMode { Search, CastCode };
+    enum class KbMode { Search, CastCode, LinkDevice };
     KbMode kb_mode_ = KbMode::Search;
     std::string kb_title_, kb_placeholder_;
+
+    // Settings -> Linked Devices: manage paired TVs (link / remove).
+    bool cast_manage_open_ = false;
+    std::vector<yt::Cast::Device> cast_paired_;
+    int cast_manage_sel_ = 0;
+    std::thread cast_link_thread_;         // async pair_with_code for "Link a device"
+    std::atomic<bool> cast_link_running_{false}, cast_link_done_{false};
+    std::mutex cast_link_m_;
+    std::string cast_link_result_;         // paired screenId ("" on failure)
     // active remote session (after a successful cast)
     bool casting_ = false;                 // remote mode active
     yt::Cast::Session cast_session_;

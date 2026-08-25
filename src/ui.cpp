@@ -323,6 +323,7 @@ App::~App() {
     if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
     if (cast_play_thread_.joinable()) cast_play_thread_.join();
     if (cast_cmd_thread_.joinable()) cast_cmd_thread_.join();
+    if (cast_link_thread_.joinable()) cast_link_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
@@ -634,6 +635,7 @@ void App::open_settings() {
                            MenuAction::CycleView});
     menu_items_.push_back({tr(S::SetLanguage) + std::string(":  ") + i18n::language_name(lang_),
                            MenuAction::CycleLanguage});
+    menu_items_.push_back({tr(S::SetLinkedDevices), MenuAction::GoLinkedDevices});
     menu_sel_ = 0;
     // (Do not re-pause here; if opened from the player the main menu already did.)
     menu_open_ = true;
@@ -1292,6 +1294,10 @@ void App::menu_activate() {
         case MenuAction::GoSettings:
             open_settings();              // switch this overlay to the settings submenu
             return;
+        case MenuAction::GoLinkedDevices:
+            menu_open_ = false; menu_paused_ = false;
+            open_manage_devices();
+            return;
         case MenuAction::ClearHistory:
             menu_open_ = false; menu_paused_ = false;
             it_.clear_history();
@@ -1695,6 +1701,52 @@ void App::stop_casting() {
     cast_session_ = {};
 }
 
+// ---- Settings -> Linked Devices ----
+void App::open_manage_devices() {
+    cast_manage_open_ = true; cast_manage_sel_ = 0;
+    cast_paired_ = cast_.paired();
+}
+void App::manage_activate() {
+    int n = (int)cast_paired_.size();
+    if (cast_manage_sel_ == n) {   // "+ Link a device" -> code keyboard (link only, no cast)
+        open_search();
+        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
+        kb_mode_ = KbMode::LinkDevice;
+        kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
+        kb_placeholder_.clear();
+        return;
+    }
+    if (cast_manage_sel_ >= 0 && cast_manage_sel_ < n) {   // remove this device
+        std::string name = cast_paired_[cast_manage_sel_].name;
+        cast_.forget(cast_paired_[cast_manage_sel_].screen_id);
+        cast_paired_ = cast_.paired();
+        if (cast_manage_sel_ >= (int)cast_paired_.size()) cast_manage_sel_ = std::max(0, (int)cast_paired_.size());
+        status_msg_ = std::string(i18n::tr(i18n::Str::CastRemoved)) + ": " + name;
+        status_until_ = SDL_GetTicks() + 2500;
+    }
+}
+void App::link_device(const std::string& code) {
+    if (cast_link_running_ || code.empty()) return;
+    cast_link_running_ = true; cast_link_done_ = false;
+    if (cast_link_thread_.joinable()) cast_link_thread_.join();
+    cast_link_thread_ = std::thread([this, code]() {
+        std::string sid;
+        try { sid = cast_.pair_with_code(code, ""); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cast_link_m_); cast_link_result_ = sid; }
+        cast_link_running_ = false; cast_link_done_ = true;
+    });
+    status_msg_ = i18n::tr(i18n::Str::CastConnecting); status_until_ = SDL_GetTicks() + 8000;
+}
+void App::poll_cast_link() {
+    if (!cast_link_done_.exchange(false)) return;
+    if (cast_link_thread_.joinable()) cast_link_thread_.join();
+    std::string sid;
+    { std::lock_guard<std::mutex> lk(cast_link_m_); sid = cast_link_result_; }
+    if (sid.empty()) { status_msg_ = i18n::tr(i18n::Str::CastPairFailed); status_until_ = SDL_GetTicks() + 4000; }
+    else status_msg_.clear();
+    cast_paired_ = cast_.paired();   // refresh the manage list either way
+}
+
 void App::poll_channel_info() {
     if (!chinfo_done_.exchange(false)) return;
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
@@ -1762,6 +1814,18 @@ void App::input(Action a) {
             case Action::Down:   if (cast_sel_ < rows - 1) cast_sel_++; break;
             case Action::Select: cast_activate(); break;
             case Action::Back:   cast_picker_open_ = false; break;
+            default: break;
+        }
+        return;
+    }
+    // Linked-devices management overlay (Settings -> Linked Devices).
+    if (cast_manage_open_ && mode_ != Mode::Search) {
+        int rows = (int)cast_paired_.size() + 1;    // + "Link a device"
+        switch (a) {
+            case Action::Up:     if (cast_manage_sel_ > 0) cast_manage_sel_--; break;
+            case Action::Down:   if (cast_manage_sel_ < rows - 1) cast_manage_sel_++; break;
+            case Action::Select: manage_activate(); break;
+            case Action::Back:   cast_manage_open_ = false; open_settings(); break;  // back to Settings
             default: break;
         }
         return;
@@ -1966,6 +2030,7 @@ void App::pump_async() {
     poll_more_home();
     poll_cast_discovery();
     poll_cast_play();
+    poll_cast_link();
     poll_refresh();
     poll_description();
     poll_sponsorblock();
@@ -2111,6 +2176,7 @@ void App::render(gfx::Renderer& rn) {
     if (resume_prompt_open_) render_resume_prompt(rn);
     if (casting_) render_remote(rn);
     else if (cast_picker_open_ && mode_ != Mode::Search) render_cast_picker(rn);
+    else if (cast_manage_open_ && mode_ != Mode::Search) render_manage_devices(rn);
 }
 
 void App::render_menu(gfx::Renderer& rn) {
@@ -2210,6 +2276,41 @@ void App::render_cast_picker(gfx::Renderer& rn) {
                      : cast_devices_.empty() ? i18n::tr(i18n::Str::CastNoDevices) : "";
     if (note[0]) rn.text(*font_small_, note, px, py + title_h - 26*s, theme_.text_dim);
     rn.text(*font_small_, i18n::tr(i18n::Str::FooterCastPicker), px, iy + 10*s, theme_.text_dim);
+    rn.end();
+}
+
+void App::render_manage_devices(gfx::Renderer& rn) {
+    const int W = win_->width(), H = win_->height();
+    float s = H / 720.f;
+    rn.begin(W, H);
+    rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.72f));
+    int n = (int)cast_paired_.size() + 1;   // + "Link a device"
+    float iw = std::min(600.f*s, W*0.86f), ih = 58*s, gap = 8*s, title_h = 56*s, foot_h = 34*s;
+    float ph = title_h + n*(ih+gap) + foot_h;
+    float px = (W-iw)/2, py = (H-ph)/2;
+    rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
+    rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
+    rn.text(*font_body_, i18n::tr(i18n::Str::SetLinkedDevices), px, py, theme_.text_dim);
+    float iy = py + title_h;
+    for (int i = 0; i < n; ++i) {
+        bool sel = (i == cast_manage_sel_);
+        rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
+        if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
+        std::string label = (i == (int)cast_paired_.size())
+            ? std::string("+  ") + i18n::tr(i18n::Str::CastLinkDevice)
+            : cast_paired_[i].name;
+        rn.text(*font_body_, font_body_->ellipsize(label, iw - 36*s),
+                px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,
+                sel ? theme_.text : theme_.text_dim);
+        iy += ih + gap;
+    }
+    if (cast_paired_.empty())
+        rn.text(*font_small_, i18n::tr(i18n::Str::CastNoLinked), px, py + title_h - 26*s, theme_.text_dim);
+    // Footer: the "Link a device" row can't be removed, so show the right hint.
+    const char* foot = (cast_manage_sel_ == (int)cast_paired_.size())
+                     ? i18n::tr(i18n::Str::FooterCastPicker)   // A: select   B: cancel
+                     : i18n::tr(i18n::Str::FooterManage);      // A: remove   B: back
+    rn.text(*font_small_, foot, px, iy + 10*s, theme_.text_dim);
     rn.end();
 }
 
@@ -2961,6 +3062,12 @@ void App::submit_search() {
         kb_mode_ = KbMode::Search;
         mode_ = Mode::Grid;               // picker stays open underneath
         submit_cast_code(q);
+        return;
+    }
+    if (kb_mode_ == KbMode::LinkDevice) {   // "Link a device" (manage): pair, no cast
+        kb_mode_ = KbMode::Search;
+        mode_ = Mode::Grid;               // manage overlay stays open underneath
+        link_device(q);
         return;
     }
     if (q.empty()) { mode_ = Mode::Grid; return; }

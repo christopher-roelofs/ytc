@@ -385,6 +385,21 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "BACKTAB done\n");
             return 0;
         }
+        if (std::getenv("YTC_MANAGESHOT")) {  // Settings -> Linked Devices
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.open_main_menu();
+            for (int i = 0; i < 4; ++i) app.input(ui::App::Action::Down);   // -> Settings
+            app.input(ui::App::Action::Select);
+            settle(300);
+            for (int i = 0; i < 12; ++i) app.input(ui::App::Action::Down);  // -> Linked Devices (last)
+            app.input(ui::App::Action::Select);
+            settle(400);
+            app.render(rn); win->screenshot(std::string(shot) + "_manage.png");
+            std::fprintf(stderr, "MANAGESHOT done\n");
+            return 0;
+        }
         if (std::getenv("YTC_CASTCODESHOT")) {  // cast picker -> Add a device -> code keyboard
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
