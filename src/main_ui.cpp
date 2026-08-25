@@ -372,6 +372,19 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VIDPAGE done sel=%d\n", app.selected_index());
             return 0;
         }
+        if (std::getenv("YTC_BACKTAB")) {  // Back at top of a non-All tab -> All tab
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3500);
+            app.cycle_tab(+1); app.cycle_tab(+1);        // Home: All -> Videos -> Shorts
+            settle(600);
+            app.render(rn); win->screenshot(std::string(shot) + "_on_shorts.png");
+            app.input(ui::App::Action::Back);            // at top -> should return to All tab
+            settle(600);
+            app.render(rn); win->screenshot(std::string(shot) + "_after_back.png");
+            std::fprintf(stderr, "BACKTAB done\n");
+            return 0;
+        }
         if (std::getenv("YTC_GRIDNAV")) {  // partial-last-row Down: top-right -> last tile
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
