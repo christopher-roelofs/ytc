@@ -59,6 +59,9 @@ private:
     std::string config_dir_;
     std::string sender_id_;   // our persistent 128-bit sender id (generated once)
 
+    // Cast-launch the YouTube web receiver on a Cast device (TLS :8009) and return
+    // its screenId — the code-free path that also wakes the device. "" on failure.
+    std::string receiver_screen_id(const std::string& ip);
     std::string lounge_token(const std::string& screen_id);   // get_lounge_token_batch
     bool bind(Session& s);                                     // establish SID/gsession
     bool send_cmd(Session& s, const std::string& body);        // one bc/bind command POST

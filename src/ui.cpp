@@ -1592,7 +1592,17 @@ void App::poll_cast_discovery() {
     { std::lock_guard<std::mutex> lk(cast_disc_m_); devs = std::move(cast_disc_pending_); }
     cast_all_ = devs;                     // keep the full list (names for code pairing)
     cast_devices_.clear();
-    for (auto& d : devs) if (!d.needs_code()) cast_devices_.push_back(d);  // "ready" rows only
+    for (auto& d : devs) {
+        if (d.kind == yt::Cast::Kind::DialYouTube) {
+            cast_devices_.push_back(d);                 // smart TV: native, no code
+        } else if (d.kind == yt::Cast::Kind::CastDevice) {
+            if (!d.screen_id.empty()) cast_devices_.push_back(d);   // paired native row
+            if (!d.ip.empty()) {                         // code-free "· Chromecast" row (web receiver)
+                yt::Cast::Device cc = d; cc.screen_id.clear();
+                cast_devices_.push_back(cc);
+            }
+        }
+    }
     if (cast_sel_ > (int)cast_devices_.size()) cast_sel_ = (int)cast_devices_.size();
 }
 void App::cast_activate() {
@@ -1736,7 +1746,10 @@ void App::input(Action a) {
                 cast_vol_ += (a == Action::Up ? 10 : -10);
                 if (cast_vol_ > 100) cast_vol_ = 100; if (cast_vol_ < 0) cast_vol_ = 0;
                 cast_command("setVolume", cast_vol_); break;
-            case Action::Back: stop_casting(); break;   // leave the remote (TV keeps playing)
+            case Action::Back:
+                cast_command("stopVideo");   // stop playback on the TV (esp. the web receiver)
+                stop_casting();              // joins the command worker, then leaves the remote
+                break;
             default: break;
         }
         return;
@@ -2177,9 +2190,15 @@ void App::render_cast_picker(gfx::Renderer& rn) {
         bool sel = (i == cast_sel_);
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
-        std::string label = (i == (int)cast_devices_.size())
-            ? std::string("+  ") + i18n::tr(i18n::Str::CastAddDevice)
-            : cast_devices_[i].name;
+        std::string label;
+        if (i == (int)cast_devices_.size())
+            label = std::string("+  ") + i18n::tr(i18n::Str::CastAddDevice);
+        else {
+            const auto& d = cast_devices_[i];
+            label = d.name;
+            if (d.kind == yt::Cast::Kind::CastDevice && d.screen_id.empty())
+                label += "  \xC2\xB7  Chromecast";   // code-free web-receiver row
+        }
         rn.text(*font_body_, font_body_->ellipsize(label, iw - 36*s),
                 px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,
                 sel ? theme_.text : theme_.text_dim);

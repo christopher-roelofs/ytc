@@ -2,6 +2,7 @@
 #include "http.h"
 #include "../third_party/json.hpp"
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -11,6 +12,7 @@
 #include <random>
 #include <fstream>
 #include <algorithm>
+#include <curl/curl.h>
 using json = nlohmann::json;
 
 namespace yt {
@@ -65,6 +67,79 @@ static std::mt19937_64& rng() {
 static std::string rand_hex(int bytes) {
     static const char* hex = "0123456789abcdef";
     std::string o; for (int i=0;i<bytes;++i){ unsigned b = (unsigned)(rng()() & 0xff); o+=hex[b>>4]; o+=hex[b&0xf]; } return o;
+}
+
+// ---- Cast v2 protocol (raw TLS via libcurl CONNECT_ONLY) ----
+namespace {
+void pb_varint(std::string& o, uint64_t v){ do{uint8_t b=v&0x7f; v>>=7; if(v)b|=0x80; o+=(char)b;}while(v); }
+void pb_str(std::string& o,int f,const std::string& s){ o+=(char)((f<<3)|2); pb_varint(o,s.size()); o+=s; }
+void pb_var(std::string& o,int f,uint64_t v){ o+=(char)((f<<3)|0); pb_varint(o,v); }
+std::string cast_frame(const std::string& src,const std::string& dst,const std::string& ns,const std::string& pl){
+    std::string m; pb_var(m,1,0); pb_str(m,2,src); pb_str(m,3,dst); pb_str(m,4,ns); pb_var(m,5,0); pb_str(m,6,pl);
+    uint32_t len=htonl((uint32_t)m.size()); std::string fr((char*)&len,4); fr+=m; return fr; }
+uint64_t pb_getvar(const std::string& b,size_t& i){ uint64_t v=0;int sh=0; while(i<b.size()){uint8_t c=b[i++]; v|=(uint64_t)(c&0x7f)<<sh; if(!(c&0x80))break; sh+=7;} return v; }
+struct PMsg{ std::string ns,payload,source; };
+PMsg pb_parse(const std::string& b){ PMsg p; size_t i=0;
+    while(i<b.size()){ uint64_t tag=pb_getvar(b,i); int f=tag>>3,wt=tag&7;
+        if(wt==0) pb_getvar(b,i);
+        else if(wt==2){ uint64_t l=pb_getvar(b,i); std::string s=b.substr(i,l); i+=l;
+            if(f==2)p.source=s; else if(f==4)p.ns=s; else if(f==6)p.payload=s; }
+        else break; }
+    return p; }
+// Blocking send over a CONNECT_ONLY TLS handle.
+bool cc_send(CURL* c, const std::string& d){ size_t off=0;
+    for(int guard=0; off<d.size() && guard<2000; ++guard){ size_t n=0; CURLcode rc=curl_easy_send(c,d.data()+off,d.size()-off,&n);
+        if(rc==CURLE_OK) off+=n; else if(rc==CURLE_AGAIN) usleep(5000); else return false; }
+    return off>=d.size(); }
+// Read one length-prefixed frame (4-byte BE length + payload) with a deadline.
+bool cc_recv_frame(CURL* c, curl_socket_t fd, std::string& out, int timeout_ms){
+    auto readn=[&](char* buf, size_t need)->bool{ size_t got=0; int waited=0;
+        while(got<need){ size_t n=0; CURLcode rc=curl_easy_recv(c,buf+got,need-got,&n);
+            if(rc==CURLE_OK){ if(n==0){usleep(5000);waited+=5;} else got+=n; }
+            else if(rc==CURLE_AGAIN){ fd_set r; FD_ZERO(&r); FD_SET(fd,&r); timeval tv{0,200000};
+                select((int)fd+1,&r,nullptr,nullptr,&tv); waited+=200; }
+            else return false;
+            if(waited>timeout_ms) return false; }
+        return true; };
+    char lb[4]; if(!readn(lb,4)) return false;
+    uint32_t len=ntohl(*(uint32_t*)lb); out.resize(len); return len==0 || readn(&out[0],len);
+}
+} // namespace
+
+std::string Cast::receiver_screen_id(const std::string& ip) {
+    CURL* c = curl_easy_init(); if(!c) return "";
+    std::string url = "https://" + ip + ":8009";
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_CONNECT_ONLY, 1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 6L);
+    if (curl_easy_perform(c) != CURLE_OK) { curl_easy_cleanup(c); return ""; }
+    curl_socket_t fd = 0; curl_easy_getinfo(c, CURLINFO_ACTIVESOCKET, &fd);
+
+    const std::string CONN="urn:x-cast:com.google.cast.tp.connection", HEART="urn:x-cast:com.google.cast.tp.heartbeat";
+    const std::string RECV="urn:x-cast:com.google.cast.receiver", MDX="urn:x-cast:com.google.youtube.mdx", SRC="sender-0";
+    cc_send(c, cast_frame(SRC,"receiver-0",CONN,R"({"type":"CONNECT"})"));
+    cc_send(c, cast_frame(SRC,"receiver-0",RECV,R"({"type":"LAUNCH","appId":"233637DE","requestId":1})"));
+
+    std::string transport, screen;
+    for (int it=0; it<40 && screen.empty(); ++it) {
+        std::string raw; if(!cc_recv_frame(c, fd, raw, 8000)) break;
+        PMsg p = pb_parse(raw); json j = json::parse(p.payload, nullptr, false);
+        std::string type = j.is_discarded()? "" : j.value("type","");
+        if (p.ns==HEART) { if(type=="PING") cc_send(c, cast_frame(SRC,p.source.empty()?"receiver-0":p.source,HEART,R"({"type":"PONG"})")); continue; }
+        if (p.ns==RECV && type=="RECEIVER_STATUS" && transport.empty()) {
+            for (auto& app : j.value("status",json::object()).value("applications",json::array()))
+                if (app.value("appId","")=="233637DE") transport = app.value("transportId","");
+            if (!transport.empty()) {
+                cc_send(c, cast_frame(SRC,transport,CONN,R"({"type":"CONNECT"})"));
+                cc_send(c, cast_frame(SRC,transport,MDX,R"({"type":"getMdxSessionStatus"})"));
+            }
+        }
+        if (p.ns==MDX && type=="mdxSessionStatus") screen = j.value("data",json::object()).value("screenId","");
+    }
+    curl_easy_cleanup(c);
+    return screen;
 }
 
 // ---- construction / persistence ----
@@ -275,7 +350,11 @@ Cast::Session Cast::play(const Device& dev, const std::string& video_id, int sta
             if (screen.empty()) usleep(400000);
         }
     }
-    if (screen.empty()) return s;   // Cast device that still needs a code
+    // An unpaired Cast device (the "· Chromecast" row): launch its YouTube web
+    // receiver over Cast to wake it and get an ephemeral screenId. No code needed.
+    if (screen.empty() && dev.kind == Kind::CastDevice && !dev.ip.empty())
+        screen = receiver_screen_id(dev.ip);
+    if (screen.empty()) return s;   // still nothing -> couldn't reach it
     s.screen_id = screen;
     s.lounge_token = lounge_token(screen);
     if (s.lounge_token.empty()) return s;

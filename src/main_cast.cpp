@@ -56,6 +56,22 @@ int main(int argc, char** argv) {
         std::printf(s.ok ? "OK — playing on the TV\n" : "play failed\n");
         return s.ok ? 0 : 1;
     }
+    if (cmd == "chromecast") {   // code-free web-receiver cast to a Cast device (wakes it)
+        std::string vid  = argc > 2 ? argv[2] : "";
+        std::string want = argc > 3 ? argv[3] : "";
+        auto devs = cast.discover();
+        yt::Cast::Device* pick = nullptr;
+        for (auto& d : devs)
+            if (d.kind == yt::Cast::Kind::CastDevice && !d.ip.empty() &&
+                (want.empty() || d.name.find(want) != std::string::npos)) { pick = &d; break; }
+        if (!pick) { std::printf("no Cast device\n"); return 1; }
+        yt::Cast::Device cc = *pick; cc.screen_id.clear();   // force the receiver path
+        std::printf("chromecast %s -> %s (launching receiver...)\n", vid.c_str(), cc.name.c_str());
+        auto s = cast.play(cc, vid, 0);
+        std::printf(s.ok ? "OK — playing (web receiver)\n" : "failed\n");
+        if (s.ok) { sleep(6); std::printf("stopVideo -> %d\n", cast.command(s, "stopVideo")); }
+        return s.ok ? 0 : 1;
+    }
     if (cmd == "test") {   // play, then exercise the remote commands (watch the TV)
         std::string vid  = argc > 2 ? argv[2] : "";
         std::string want = argc > 3 ? argv[3] : "";
