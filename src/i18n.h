@@ -48,6 +48,8 @@ enum class Str {
     NoRecentUploads, PlaylistUnavailable, Cancelled, SkippedPrefix, SeekLimited,
     FindingNext, NoMoreVideos, PacedResuming, NoMpv, PlayerFailed,
     ResumeFrom, StartOver,
+    // Tile footer type labels
+    TileVideo, TileShort, TilePlaylist, TilePost, TileHasVideo,
     COUNT
 };
 

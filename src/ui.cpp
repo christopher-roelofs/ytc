@@ -2061,14 +2061,20 @@ App::TileLines App::compose_lines(const yt::SearchResult& v, ChannelMetaCache& c
         t.l1 = v.title.substr(0, v.title.find('\n'));
         t.l2 = v.view_count_text;
         if (!v.published_text.empty()) t.l2 += (t.l2.empty()?"":"   -   ") + v.published_text;
-        t.l3 = v.video_id.empty() ? "Post" : "Post - has video";
+        t.l3 = v.video_id.empty() ? i18n::tr(i18n::Str::TilePost)
+             : std::string(i18n::tr(i18n::Str::TilePost)) + "   -   " + i18n::tr(i18n::Str::TileHasVideo);
     } else if (v.is_playlist()) {
-        t.l1 = v.title; t.l2 = v.author; t.l3 = "Playlist";
+        t.l1 = v.title; t.l2 = v.author; t.l3 = i18n::tr(i18n::Str::TilePlaylist);
     } else {
+        // Video / Short: lead the footer with the type (so it's consistent with the
+        // Playlist/Post tiles and distinguishes a Short from a Video with the same
+        // title/thumbnail), then the view count + age.
         t.l1 = v.title; t.l2 = v.author;
         std::string age = humanize_age(v.published_text);
-        t.l3 = v.view_count_text;
-        if (!age.empty()) t.l3 += (t.l3.empty()?"":"   -   ") + age;
+        std::string meta = v.view_count_text;
+        if (!age.empty()) meta += (meta.empty()?"":"   -   ") + age;
+        std::string type = i18n::tr(v.is_short ? i18n::Str::TileShort : i18n::Str::TileVideo);
+        t.l3 = meta.empty() ? type : (type + "   -   " + meta);
     }
     return t;
 }

@@ -108,5 +108,10 @@
   "NoMpv": "відтворення недоступне (немає libmpv у цій збірці)",
   "PlayerFailed": "не вдалося запустити плеєр",
   "ResumeFrom": "Продовжити з",
-  "StartOver": "Почати спочатку"
+  "StartOver": "Почати спочатку",
+  "TileVideo": "Відео",
+  "TileShort": "Short",
+  "TilePlaylist": "Плейлист",
+  "TilePost": "Допис",
+  "TileHasVideo": "з відео"
 }

@@ -108,5 +108,10 @@
   "NoMpv": "playback unavailable (no libmpv in this build)",
   "PlayerFailed": "player failed to start",
   "ResumeFrom": "Resume from",
-  "StartOver": "Start from beginning"
+  "StartOver": "Start from beginning",
+  "TileVideo": "Video",
+  "TileShort": "Short",
+  "TilePlaylist": "Playlist",
+  "TilePost": "Post",
+  "TileHasVideo": "has video"
 }

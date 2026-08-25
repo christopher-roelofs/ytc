@@ -108,5 +108,10 @@
   "NoMpv": "μη διαθέσιμη αναπαραγωγή (χωρίς libmpv σε αυτή την έκδοση)",
   "PlayerFailed": "ο αναπαραγωγέας απέτυχε να ξεκινήσει",
   "ResumeFrom": "Συνέχεια από",
-  "StartOver": "Έναρξη από την αρχή"
+  "StartOver": "Έναρξη από την αρχή",
+  "TileVideo": "Βίντεο",
+  "TileShort": "Short",
+  "TilePlaylist": "Λίστα",
+  "TilePost": "Ανάρτηση",
+  "TileHasVideo": "με βίντεο"
 }

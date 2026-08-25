@@ -108,5 +108,10 @@
   "NoMpv": "reproducción no disponible (sin libmpv en esta versión)",
   "PlayerFailed": "el reproductor no pudo iniciar",
   "ResumeFrom": "Reanudar desde",
-  "StartOver": "Empezar desde el principio"
+  "StartOver": "Empezar desde el principio",
+  "TileVideo": "Vídeo",
+  "TileShort": "Short",
+  "TilePlaylist": "Lista",
+  "TilePost": "Publicación",
+  "TileHasVideo": "con vídeo"
 }

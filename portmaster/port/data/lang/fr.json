@@ -108,5 +108,10 @@
   "NoMpv": "lecture indisponible (pas de libmpv dans cette version)",
   "PlayerFailed": "le lecteur n'a pas démarré",
   "ResumeFrom": "Reprendre à",
-  "StartOver": "Recommencer depuis le début"
+  "StartOver": "Recommencer depuis le début",
+  "TileVideo": "Vidéo",
+  "TileShort": "Short",
+  "TilePlaylist": "Playlist",
+  "TilePost": "Post",
+  "TileHasVideo": "avec vidéo"
 }
