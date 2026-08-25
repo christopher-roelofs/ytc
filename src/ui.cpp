@@ -278,8 +278,13 @@ void App::on_resize() {
     if (h > 0 && std::abs(h - fonts_baked_h_) >= 24) load_fonts();
 }
 
+// Directory containing the config file (where cast.json etc. live).
+static std::string dir_of(const std::string& path) {
+    auto s = path.find_last_of('/');
+    return s == std::string::npos ? std::string(".") : path.substr(0, s);
+}
 App::App(const std::string& config_path, gfx::Window* win)
-    : win_(win), it_(config_path) {
+    : win_(win), it_(config_path), cast_(dir_of(config_path)) {
     load_fonts();
     cols_ = compute_columns();
     view_mode_ = (ViewMode)it_.setting_int("view", 0);   // 0 grid / 1 carousel / 2 coverflow
@@ -315,6 +320,8 @@ App::~App() {
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
     if (more_thread_.joinable()) more_thread_.join();
     if (home_more_thread_.joinable()) home_more_thread_.join();
+    if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
+    if (cast_play_thread_.joinable()) cast_play_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
@@ -1141,6 +1148,8 @@ void App::open_menu() {
         menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
                                MenuAction::WatchLaterToggle});
         if (!t.video_id.empty())
+            menu_items_.push_back({tr(S::MenuCastToDevice), MenuAction::CastToDevice});
+        if (!t.video_id.empty())
             menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         // Channel description on every video tile with a known uploader.
         if (!t.channel_id.empty())
@@ -1223,6 +1232,16 @@ void App::menu_activate() {
             menu_paused_ = false;
             request_playback();          // selected() is the post; its video_id plays
             return;
+        case MenuAction::CastToDevice: {
+            // Capture the target video (playing video, or the highlighted tile), then
+            // open the device picker. If casting from the player, hand off the position.
+            cast_target_id_ = t.video_id;
+            cast_target_title_ = t.title;
+            cast_target_pos_ = (mode_ == Mode::Playing) ? (int)player_.position() : 0;
+            menu_open_ = false; menu_paused_ = false;
+            open_cast_picker();
+            return;
+        }
         case MenuAction::ShowChannelDescription: {
             menu_open_ = false;
             desc_paused_ = menu_paused_;
@@ -1551,6 +1570,102 @@ void App::poll_more_home() {
     }
 }
 
+// ===================== Casting (Option B) =====================
+void App::open_cast_picker() {
+    cast_picker_open_ = true; cast_sel_ = 0;
+    cast_devices_.clear();
+    if (cast_disc_running_) return;
+    cast_disc_running_ = true; cast_disc_done_ = false;
+    if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
+    cast_disc_thread_ = std::thread([this]() {
+        std::vector<yt::Cast::Device> devs;
+        try { devs = cast_.discover(3000); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cast_disc_m_); cast_disc_pending_ = std::move(devs); }
+        cast_disc_running_ = false; cast_disc_done_ = true;
+    });
+}
+void App::poll_cast_discovery() {
+    if (!cast_disc_done_.exchange(false)) return;
+    if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
+    std::vector<yt::Cast::Device> devs;
+    { std::lock_guard<std::mutex> lk(cast_disc_m_); devs = std::move(cast_disc_pending_); }
+    cast_devices_.clear();
+    for (auto& d : devs) if (!d.needs_code()) cast_devices_.push_back(d);  // "ready" rows only
+    if (cast_sel_ > (int)cast_devices_.size()) cast_sel_ = (int)cast_devices_.size();
+}
+void App::cast_activate() {
+    int n = (int)cast_devices_.size();
+    if (cast_sel_ == n) {   // "Add a device" -> on-screen keyboard in code mode
+        open_search();
+        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;   // number row
+        kb_mode_ = KbMode::CastCode;
+        return;
+    }
+    if (cast_sel_ >= 0 && cast_sel_ < n) start_cast(cast_devices_[cast_sel_]);
+}
+double App::cast_est_pos() const {
+    double e = cast_base_pos_;
+    if (!cast_paused_) e += (SDL_GetTicks() - cast_started_ms_) / 1000.0;
+    return e < 0 ? 0 : e;
+}
+void App::start_cast(const yt::Cast::Device& d) {
+    if (cast_play_running_) return;
+    cast_play_name_ = d.name.empty() ? "TV" : d.name;
+    cast_play_running_ = true; cast_play_done_ = false;
+    if (cast_play_thread_.joinable()) cast_play_thread_.join();
+    yt::Cast::Device dev = d;
+    std::string vid = cast_target_id_; int pos = cast_target_pos_;
+    cast_play_thread_ = std::thread([this, dev, vid, pos]() {
+        yt::Cast::Session s;
+        try { s = cast_.play(dev, vid, pos); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cast_play_m_); cast_play_pending_ = s; }
+        cast_play_running_ = false; cast_play_done_ = true;
+    });
+    status_msg_ = i18n::tr(i18n::Str::CastConnecting); status_until_ = SDL_GetTicks() + 9000;
+}
+void App::submit_cast_code(const std::string& code) {
+    if (cast_play_running_ || code.empty()) return;
+    cast_play_name_ = "TV";
+    cast_play_running_ = true; cast_play_done_ = false;
+    if (cast_play_thread_.joinable()) cast_play_thread_.join();
+    std::string vid = cast_target_id_; int pos = cast_target_pos_;
+    cast_play_thread_ = std::thread([this, code, vid, pos]() {
+        yt::Cast::Session s;
+        try {
+            std::string sid = cast_.pair_with_code(code, "");
+            if (!sid.empty()) {
+                yt::Cast::Device d; d.screen_id = sid; d.name = "TV"; d.kind = yt::Cast::Kind::CastDevice;
+                s = cast_.play(d, vid, pos);
+            }
+        } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cast_play_m_); cast_play_pending_ = s; }
+        cast_play_running_ = false; cast_play_done_ = true;
+    });
+    status_msg_ = i18n::tr(i18n::Str::CastConnecting); status_until_ = SDL_GetTicks() + 9000;
+}
+void App::poll_cast_play() {
+    if (!cast_play_done_.exchange(false)) return;
+    if (cast_play_thread_.joinable()) cast_play_thread_.join();
+    yt::Cast::Session s;
+    { std::lock_guard<std::mutex> lk(cast_play_m_); s = cast_play_pending_; }
+    if (s.ok) {
+        cast_session_ = s; cast_name_ = cast_play_name_; casting_ = true;
+        cast_paused_ = false; cast_vol_ = 100;
+        cast_base_pos_ = cast_target_pos_; cast_started_ms_ = SDL_GetTicks();
+        cast_picker_open_ = false;
+        // Option B: local playback stops; the handheld becomes the remote.
+        if (mode_ == Mode::Playing) { save_resume_position(); player_.stop(); mode_ = Mode::Grid; }
+        status_msg_.clear();
+    } else {
+        status_msg_ = i18n::tr(i18n::Str::CastFailed); status_until_ = SDL_GetTicks() + 4000;
+    }
+}
+void App::cast_command(const std::string& type, double arg) {
+    if (!casting_) return;
+    try { cast_.command(cast_session_, type, arg); } catch (...) {}
+}
+void App::stop_casting() { casting_ = false; cast_session_ = {}; }
+
 void App::poll_channel_info() {
     if (!chinfo_done_.exchange(false)) return;
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
@@ -1581,6 +1696,40 @@ void App::input(Action a) {
                 break;
             }
             case Action::Back: resume_prompt_open_ = false; break;   // cancel: don't play
+            default: break;
+        }
+        return;
+    }
+    // Remote mode: the handheld controls the TV (playback continues there).
+    if (casting_) {
+        switch (a) {
+            case Action::Select:   // A: play/pause
+                if (cast_paused_) { cast_command("play"); cast_base_pos_ = cast_est_pos();
+                    cast_started_ms_ = SDL_GetTicks(); cast_paused_ = false; }
+                else { cast_base_pos_ = cast_est_pos(); cast_paused_ = true; cast_command("pause"); }
+                break;
+            case Action::Left: case Action::Right: {   // seek +/- 10s (estimated position)
+                double t = cast_est_pos() + (a == Action::Right ? 10 : -10); if (t < 0) t = 0;
+                cast_command("seekTo", t); cast_base_pos_ = t; cast_started_ms_ = SDL_GetTicks();
+                break;
+            }
+            case Action::Up: case Action::Down:   // volume
+                cast_vol_ += (a == Action::Up ? 10 : -10);
+                if (cast_vol_ > 100) cast_vol_ = 100; if (cast_vol_ < 0) cast_vol_ = 0;
+                cast_command("setVolume", cast_vol_); break;
+            case Action::Back: stop_casting(); break;   // leave the remote (TV keeps playing)
+            default: break;
+        }
+        return;
+    }
+    // Device picker overlay.
+    if (cast_picker_open_) {
+        int rows = (int)cast_devices_.size() + 1;   // + "Add a device"
+        switch (a) {
+            case Action::Up:     if (cast_sel_ > 0) cast_sel_--; break;
+            case Action::Down:   if (cast_sel_ < rows - 1) cast_sel_++; break;
+            case Action::Select: cast_activate(); break;
+            case Action::Back:   cast_picker_open_ = false; break;
             default: break;
         }
         return;
@@ -1703,7 +1852,8 @@ void App::input(Action a) {
             case Action::Down:  if (kb_row_ < (int)KB.size()-1) kb_row_++; break;
             case Action::Select: kb_activate(); break;
             case Action::Search: submit_search(); break;      // Y submits
-            case Action::Back:   mode_ = Mode::Grid; break;    // cancel
+            case Action::Back:   mode_ = Mode::Grid;           // cancel; code entry -> picker
+                                 kb_mode_ = KbMode::Search; break;
             default: break;
         }
         if (kb_col_ >= (int)KB[kb_row_].size()) kb_col_ = KB[kb_row_].size()-1;
@@ -1782,6 +1932,8 @@ void App::pump_async() {
     poll_channel_info();
     poll_more();
     poll_more_home();
+    poll_cast_discovery();
+    poll_cast_play();
     poll_refresh();
     poll_description();
     poll_sponsorblock();
@@ -1925,6 +2077,8 @@ void App::render(gfx::Renderer& rn) {
     if (menu_open_) render_menu(rn);   // overlay on top of whatever view
     if (desc_open_) render_description(rn);   // description floats above everything
     if (resume_prompt_open_) render_resume_prompt(rn);
+    if (casting_) render_remote(rn);
+    else if (cast_picker_open_ && mode_ != Mode::Search) render_cast_picker(rn);
 }
 
 void App::render_menu(gfx::Renderer& rn) {
@@ -1984,6 +2138,76 @@ void App::render_menu(gfx::Renderer& rn) {
                      : has_value ? i18n::tr(i18n::Str::FooterMenuValue)
                      : i18n::tr(i18n::Str::FooterMenuPlain);
     rn.text(*font_small_, foot, px, iy + 10*s, theme_.text_dim);
+    rn.end();
+}
+
+void App::render_cast_picker(gfx::Renderer& rn) {
+    const int W = win_->width(), H = win_->height();
+    float s = H / 720.f;
+    rn.begin(W, H);
+    rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.72f));
+    int n = (int)cast_devices_.size() + 1;   // + "Add a device"
+    float iw = std::min(600.f*s, W*0.86f), ih = 58*s, gap = 8*s, title_h = 56*s, foot_h = 34*s;
+    float ph = title_h + n*(ih+gap) + foot_h;
+    float px = (W-iw)/2, py = (H-ph)/2;
+    rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
+    rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
+    rn.text(*font_body_, i18n::tr(i18n::Str::MenuCastToDevice), px, py, theme_.text_dim);
+    float iy = py + title_h;
+    for (int i = 0; i < n; ++i) {
+        bool sel = (i == cast_sel_);
+        rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
+        if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
+        std::string label = (i == (int)cast_devices_.size())
+            ? std::string("+  ") + i18n::tr(i18n::Str::CastAddDevice)
+            : cast_devices_[i].name;
+        rn.text(*font_body_, font_body_->ellipsize(label, iw - 36*s),
+                px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,
+                sel ? theme_.text : theme_.text_dim);
+        iy += ih + gap;
+    }
+    // Status line: searching / none / connecting.
+    const char* note = cast_disc_running_ ? i18n::tr(i18n::Str::CastSearching)
+                     : cast_play_running_ ? i18n::tr(i18n::Str::CastConnecting)
+                     : cast_devices_.empty() ? i18n::tr(i18n::Str::CastNoDevices) : "";
+    if (note[0]) rn.text(*font_small_, note, px, py + title_h - 26*s, theme_.text_dim);
+    rn.text(*font_small_, i18n::tr(i18n::Str::FooterCastPicker), px, iy + 10*s, theme_.text_dim);
+    rn.end();
+}
+
+void App::render_remote(gfx::Renderer& rn) {
+    const int W = win_->width(), H = win_->height();
+    float s = H / 720.f;
+    rn.begin(W, H);
+    rn.clear(theme_.bg);
+    // "Casting to <TV>"
+    std::string to = std::string(i18n::tr(i18n::Str::CastingTo)) + "  " + cast_name_;
+    rn.text(*font_body_, to, (W - font_body_->text_width(to))/2, H*0.24f, theme_.text_dim);
+    // Title of what's playing.
+    std::string t = font_title_->ellipsize(cast_target_title_, W*0.86f);
+    rn.text(*font_title_, t, (W - font_title_->text_width(t))/2, H*0.32f, theme_.text);
+    // Big play/pause glyph.
+    float cx = W/2.f, cy = H*0.52f;
+    gfx::Color ac = theme_.accent;
+    if (cast_paused_) {   // paused -> show a play triangle (degenerate quad)
+        float r = 34*s;
+        rn.quad4(cx - r*0.5f, cy - r,  cx + r, cy,  cx - r*0.5f, cy + r,  cx - r*0.5f, cy - r, ac);
+    } else {              // playing -> pause bars
+        float bw = 14*s, bh = 54*s, gp = 16*s;
+        rn.quad({cx - gp/2 - bw, cy - bh/2, bw, bh}, ac);
+        rn.quad({cx + gp/2,      cy - bh/2, bw, bh}, ac);
+    }
+    // Position (estimated) + volume.
+    auto tstr = [](double v){ int m=(int)v/60, sec=(int)v%60; char b[16]; std::snprintf(b,sizeof b,"%d:%02d",m,sec); return std::string(b); };
+    std::string pos = tstr(cast_est_pos());
+    rn.text(*font_body_, pos, (W - font_body_->text_width(pos))/2, H*0.62f, theme_.text_dim);
+    char vol[24]; std::snprintf(vol, sizeof vol, "Vol %d%%", cast_vol_);
+    rn.text(*font_small_, vol, (W - font_small_->text_width(vol))/2, H*0.68f, theme_.text_dim);
+    // Footer hints.
+    float fh = 44*s;
+    rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
+    const char* foot = i18n::tr(i18n::Str::FooterRemote);
+    rn.text(*font_small_, foot, (W - font_small_->text_width(foot))/2, H - fh + 12*s, theme_.text_dim);
     rn.end();
 }
 
@@ -2655,6 +2879,7 @@ void App::render_player(gfx::Renderer& rn) {
 
 void App::open_search() {
     mode_ = Mode::Search;
+    kb_mode_ = KbMode::Search;
     query_input_ = query_;      // seed with the current query for quick edits
     kb_caret_ = (int)query_input_.size();
     kb_shift_ = false;
@@ -2691,8 +2916,13 @@ void App::kb_activate() {
 }
 void App::submit_search() {
     std::string q = query_input_;
-    // trim trailing spaces
     while (!q.empty() && q.back() == ' ') q.pop_back();
+    if (kb_mode_ == KbMode::CastCode) {   // "Add a device": pair with the code, then cast
+        kb_mode_ = KbMode::Search;
+        mode_ = Mode::Grid;               // picker stays open underneath
+        submit_cast_code(q);
+        return;
+    }
     if (q.empty()) { mode_ = Mode::Grid; return; }
     mode_ = Mode::Grid;
     search(q);                 // synchronous (~1s); reuses the startup path

@@ -15,7 +15,8 @@ pkg_check_modules(CURL REQUIRED libcurl)
 # --- Core Innertube library (no GUI deps) ---
 add_library(ytcore STATIC
   src/http.cpp
-  src/innertube.cpp)
+  src/innertube.cpp
+  src/cast.cpp)
 target_include_directories(ytcore PUBLIC ${CURL_INCLUDE_DIRS})
 # Threads is PUBLIC: ytcore itself spawns std::threads (home_feed parallel fetch),
 # so every consumer (incl. the CLI tools on ARM) needs pthread.
@@ -28,6 +29,10 @@ target_link_libraries(yt_resolve PRIVATE ytcore)
 # --- Search CLI (no SDL/mpv needed) ---
 add_executable(yt_search src/main_search.cpp)
 target_link_libraries(yt_search PRIVATE ytcore)
+
+# --- Cast CLI (discover/pair/play; no SDL/mpv needed) ---
+add_executable(yt_cast src/main_cast.cpp)
+target_link_libraries(yt_cast PRIVATE ytcore)
 
 # --- GLES2 UI (needs SDL2 + GLES2; no libmpv) ---
 option(BUILD_UI "Build the SDL2 + GLES2 UI" ON)

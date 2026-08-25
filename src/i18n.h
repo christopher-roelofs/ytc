@@ -50,6 +50,10 @@ enum class Str {
     ResumeFrom, StartOver,
     // Tile footer type labels
     TileVideo, TileShort, TilePlaylist, TilePost, TileHasVideo,
+    // Casting
+    MenuCastToDevice, CastAddDevice, CastSearching, CastNoDevices, CastEnterCode,
+    CastingTo, CastConnecting, CastFailed, CastPairFailed,
+    FooterRemote, FooterCastPicker, FooterCastCode,
     COUNT
 };
 

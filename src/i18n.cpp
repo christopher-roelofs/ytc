@@ -39,6 +39,9 @@ const char* kKeys[(int)Str::COUNT] = {
     "FindingNext","NoMoreVideos","PacedResuming","NoMpv","PlayerFailed",
     "ResumeFrom","StartOver",
     "TileVideo","TileShort","TilePlaylist","TilePost","TileHasVideo",
+    "MenuCastToDevice","CastAddDevice","CastSearching","CastNoDevices","CastEnterCode",
+    "CastingTo","CastConnecting","CastFailed","CastPairFailed",
+    "FooterRemote","FooterCastPicker","FooterCastCode",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -84,6 +87,13 @@ const char* kEnglish[(int)Str::COUNT] = {
     "playback unavailable (no libmpv in this build)","player failed to start",
     "Resume from","Start from beginning",
     "Video","Short","Playlist","Post","has video",
+    "Cast to Device","Add a device","Searching for devices\xE2\x80\xA6",
+    "No devices found on this network",
+    "Enter the TV code  (YouTube \xE2\x80\xA3 Settings \xE2\x80\xA3 Link with TV code)",
+    "Casting to","Connecting\xE2\x80\xA6","Couldn't cast to that device","Pairing failed \xE2\x80\x94 check the code",
+    "A: play/pause    <>: seek    ^v: volume    B: stop casting",
+    "A: select    B: cancel",
+    "type the code    A: type    Y: pair    B: cancel",
 };
 
 struct Lang {

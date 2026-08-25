@@ -2,6 +2,7 @@
 #include <curl/curl.h>
 #include <stdexcept>
 #include <cstdlib>
+#include <cctype>
 #include <fstream>
 
 namespace {
@@ -9,6 +10,14 @@ size_t write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* out = static_cast<std::string*>(userdata);
     out->append(ptr, size * nmemb);
     return size * nmemb;
+}
+size_t header_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    size_t n = size * nmemb;
+    auto* out = static_cast<std::vector<std::string>*>(userdata);
+    std::string line(ptr, n);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+    if (!line.empty() && line.find(':') != std::string::npos) out->push_back(line);
+    return n;
 }
 // Our curl is statically linked with a compiled-in CA path (/etc/ssl/certs/
 // ca-certificates.crt, present on Debian/muOS) — but other CFWs put the bundle
@@ -60,6 +69,8 @@ HttpClient::Response HttpClient::perform(const std::string& url,
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp.body);
+    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, header_cb);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, &resp.resp_headers);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, ""); // enable gzip/deflate
     curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
@@ -86,6 +97,23 @@ HttpClient::Response HttpClient::perform(const std::string& url,
     }
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &resp.status);
     return resp;
+}
+
+std::string HttpClient::Response::header(const std::string& key) const {
+    for (const auto& line : resp_headers) {
+        auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string k = line.substr(0, colon);
+        if (k.size() != key.size()) continue;
+        bool eq = true;
+        for (size_t i = 0; i < k.size(); ++i)
+            if (std::tolower((unsigned char)k[i]) != std::tolower((unsigned char)key[i])) { eq = false; break; }
+        if (!eq) continue;
+        size_t v = colon + 1;
+        while (v < line.size() && (line[v] == ' ' || line[v] == '\t')) ++v;
+        return line.substr(v);
+    }
+    return "";
 }
 
 HttpClient::Response HttpClient::get(const std::string& url,

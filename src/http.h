@@ -22,7 +22,10 @@ public:
     struct Response {
         long status = 0;
         std::string body;
+        std::vector<std::string> resp_headers;   // raw "Key: Value" response header lines
         bool ok() const { return status >= 200 && status < 300; }
+        // Case-insensitive lookup of a response header value ("" if absent).
+        std::string header(const std::string& key) const;
     };
 
     // headers: list of "Key: Value" strings.

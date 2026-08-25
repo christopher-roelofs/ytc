@@ -4,6 +4,7 @@
 #pragma once
 #include "gfx.h"
 #include "innertube.h"
+#include "cast.h"
 #include "http.h"
 #include "player.h"
 #include <string>
@@ -181,6 +182,19 @@ private:
     void poll_more();                   // GL thread: append a finished next page
     void maybe_load_more_home();        // home feed: page each channel deeper near the bottom
     void poll_more_home();              // GL thread: merge a finished home page into home_items_
+
+    // Casting: picker + code entry + remote control (see the Cast module).
+    void open_cast_picker();            // capture the current video, kick discovery, open the overlay
+    void poll_cast_discovery();         // apply a finished discovery
+    void poll_cast_play();              // apply a finished play() -> enter remote mode
+    void cast_activate();               // Select in the picker: cast to a device, or "Add a device"
+    void start_cast(const yt::Cast::Device& d);   // async play() the target on a device
+    void submit_cast_code(const std::string& code);  // pair with the typed code, then cast
+    void cast_command(const std::string& type, double arg = 0);  // remote command to the TV
+    void stop_casting();                // leave remote mode
+    double cast_est_pos() const;        // estimated TV position (base + elapsed) for seek
+    void render_cast_picker(gfx::Renderer& rn);
+    void render_remote(gfx::Renderer& rn);
     void refresh_favorites();           // reload the favorite-id cache from channels.json
     void refresh_watch_later();         // reload the watch-later id cache
     void filter_hidden(std::vector<yt::SearchResult>& items);  // drop restricted/Shorts per settings
@@ -208,7 +222,7 @@ private:
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
-                            CycleHomeSource, CycleLanguage, ClearHistory, Quit };
+                            CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -278,6 +292,35 @@ private:
     bool autoplay_ = false;                // setting "autoplay" (default off)
     int  home_source_ = 0;                 // "home_source": 0 Favorites, 1 Favorites+History
     int  lang_ = 0;                        // "lang": UI/content language index (i18n)
+
+    // ---- Casting (Option B: play on a TV's own YouTube app via the Lounge API) ----
+    bool cast_picker_open_ = false;        // device-picker overlay is up
+    std::vector<yt::Cast::Device> cast_devices_;   // ready rows (+ virtual "Add a device")
+    int cast_sel_ = 0;
+    std::string cast_target_id_, cast_target_title_;   // the video we're casting
+    int cast_target_pos_ = 0;                          // hand-off position (seconds)
+    // async discovery
+    std::thread cast_disc_thread_;
+    std::atomic<bool> cast_disc_running_{false}, cast_disc_done_{false};
+    std::mutex cast_disc_m_;
+    std::vector<yt::Cast::Device> cast_disc_pending_;
+    // async play (token -> bind -> setPlaylist)
+    std::thread cast_play_thread_;
+    std::atomic<bool> cast_play_running_{false}, cast_play_done_{false};
+    std::mutex cast_play_m_;
+    yt::Cast::Session cast_play_pending_;
+    std::string cast_play_name_;           // device name being cast to (for the toast/remote)
+    // code entry ("Add a device") reuses the search keyboard in a "code" mode.
+    enum class KbMode { Search, CastCode };
+    KbMode kb_mode_ = KbMode::Search;
+    // active remote session (after a successful cast)
+    bool casting_ = false;                 // remote mode active
+    yt::Cast::Session cast_session_;
+    std::string cast_name_;                // TV being controlled
+    bool cast_paused_ = false;             // our best guess of TV play state (for the A toggle)
+    unsigned cast_started_ms_ = 0;         // ticks when the estimated-position clock started
+    double cast_base_pos_ = 0;             // estimated position at cast_started_ms_ (seconds)
+    int cast_vol_ = 100;                   // our local estimate of TV volume (0..100)
     int  now_playing_index_ = -1;          // index in results_ the playing video came from
     std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
     std::atomic<bool> rel_running_{false}, rel_done_{false};
@@ -305,6 +348,7 @@ private:
     std::unique_ptr<gfx::Font> font_title_, font_body_, font_small_;
     int fonts_baked_h_ = 0;   // window height the current font atlases were baked for
     yt::Innertube it_;
+    yt::Cast cast_;
     ThumbCache thumbs_;
     ChannelMetaCache chan_meta_{&it_};   // async video-count for channel tiles
     std::vector<yt::SearchResult> results_;
