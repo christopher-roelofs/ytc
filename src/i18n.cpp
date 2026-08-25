@@ -42,6 +42,7 @@ const char* kKeys[(int)Str::COUNT] = {
     "MenuCastToDevice","CastAddDevice","CastSearching","CastNoDevices","CastEnterCode",
     "CastingTo","CastConnecting","CastFailed","CastPairFailed",
     "FooterRemote","FooterCastPicker","FooterCastCode",
+    "CastCodeTitle","CastCodeHint","KbEnter",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -94,6 +95,7 @@ const char* kEnglish[(int)Str::COUNT] = {
     "A: play/pause    <>: seek    ^v: volume    B: stop casting",
     "A: select    B: cancel",
     "type the code    A: type    Y: pair    B: cancel",
+    "Enter TV Code","enter code","Enter",
 };
 
 struct Lang {

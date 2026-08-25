@@ -322,6 +322,7 @@ App::~App() {
     if (home_more_thread_.joinable()) home_more_thread_.join();
     if (cast_disc_thread_.joinable()) cast_disc_thread_.join();
     if (cast_play_thread_.joinable()) cast_play_thread_.join();
+    if (cast_cmd_thread_.joinable()) cast_cmd_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
@@ -1599,6 +1600,8 @@ void App::cast_activate() {
         open_search();
         query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;   // number row
         kb_mode_ = KbMode::CastCode;
+        kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);   // "Enter TV Code"
+        kb_placeholder_.clear();                          // no hint in the box
         return;
     }
     if (cast_sel_ >= 0 && cast_sel_ < n) start_cast(cast_devices_[cast_sel_]);
@@ -1661,10 +1664,20 @@ void App::poll_cast_play() {
     }
 }
 void App::cast_command(const std::string& type, double arg) {
-    if (!casting_) return;
-    try { cast_.command(cast_session_, type, arg); } catch (...) {}
+    if (!casting_ || cast_cmd_running_) return;   // drop rapid extra presses (never block the UI)
+    cast_cmd_running_ = true;
+    if (cast_cmd_thread_.joinable()) cast_cmd_thread_.join();   // prior one already finished
+    std::string ty = type; double ar = arg;
+    cast_cmd_thread_ = std::thread([this, ty, ar]() {
+        try { cast_.command(cast_session_, ty, ar); } catch (...) {}  // only the worker touches rid
+        cast_cmd_running_ = false;
+    });
 }
-void App::stop_casting() { casting_ = false; cast_session_ = {}; }
+void App::stop_casting() {
+    casting_ = false;
+    if (cast_cmd_thread_.joinable()) cast_cmd_thread_.join();   // don't free the session under it
+    cast_session_ = {};
+}
 
 void App::poll_channel_info() {
     if (!chinfo_done_.exchange(false)) return;
@@ -1722,8 +1735,8 @@ void App::input(Action a) {
         }
         return;
     }
-    // Device picker overlay.
-    if (cast_picker_open_) {
+    // Device picker overlay (but not while the code keyboard is up over it).
+    if (cast_picker_open_ && mode_ != Mode::Search) {
         int rows = (int)cast_devices_.size() + 1;   // + "Add a device"
         switch (a) {
             case Action::Up:     if (cast_sel_ > 0) cast_sel_--; break;
@@ -2880,6 +2893,8 @@ void App::render_player(gfx::Renderer& rn) {
 void App::open_search() {
     mode_ = Mode::Search;
     kb_mode_ = KbMode::Search;
+    kb_title_ = i18n::tr(i18n::Str::Search);
+    kb_placeholder_ = i18n::tr(i18n::Str::TypeToSearch);
     query_input_ = query_;      // seed with the current query for quick edits
     kb_caret_ = (int)query_input_.size();
     kb_shift_ = false;
@@ -2967,7 +2982,7 @@ void App::render_search(gfx::Renderer& rn) {
     float hbar = 84 * s;
     rn.quad({0, 0, (float)W, hbar}, theme_.panel);
     rn.quad({0, hbar-3*s, (float)W, 3*s}, theme_.accent);
-    rn.text(*font_title_, i18n::tr(i18n::Str::Search), 32*s, 24*s, theme_.text);
+    rn.text(*font_title_, kb_title_, 32*s, 24*s, theme_.text);
 
     // Query input box + blinking caret.
     float bx = 32*s, by = hbar + 28*s, bw = W - 64*s, bh = 54*s;
@@ -2988,8 +3003,8 @@ void App::render_search(gfx::Renderer& rn) {
         shown = std::move(cand);
     }
     rn.text(*font_body_, shown, bx + 18*s, by + 14*s, theme_.text);
-    if (query_input_.empty())
-        rn.text(*font_body_, i18n::tr(i18n::Str::TypeToSearch), bx + 18*s, by + 14*s, theme_.text_dim);
+    if (query_input_.empty() && !kb_placeholder_.empty())
+        rn.text(*font_body_, kb_placeholder_, bx + 18*s, by + 14*s, theme_.text_dim);
     float caret_x = bx + 18*s + font_body_->text_width(query_input_.substr(start, caret - start));
     if ((SDL_GetTicks() / 500) % 2 == 0)
         rn.quad({caret_x + 1*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
@@ -3018,7 +3033,7 @@ void App::render_search(gfx::Renderer& rn) {
                 rn.quad({kr.x + (kw-bar)/2, kr.y + keyh - 16*s, bar, 3*s},
                         sel ? theme_.bg : theme_.text_dim);
             } else {
-                std::string lbl = (k.type == KSUBMIT) ? i18n::tr(i18n::Str::Search) : k.label;
+                std::string lbl = (k.type == KSUBMIT) ? i18n::tr(i18n::Str::KbEnter) : k.label;
                 if (k.type == KCHAR && kb_shift_ && lbl.size()==1 && lbl[0]>='a' && lbl[0]<='z')
                     lbl[0] = (char)(lbl[0]-'a'+'A');
                 const gfx::Font& f = *font_body_;

@@ -310,9 +310,11 @@ private:
     std::mutex cast_play_m_;
     yt::Cast::Session cast_play_pending_;
     std::string cast_play_name_;           // device name being cast to (for the toast/remote)
-    // code entry ("Add a device") reuses the search keyboard in a "code" mode.
+    // The on-screen keyboard is generic: callers set the title + placeholder and a
+    // mode that decides what submit does. The submit key always reads "Enter".
     enum class KbMode { Search, CastCode };
     KbMode kb_mode_ = KbMode::Search;
+    std::string kb_title_, kb_placeholder_;
     // active remote session (after a successful cast)
     bool casting_ = false;                 // remote mode active
     yt::Cast::Session cast_session_;
@@ -321,6 +323,9 @@ private:
     unsigned cast_started_ms_ = 0;         // ticks when the estimated-position clock started
     double cast_base_pos_ = 0;             // estimated position at cast_started_ms_ (seconds)
     int cast_vol_ = 100;                   // our local estimate of TV volume (0..100)
+    // Remote commands run on a worker so a button press never blocks the UI thread.
+    std::thread cast_cmd_thread_;
+    std::atomic<bool> cast_cmd_running_{false};
     int  now_playing_index_ = -1;          // index in results_ the playing video came from
     std::thread rel_thread_;               // async /next related fetch (end-of-list fallback)
     std::atomic<bool> rel_running_{false}, rel_done_{false};

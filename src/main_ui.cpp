@@ -385,6 +385,23 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "BACKTAB done\n");
             return 0;
         }
+        if (std::getenv("YTC_CASTCODESHOT")) {  // cast picker -> Add a device -> code keyboard
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(3500);
+            app.input(ui::App::Action::Menu);                 // options on the first tile
+            app.input(ui::App::Action::Down);
+            app.input(ui::App::Action::Down);                 // -> Cast to Device
+            app.input(ui::App::Action::Select);
+            settle(4000);                                     // discovery
+            app.render(rn); win->screenshot(std::string(shot) + "_picker.png");
+            for (int i = 0; i < 5; ++i) app.input(ui::App::Action::Down);  // -> last row (Add a device)
+            app.input(ui::App::Action::Select);               // "Add a device"
+            settle(400);
+            app.render(rn); win->screenshot(std::string(shot) + "_code.png");
+            std::fprintf(stderr, "CASTCODESHOT done\n");
+            return 0;
+        }
         if (std::getenv("YTC_GRIDNAV")) {  // partial-last-row Down: top-right -> last tile
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
