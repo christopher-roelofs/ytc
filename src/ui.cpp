@@ -2062,7 +2062,7 @@ App::TileLines App::compose_lines(const yt::SearchResult& v, ChannelMetaCache& c
         t.l2 = v.view_count_text;
         if (!v.published_text.empty()) t.l2 += (t.l2.empty()?"":"   -   ") + v.published_text;
         t.l3 = v.video_id.empty() ? i18n::tr(i18n::Str::TilePost)
-             : std::string(i18n::tr(i18n::Str::TilePost)) + "   -   " + i18n::tr(i18n::Str::TileHasVideo);
+             : std::string(i18n::tr(i18n::Str::TilePost)) + "   -   " + i18n::tr(i18n::Str::TileVideo);
     } else if (v.is_playlist()) {
         t.l1 = v.title; t.l2 = v.author; t.l3 = i18n::tr(i18n::Str::TilePlaylist);
     } else {
