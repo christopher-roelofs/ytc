@@ -34,6 +34,15 @@ static std::string form(const std::vector<std::pair<std::string,std::string>>& k
     for (auto& p : kv) { if (!o.empty()) o += '&'; o += url_encode(p.first); o += '='; o += url_encode(p.second); }
     return o;
 }
+// Decode the XML entities that show up in DIAL friendlyNames (e.g. 50&quot; -> 50").
+static std::string xml_unescape(std::string s) {
+    struct { const char* e; const char* c; } map[] = {
+        {"&quot;","\""},{"&apos;","'"},{"&#39;","'"},{"&#34;","\""},
+        {"&lt;","<"},{"&gt;",">"},{"&amp;","&"}};   // &amp; last so it doesn't re-trigger
+    for (auto& m : map) { std::string e = m.e; size_t p = 0;
+        while ((p = s.find(e, p)) != std::string::npos) { s.replace(p, e.size(), m.c); p += std::strlen(m.c); } }
+    return s;
+}
 // First <tag>..</tag> inner text (naive; DIAL/UPnP XML is flat enough).
 static std::string xml_tag(const std::string& s, const std::string& tag) {
     std::string open = "<" + tag, close = "</" + tag + ">";
@@ -249,7 +258,7 @@ std::vector<Cast::Device> Cast::discover(int timeout_ms) {
         Device d; d.ip = ip;
         d.app_url = r.header("Application-URL");
         while (!d.app_url.empty() && (d.app_url.back()=='\r'||d.app_url.back()==' ')) d.app_url.pop_back();
-        d.name = xml_tag(r.body, "friendlyName");
+        d.name = xml_unescape(xml_tag(r.body, "friendlyName"));
         if (d.name.empty()) d.name = ip;
         if (!d.app_url.empty()) {
             std::string yt = d.app_url; if (yt.back()!='/') yt += '/'; yt += "YouTube";
