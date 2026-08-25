@@ -372,6 +372,21 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "VIDPAGE done sel=%d\n", app.selected_index());
             return 0;
         }
+        if (std::getenv("YTC_GRIDNAV")) {  // partial-last-row Down: top-right -> last tile
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(800);
+            app.open_main_menu();
+            app.input(ui::App::Action::Down);        // -> Favorite Channels
+            app.input(ui::App::Action::Select);
+            settle(800);
+            app.input(ui::App::Action::Right);       // sel 0 -> 1 (top-right of a 2-col grid)
+            std::fprintf(stderr, "GRIDNAV before Down: sel=%d count=%d win_w=%d\n",
+                         app.selected_index(), app.results_count(), win->width());
+            app.input(ui::App::Action::Down);        // no tile directly below -> should land on last
+            std::fprintf(stderr, "GRIDNAV after Down: sel=%d\n", app.selected_index());
+            return 0;
+        }
         if (std::getenv("YTC_HOMEPAGE")) {  // Home feed: scroll to bottom -> per-channel load-more
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };

@@ -1750,7 +1750,10 @@ void App::input(Action a) {
         case Action::Left:  if (sel_ % cols_ != 0) sel_--; break;
         case Action::Right: if (sel_ % cols_ != cols_-1 && sel_+1 < n) sel_++; break;
         case Action::Up:    if (sel_ - cols_ >= 0) sel_ -= cols_; break;
-        case Action::Down:  if (sel_ + cols_ < n) sel_ += cols_; break;
+        case Action::Down:
+            if (sel_ + cols_ < n) sel_ += cols_;                    // tile directly below
+            else if (sel_ / cols_ < (n - 1) / cols_) sel_ = n - 1;  // partial last row: fall to the last tile
+            break;
         case Action::Select: activate(); break;
         default: break;
     }
