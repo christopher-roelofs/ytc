@@ -38,7 +38,8 @@ public:
     // A live cast session (returned by play()); carries the ids for follow-up commands.
     struct Session {
         std::string screen_id, lounge_token, sid, gsession;
-        int rid = 0;
+        int rid = 0;    // request id — increments per HTTP request
+        int ofs = 0;    // command offset — increments per command sent (server dedups on it)
         bool ok = false;
     };
     // Play a video on a device: lounge token -> bind -> setPlaylist (optionally at

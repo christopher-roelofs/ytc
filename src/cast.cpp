@@ -282,21 +282,23 @@ Cast::Session Cast::play(const Device& dev, const std::string& video_id, int sta
     s.rid = 1000 + (int)(rng()() % 8000);   // random base; then monotonic
     if (!bind(s)) return s;
     std::vector<std::pair<std::string,std::string>> cmd = {
-        {"count","1"},{"ofs","0"},{"req0__sc","setPlaylist"},{"req0_videoId",video_id},
+        {"count","1"},{"ofs",std::to_string(s.ofs)},{"req0__sc","setPlaylist"},{"req0_videoId",video_id},
         {"req0_currentTime",std::to_string(start_seconds)},{"req0_currentIndex","0"},
         {"req0_listId",""},{"req0_audioOnly","false"},
         {"req0_prioritizeMobileSenderPlaybackStateOnConnection","true"},
     };
+    s.ofs++;
     s.ok = send_cmd(s, form(cmd));
     return s;
 }
 
 bool Cast::command(Session& s, const std::string& type, double arg) {
     if (!s.ok || s.sid.empty()) return false;
-    std::vector<std::pair<std::string,std::string>> cmd = { {"count","1"},{"ofs","0"} };
+    std::vector<std::pair<std::string,std::string>> cmd = { {"count","1"},{"ofs",std::to_string(s.ofs)} };
     if (type == "seekTo") { cmd.push_back({"req0__sc","seekTo"}); cmd.push_back({"req0_newTime", std::to_string(arg)}); }
     else if (type == "setVolume") { cmd.push_back({"req0__sc","setVolume"}); cmd.push_back({"req0_volume", std::to_string((int)arg)}); }
     else cmd.push_back({"req0__sc", type});   // play | pause | next | previous | stopVideo
+    s.ofs++;
     return send_cmd(s, form(cmd));
 }
 

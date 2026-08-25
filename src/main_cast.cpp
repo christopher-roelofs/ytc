@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unistd.h>
 
 static std::string cfg_dir() {
     const char* e = std::getenv("YTC_CONFIG");
@@ -55,6 +56,23 @@ int main(int argc, char** argv) {
         std::printf(s.ok ? "OK — playing on the TV\n" : "play failed\n");
         return s.ok ? 0 : 1;
     }
-    std::fprintf(stderr, "usage: %s discover | pair \"<code>\" [name] | play <videoId> [name] [start]\n", argv[0]);
+    if (cmd == "test") {   // play, then exercise the remote commands (watch the TV)
+        std::string vid  = argc > 2 ? argv[2] : "";
+        std::string want = argc > 3 ? argv[3] : "";
+        auto devs = cast.discover();
+        yt::Cast::Device* pick = nullptr;
+        for (auto& d : devs) if (!d.needs_code() && (want.empty() || d.name.find(want)!=std::string::npos)) { pick=&d; break; }
+        if (!pick) { std::printf("no ready device\n"); return 1; }
+        std::printf("play -> %s\n", pick->name.c_str());
+        auto s = cast.play(*pick, vid, 0);
+        if (!s.ok) { std::printf("play failed\n"); return 1; }
+        sleep(4); std::printf("pause -> %d\n",   cast.command(s, "pause"));
+        sleep(3); std::printf("play -> %d\n",    cast.command(s, "play"));
+        sleep(3); std::printf("seekTo 60 -> %d\n", cast.command(s, "seekTo", 60));
+        sleep(3); std::printf("vol 30 -> %d\n",  cast.command(s, "setVolume", 30));
+        sleep(2); std::printf("vol 80 -> %d\n",  cast.command(s, "setVolume", 80));
+        return 0;
+    }
+    std::fprintf(stderr, "usage: %s discover | pair \"<code>\" [name] | play <videoId> [name] [start] | test <videoId> [name]\n", argv[0]);
     return 2;
 }
