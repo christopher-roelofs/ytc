@@ -114,7 +114,7 @@ public:
     void open_main_menu();       // top-level menu (Start button): views + navigation
 
     // Input actions (mapped from SDL events by the caller).
-    enum class Action { None, Up, Down, Left, Right, Select, Back, Search, Menu };
+    enum class Action { None, Up, Down, Left, Right, Select, Back, Search, Menu, Sort };
     void input(Action a);
 
     // Text entry (from a physical keyboard, in Search mode).
@@ -293,6 +293,9 @@ private:
     std::vector<yt::Comment> comments_;
     std::string comments_cont_;             // next-page token ("" = no more)
     std::string comments_total_;            // real total count text ("176"), from page 1
+    int comments_sort_ = 0;                 // 0 = Top, 1 = Newest
+    std::string comments_sort_top_, comments_sort_newest_;   // sort continuations (page 1)
+    std::string comments_next_sort_token_;  // when set, the next fetch uses this token
     float comments_scroll_ = 0;
     int   comments_sel_ = 0;                // selected displayed comment (top-level or reply)
     bool  comments_dirty_ = true;           // rebuild the line/unit cache
@@ -310,6 +313,12 @@ private:
     std::mutex comments_m_;
     yt::CommentPage comments_pending_;
     bool comments_pending_reset_ = false;   // true = first page (replace), false = append
+    // Each open bumps the generation; async results tagged with an older gen are stale
+    // and discarded (prevents one video's comments/count leaking into the next).
+    std::atomic<unsigned> comments_gen_{0};
+    unsigned comments_pending_gen_ = 0, comments_reply_pending_gen_ = 0;
+    bool comments_want_fetch_ = false;      // a first-page fetch is queued
+    void maybe_start_comment_fetch();
     // Async reply loading (for the expanded comment at comments_reply_idx_).
     std::thread comments_reply_thread_;
     std::atomic<bool> comments_reply_running_{false}, comments_reply_done_{false};
@@ -321,6 +330,7 @@ private:
     void poll_comments_page();              // page/reply result handler
     void pump_reply_loads();                // background reply loader (1 at a time)
     void toggle_comment_replies();          // expand/collapse the selected comment
+    void toggle_comment_sort();             // switch Top <-> Newest (X)
     void render_comments(gfx::Renderer& rn);
     void close_comments();
 

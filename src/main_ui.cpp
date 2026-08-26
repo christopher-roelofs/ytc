@@ -413,6 +413,33 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "CONFIRMSHOT done\n");
             return 0;
         }
+        if (const char* vid = std::getenv("YTC_COMMENTSORT")) {  // Top/Newest sort toggle
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1200);
+            app.test_open_comments(vid);
+            settle(6000);
+            app.render(rn); win->screenshot(std::string(shot) + "_top.png");
+            app.input(ui::App::Action::Sort);
+            settle(6000);
+            app.render(rn); win->screenshot(std::string(shot) + "_newest.png");
+            std::fprintf(stderr, "COMMENTSORT done\n");
+            return 0;
+        }
+        if (std::getenv("YTC_COMMENTSLEAK")) {  // stale-count leak across opens
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.test_open_comments("dQw4w9WgXcQ");   // A: fully load (has a count)
+            settle(6000);
+            app.render(rn); win->screenshot(std::string(shot) + "_A.png");
+            app.test_open_comments("87DwMYeyeEc");   // B: switch, render immediately
+            app.render(rn); win->screenshot(std::string(shot) + "_B_immediate.png");
+            settle(6000);
+            app.render(rn); win->screenshot(std::string(shot) + "_B_loaded.png");
+            std::fprintf(stderr, "COMMENTSLEAK done\n");
+            return 0;
+        }
         if (const char* vid = std::getenv("YTC_COMMENTSSHOT")) {  // comments overlay
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
@@ -1033,6 +1060,8 @@ int main(int argc, char** argv) {
                 } else if (k == SDLK_SLASH) {
                     app.input(A::Search);            // open the keyboard
                     swallow_text = true;             // don't let this "/" land in the query
+                } else if (k == SDLK_x) {
+                    app.input(A::Sort);              // X = sort (comments overlay)
                 } else if (k == SDLK_v) {
                     app.toggle_view();               // grid <-> carousel
                 } else if (k == SDLK_q) {
@@ -1057,6 +1086,7 @@ int main(int argc, char** argv) {
                     std::fprintf(stderr, "gamepad button: %s\n",
                         SDL_GameControllerGetStringForButton((SDL_GameControllerButton)b));
                 if (b == SDL_CONTROLLER_BUTTON_Y) app.input(A::Search); // open/submit
+                else if (b == SDL_CONTROLLER_BUTTON_X) app.input(A::Sort);      // X = sort (comments)
                 else if (b == SDL_CONTROLLER_BUTTON_BACK) app.input(A::Menu);   // Select btn = options
                 else if (b == SDL_CONTROLLER_BUTTON_START) {                    // Start = top-level menu
                     if (app.menu_open()) app.input(A::Back); else app.open_main_menu();

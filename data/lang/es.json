@@ -146,5 +146,7 @@
   "FooterComments": "Arriba/Abajo: desplazar    B: cerrar",
   "CommentReplies": "respuestas",
   "CommentHideReplies": "Ocultar respuestas",
-  "FooterCommentsSel": "Arriba/Abajo: seleccionar    A: respuestas    B: cerrar"
+  "FooterCommentsSel": "Arriba/Abajo: seleccionar    A: respuestas    X: ordenar    B: cerrar",
+  "CommentSortTop": "Principales",
+  "CommentSortNewest": "Recientes"
 }

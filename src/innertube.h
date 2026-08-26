@@ -103,6 +103,8 @@ struct CommentPage {
     std::vector<Comment> items;
     std::string continuation;
     std::string total;        // total comment count text ("176"), first page only
+    std::string sort_top;     // continuation to (re)load sorted by Top    (first page only)
+    std::string sort_newest;  // continuation to (re)load sorted by Newest (first page only)
 };
 
 // One SponsorBlock skip segment (seconds), from the community API.
@@ -376,9 +378,11 @@ private:
     // Comments internals. comments_page issues one /next(continuation), parses the
     // thread items, and (up to hop_budget) follows a header-only response through to the
     // page that actually carries comments.
-    std::string video_comment_token(const std::string& video_id, std::string& count_out);
-    std::string post_comment_token(const std::string& post_id, const std::string& channel_id,
-                                   std::string& count_out);
+    // First-page resolve: the section token plus the header count and Top/Newest sort
+    // continuations (the latter two "" when unavailable).
+    struct CommentInit { std::string token, count, sort_top, sort_newest; };
+    CommentInit video_comment_init(const std::string& video_id);
+    CommentInit post_comment_init(const std::string& post_id, const std::string& channel_id);
     CommentPage comments_page(const std::string& continuation, bool use_browse, int hop_budget);
 };
 

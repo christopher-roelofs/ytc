@@ -146,5 +146,7 @@
   "FooterComments": "Up/Down: scroll    B: close",
   "CommentReplies": "replies",
   "CommentHideReplies": "Hide replies",
-  "FooterCommentsSel": "Up/Down: select    A: replies    B: close"
+  "FooterCommentsSel": "Up/Down: select    A: replies    X: sort    B: close",
+  "CommentSortTop": "Top",
+  "CommentSortNewest": "Newest"
 }

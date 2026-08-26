@@ -146,5 +146,7 @@
   "FooterComments": "Вгору/Вниз: прокрутка    B: закрити",
   "CommentReplies": "відповідей",
   "CommentHideReplies": "Сховати відповіді",
-  "FooterCommentsSel": "Вгору/Вниз: вибір    A: відповіді    B: закрити"
+  "FooterCommentsSel": "Вгору/Вниз: вибір    A: відповіді    X: сортування    B: закрити",
+  "CommentSortTop": "Топ",
+  "CommentSortNewest": "Нові"
 }

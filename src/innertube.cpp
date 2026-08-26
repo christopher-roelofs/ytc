@@ -1637,6 +1637,20 @@ static std::string comment_section_token(const json& j) {
     }
     return "";
 }
+// The Top/Newest sort continuations from the comments header's sort submenu. YouTube
+// orders them [Top, Newest]; titles are localized so we key off position.
+static void comment_sort_tokens(const json& j, std::string& top, std::string& newest) {
+    const json* sm = find_key(j, "sortFilterSubMenuRenderer");
+    if (!sm) return;
+    const json* items = find_key(*sm, "subMenuItems");
+    if (!items || !items->is_array()) return;
+    auto tok = [](const json& it) {
+        return it.value(json::json_pointer("/serviceEndpoint/continuationCommand/token"),
+                        std::string());
+    };
+    if (items->size() > 0) top = tok((*items)[0]);
+    if (items->size() > 1) newest = tok((*items)[1]);
+}
 // The total comment count ("176") from the comments panel header's contextualInfo.
 static std::string comment_count_text(const json& j) {
     const json* panels = find_key(j, "engagementPanels");
@@ -1792,7 +1806,8 @@ CommentPage Innertube::comments_page(const std::string& continuation, bool use_b
     } catch (...) { return page; }
 }
 
-std::string Innertube::video_comment_token(const std::string& video_id, std::string& count_out) {
+Innertube::CommentInit Innertube::video_comment_init(const std::string& video_id) {
+    CommentInit ci;
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         HttpClient http;
@@ -1804,17 +1819,20 @@ std::string Innertube::video_comment_token(const std::string& video_id, std::str
         std::string url = std::string(kInnertubeBase) + "/next";
         if (!api_key_.empty()) url += "?key=" + api_key_;
         auto r = http.post(url, body.dump(), client_headers(fp));
-        if (!r.ok()) return "";
+        if (!r.ok()) return ci;
         auto j = json::parse(r.body, nullptr, false);
-        if (j.is_discarded()) return "";
-        count_out = comment_count_text(j);
-        return comment_section_token(j);
-    } catch (...) { return ""; }
+        if (j.is_discarded()) return ci;
+        ci.count = comment_count_text(j);
+        comment_sort_tokens(j, ci.sort_top, ci.sort_newest);
+        ci.token = comment_section_token(j);
+        return ci;
+    } catch (...) { return ci; }
 }
 
-std::string Innertube::post_comment_token(const std::string& post_id,
-                                          const std::string& channel_id, std::string& count_out) {
-    if (channel_id.empty()) return "";   // need the channel to address the post-detail page
+Innertube::CommentInit Innertube::post_comment_init(const std::string& post_id,
+                                                    const std::string& channel_id) {
+    CommentInit ci;
+    if (channel_id.empty()) return ci;   // need the channel to address the post-detail page
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
         HttpClient http;
@@ -1830,31 +1848,31 @@ std::string Innertube::post_comment_token(const std::string& post_id,
         std::string url = std::string(kInnertubeBase) + "/browse";
         if (!api_key_.empty()) url += "?key=" + api_key_;
         auto r = http.post(url, body.dump(), client_headers(fp));
-        if (!r.ok()) return "";
+        if (!r.ok()) return ci;
         auto j = json::parse(r.body, nullptr, false);
-        if (j.is_discarded()) return "";
-        count_out = comment_count_text(j);
-        std::string tok = comment_section_token(j);
-        if (!tok.empty()) return tok;
-        // Some post pages expose the comments continuation inline rather than in a panel.
-        return continuation_token(j);
-    } catch (...) { return ""; }
+        if (j.is_discarded()) return ci;
+        ci.count = comment_count_text(j);
+        comment_sort_tokens(j, ci.sort_top, ci.sort_newest);
+        ci.token = comment_section_token(j);
+        if (ci.token.empty()) ci.token = continuation_token(j);   // inline continuation
+        return ci;
+    } catch (...) { return ci; }
 }
 
 CommentPage Innertube::video_comments(const std::string& video_id,
                                                  const std::string& continuation) {
-    std::string count, tok = continuation;
-    if (continuation.empty()) tok = video_comment_token(video_id, count);
+    CommentInit ci; std::string tok = continuation;
+    if (continuation.empty()) { ci = video_comment_init(video_id); tok = ci.token; }
     CommentPage pg = comments_page(tok, /*use_browse=*/false, 3);
-    pg.total = count;
+    pg.total = ci.count; pg.sort_top = ci.sort_top; pg.sort_newest = ci.sort_newest;
     return pg;
 }
 CommentPage Innertube::post_comments(const std::string& post_id, const std::string& channel_id,
                                      const std::string& continuation) {
-    std::string count, tok = continuation;
-    if (continuation.empty()) tok = post_comment_token(post_id, channel_id, count);
+    CommentInit ci; std::string tok = continuation;
+    if (continuation.empty()) { ci = post_comment_init(post_id, channel_id); tok = ci.token; }
     CommentPage pg = comments_page(tok, /*use_browse=*/true, 3);
-    pg.total = count;
+    pg.total = ci.count; pg.sort_top = ci.sort_top; pg.sort_newest = ci.sort_newest;
     return pg;
 }
 CommentPage Innertube::comment_replies(const std::string& reply_token, bool is_post) {

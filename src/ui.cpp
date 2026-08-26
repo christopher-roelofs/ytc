@@ -1157,21 +1157,37 @@ void App::open_comments(const yt::SearchResult& t) {
     comments_channel_id_ = t.channel_id;
     comments_title_ = i18n::tr(i18n::Str::CommentsTitle);
     comments_.clear(); comment_lines_.clear(); comment_units_.clear(); comments_wrap_w_ = 0;
-    comments_scroll_ = 0; comments_cont_.clear();
+    comments_scroll_ = 0; comments_cont_.clear(); comments_total_.clear();
     comments_sel_ = 0; comments_dirty_ = true; comments_reply_idx_ = -1;
+    comments_sort_ = 0; comments_sort_top_.clear(); comments_sort_newest_.clear();
+    comments_next_sort_token_.clear();
+    comments_gen_++;                     // invalidate any in-flight fetch from a prior open
     comments_open_ = true;
     comments_loading_ = true;
     if (comments_target_id_.empty()) { comments_loading_ = false; return; }
-    // First page: reset (replace) the list.
-    if (comments_running_) return;
+    comments_want_fetch_ = true;         // queue the first page; started when the thread is free
+    maybe_start_comment_fetch();
+}
+
+// Start the queued first-page fetch once no page fetch is in flight. The running one
+// (from a previous video) finishes into a stale generation and is discarded.
+void App::maybe_start_comment_fetch() {
+    if (comments_running_ || !comments_want_fetch_) return;
+    comments_want_fetch_ = false;
     comments_running_ = true; comments_done_ = false;
     if (comments_thread_.joinable()) comments_thread_.join();
+    unsigned gen = comments_gen_.load();
     std::string id = comments_target_id_, cid = comments_channel_id_; bool is_post = comments_is_post_;
-    comments_thread_ = std::thread([this, id, cid, is_post]() {
+    // A sort switch reloads page 1 with an explicit sort continuation; a fresh open
+    // resolves the section token (and the count + sort tokens) from scratch.
+    std::string sort_tok = comments_next_sort_token_; comments_next_sort_token_.clear();
+    comments_thread_ = std::thread([this, id, cid, is_post, gen, sort_tok]() {
         yt::CommentPage pg;
-        try { pg = is_post ? it_.post_comments(id, cid) : it_.video_comments(id); } catch (...) {}
+        try {
+            pg = is_post ? it_.post_comments(id, cid, sort_tok) : it_.video_comments(id, sort_tok);
+        } catch (...) {}
         { std::lock_guard<std::mutex> lk(comments_m_);
-          comments_pending_ = std::move(pg); comments_pending_reset_ = true; }
+          comments_pending_ = std::move(pg); comments_pending_reset_ = true; comments_pending_gen_ = gen; }
         comments_running_ = false; comments_done_ = true;
     });
 }
@@ -1180,32 +1196,42 @@ void App::load_more_comments() {
     if (comments_running_ || comments_cont_.empty() || comments_target_id_.empty()) return;
     comments_running_ = true; comments_done_ = false;
     if (comments_thread_.joinable()) comments_thread_.join();
+    unsigned gen = comments_gen_.load();
     std::string id = comments_target_id_, cid = comments_channel_id_, cont = comments_cont_;
     bool is_post = comments_is_post_;
-    comments_thread_ = std::thread([this, id, cid, cont, is_post]() {
+    comments_thread_ = std::thread([this, id, cid, cont, is_post, gen]() {
         yt::CommentPage pg;
         try { pg = is_post ? it_.post_comments(id, cid, cont) : it_.video_comments(id, cont); }
         catch (...) {}
         { std::lock_guard<std::mutex> lk(comments_m_);
-          comments_pending_ = std::move(pg); comments_pending_reset_ = false; }
+          comments_pending_ = std::move(pg); comments_pending_reset_ = false; comments_pending_gen_ = gen; }
         comments_running_ = false; comments_done_ = true;
     });
 }
 
 void App::poll_comments_page() {
-    if (!comments_done_.exchange(false)) return;
-    if (comments_thread_.joinable()) comments_thread_.join();
-    yt::CommentPage pg; bool reset;
-    { std::lock_guard<std::mutex> lk(comments_m_);
-      pg = std::move(comments_pending_); reset = comments_pending_reset_; }
-    if (!comments_open_) return;   // closed meanwhile — discard
-    if (reset) { comments_ = std::move(pg.items); comments_total_ = pg.total; }
-    else comments_.insert(comments_.end(),
-                          std::make_move_iterator(pg.items.begin()),
-                          std::make_move_iterator(pg.items.end()));
-    comments_cont_ = pg.continuation;
-    comments_loading_ = false;
-    comments_dirty_ = true;   // re-wrap / rebuild units
+    if (comments_done_.exchange(false)) {
+        if (comments_thread_.joinable()) comments_thread_.join();
+        yt::CommentPage pg; bool reset; unsigned gen;
+        { std::lock_guard<std::mutex> lk(comments_m_);
+          pg = std::move(comments_pending_); reset = comments_pending_reset_;
+          gen = comments_pending_gen_; }
+        // Apply only if it belongs to the current open (else it's a stale prior video).
+        if (gen == comments_gen_.load() && comments_open_) {
+            if (reset) {
+                comments_ = std::move(pg.items);
+                if (!pg.total.empty()) comments_total_ = pg.total;   // keep count across sort
+                if (!pg.sort_top.empty())    comments_sort_top_    = pg.sort_top;
+                if (!pg.sort_newest.empty()) comments_sort_newest_ = pg.sort_newest;
+            } else comments_.insert(comments_.end(),
+                                  std::make_move_iterator(pg.items.begin()),
+                                  std::make_move_iterator(pg.items.end()));
+            comments_cont_ = pg.continuation;
+            comments_loading_ = false;
+            comments_dirty_ = true;   // re-wrap / rebuild units
+        }
+    }
+    maybe_start_comment_fetch();   // start a queued fetch once the thread is free
 }
 
 // Load replies for one comment at a time in the background: user-expanded threads
@@ -1224,11 +1250,13 @@ void App::pump_reply_loads() {
     comments_reply_running_ = true; comments_reply_done_ = false;
     comments_reply_idx_ = idx;
     if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
+    unsigned gen = comments_gen_.load();
     std::string tok = comments_[idx].reply_token; bool is_post = comments_is_post_;
-    comments_reply_thread_ = std::thread([this, tok, is_post]() {
+    comments_reply_thread_ = std::thread([this, tok, is_post, gen]() {
         yt::CommentPage pg;
         try { pg = it_.comment_replies(tok, is_post); } catch (...) {}
-        { std::lock_guard<std::mutex> lk(comments_m_); comments_reply_pending_ = std::move(pg); }
+        { std::lock_guard<std::mutex> lk(comments_m_);
+          comments_reply_pending_ = std::move(pg); comments_reply_pending_gen_ = gen; }
         comments_reply_running_ = false; comments_reply_done_ = true;
     });
 }
@@ -1244,13 +1272,29 @@ void App::toggle_comment_replies() {
     comments_dirty_ = true;
 }
 
+// Switch the comment sort (Top <-> Newest) and reload page 1 in that order.
+void App::toggle_comment_sort() {
+    if (comments_sort_top_.empty() || comments_sort_newest_.empty()) return;   // no sort here
+    comments_sort_ ^= 1;
+    std::string tok = comments_sort_ ? comments_sort_newest_ : comments_sort_top_;
+    comments_.clear(); comment_lines_.clear(); comment_units_.clear();
+    comments_scroll_ = 0; comments_sel_ = 0; comments_cont_.clear();
+    comments_dirty_ = true; comments_reply_idx_ = -1;
+    comments_gen_++;                          // discard in-flight results from the old sort
+    comments_loading_ = true;
+    comments_next_sort_token_ = tok;          // page 1 in the chosen order
+    comments_want_fetch_ = true;
+    maybe_start_comment_fetch();
+}
+
 void App::poll_comments() {
     if (comments_reply_done_.exchange(false)) {
         if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
-        yt::CommentPage pg;
-        { std::lock_guard<std::mutex> lk(comments_m_); pg = std::move(comments_reply_pending_); }
-        if (comments_open_ && comments_reply_idx_ >= 0 &&
-            comments_reply_idx_ < (int)comments_.size()) {
+        yt::CommentPage pg; unsigned gen;
+        { std::lock_guard<std::mutex> lk(comments_m_);
+          pg = std::move(comments_reply_pending_); gen = comments_reply_pending_gen_; }
+        if (gen == comments_gen_.load() && comments_open_ && comments_reply_idx_ >= 0 &&
+            comments_reply_idx_ < (int)comments_.size()) {   // ignore replies from a prior open
             comments_[comments_reply_idx_].replies = std::move(pg.items);
             comments_[comments_reply_idx_].replies_loaded = true;
             comments_[comments_reply_idx_].replies_loading = false;
@@ -1284,6 +1328,13 @@ void App::render_comments(gfx::Renderer& rn) {
     else if (!comments_.empty()) head += "  (" + std::to_string(comments_.size())
                                        + (comments_cont_.empty() ? "" : "+") + ")";
     rn.text(*font_body_, font_body_->ellipsize(head, pw - pad*2), tx, my + 16*s, theme_.text);
+    // Current sort, to the right of the count (only when sorting is available).
+    if (!comments_sort_top_.empty() && !comments_sort_newest_.empty()) {
+        std::string sort = i18n::tr(comments_sort_ ? i18n::Str::CommentSortNewest
+                                                   : i18n::Str::CommentSortTop);
+        float hx = tx + font_body_->text_width(font_body_->ellipsize(head, pw - pad*2)) + 20*s;
+        rn.text(*font_small_, sort, hx, my + 20*s, theme_.accent);
+    }
     float body_top = my + 62*s, body_bot = my + ph - 46*s;
     float wrap_w = pw - pad*2;
 
@@ -2234,6 +2285,7 @@ void App::input(Action a) {
             case Action::Left:  comments_sel_ = std::max(0, comments_sel_ - 6); break;
             case Action::Right: comments_sel_ = std::min(n - 1, comments_sel_ + 6); break;
             case Action::Select: toggle_comment_replies(); break;
+            case Action::Sort:   toggle_comment_sort(); break;
             case Action::Back:
             case Action::Menu:  close_comments(); break;
             default: break;

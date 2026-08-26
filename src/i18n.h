@@ -59,6 +59,7 @@ enum class Str {
     CastRemoveConfirm, Yes, No, FooterConfirm,
     MenuShowComments, CommentsTitle, CommentsLoading, CommentsEmpty, CommentPinned, FooterComments,
     CommentReplies, CommentHideReplies, FooterCommentsSel,
+    CommentSortTop, CommentSortNewest,
     COUNT
 };
 

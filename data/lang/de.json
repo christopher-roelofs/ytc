@@ -146,5 +146,7 @@
   "FooterComments": "Hoch/Runter: scrollen    B: schließen",
   "CommentReplies": "Antworten",
   "CommentHideReplies": "Antworten ausblenden",
-  "FooterCommentsSel": "Hoch/Runter: auswählen    A: Antworten    B: schließen"
+  "FooterCommentsSel": "Hoch/Runter: auswählen    A: Antworten    X: Sortierung    B: schließen",
+  "CommentSortTop": "Top",
+  "CommentSortNewest": "Neueste"
 }

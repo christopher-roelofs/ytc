@@ -146,5 +146,7 @@
   "FooterComments": "Su/Giù: scorri    B: chiudi",
   "CommentReplies": "risposte",
   "CommentHideReplies": "Nascondi risposte",
-  "FooterCommentsSel": "Su/Giù: seleziona    A: risposte    B: chiudi"
+  "FooterCommentsSel": "Su/Giù: seleziona    A: risposte    X: ordina    B: chiudi",
+  "CommentSortTop": "Top",
+  "CommentSortNewest": "Recenti"
 }

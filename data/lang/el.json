@@ -146,5 +146,7 @@
   "FooterComments": "Πάνω/Κάτω: κύλιση    B: κλείσιμο",
   "CommentReplies": "απαντήσεις",
   "CommentHideReplies": "Απόκρυψη απαντήσεων",
-  "FooterCommentsSel": "Πάνω/Κάτω: επιλογή    A: απαντήσεις    B: κλείσιμο"
+  "FooterCommentsSel": "Πάνω/Κάτω: επιλογή    A: απαντήσεις    X: ταξινόμηση    B: κλείσιμο",
+  "CommentSortTop": "Κορυφαία",
+  "CommentSortNewest": "Νεότερα"
 }
