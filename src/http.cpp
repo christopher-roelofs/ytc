@@ -61,7 +61,7 @@ HttpClient::~HttpClient() {
 
 HttpClient::Response HttpClient::perform(const std::string& url,
                                          const std::string* post_body,
-                                         const std::vector<std::string>& headers) {
+                                         const std::vector<std::string>& headers, long timeout_s) {
     CURL* c = static_cast<CURL*>(curl_);
     curl_easy_reset(c);
 
@@ -75,7 +75,7 @@ HttpClient::Response HttpClient::perform(const std::string& url,
     curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, ""); // enable gzip/deflate
     curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 15L);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT, 60L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, timeout_s);
     if (const char* ca = http_ca_bundle()) curl_easy_setopt(c, CURLOPT_CAINFO, ca);
 
     struct curl_slist* hdrs = nullptr;
@@ -92,7 +92,9 @@ HttpClient::Response HttpClient::perform(const std::string& url,
     if (hdrs) curl_slist_free_all(hdrs);
     if (rc != CURLE_OK) {
         resp.status = -1;
-        resp.body = curl_easy_strerror(rc);
+        // A streaming long-poll (lounge backchannel) delivers data then trips the
+        // timeout — keep what was received rather than clobbering it with the error.
+        if (resp.body.empty()) resp.body = curl_easy_strerror(rc);
         return resp;
     }
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &resp.status);
@@ -117,12 +119,12 @@ std::string HttpClient::Response::header(const std::string& key) const {
 }
 
 HttpClient::Response HttpClient::get(const std::string& url,
-                                     const std::vector<std::string>& headers) {
-    return perform(url, nullptr, headers);
+                                     const std::vector<std::string>& headers, long timeout_s) {
+    return perform(url, nullptr, headers, timeout_s);
 }
 
 HttpClient::Response HttpClient::post(const std::string& url,
                                       const std::string& body,
-                                      const std::vector<std::string>& headers) {
-    return perform(url, &body, headers);
+                                      const std::vector<std::string>& headers, long timeout_s) {
+    return perform(url, &body, headers, timeout_s);
 }

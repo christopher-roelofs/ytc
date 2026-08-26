@@ -380,6 +380,58 @@ Cast::Session Cast::play(const Device& dev, const std::string& video_id, int sta
     return s;
 }
 
+Cast::NowPlaying Cast::read_events(const Session& s, int aid_in, long timeout_s) {
+    NowPlaying np; np.aid = aid_in;
+    if (s.sid.empty()) return np;
+    HttpClient http;
+    // Backchannel GET: RID=rpc, TYPE=xmlhttp, AID=last-seen; the server long-polls.
+    std::string qs = bind_qs(s, true);   // includes SID/gsessionid/AID(0); patch RID+extras below
+    // bind_qs set RID to the numeric s.rid and AID=0 — rewrite for the event channel.
+    auto set = [&](const std::string& key, const std::string& val) {
+        size_t p = qs.find(key + "=");
+        if (p == std::string::npos) { qs += "&" + key + "=" + val; return; }
+        size_t e = qs.find('&', p); std::string rep = key + "=" + val;
+        qs.replace(p, (e==std::string::npos?qs.size():e) - p, rep);
+    };
+    int aid = aid_in < 0 ? 0 : aid_in;
+    set("RID", "rpc"); set("AID", std::to_string(aid)); set("CI", "0"); set("TYPE", "xmlhttp");
+    auto r = http.get(std::string(LOUNGE) + "/bc/bind?" + qs,
+                      {"Origin: https://www.youtube.com"}, timeout_s);
+    if (std::getenv("YTC_CASTDBG"))
+        std::fprintf(stderr, "[events] HTTP %ld, %zu bytes: %.200s\n", r.status, r.body.size(), r.body.c_str());
+    // Streaming long-poll: data arrives, then the timeout trips (status -1). Parse the
+    // body whenever it looks like the length-prefixed event stream, ok() or not.
+    const std::string& raw = r.body;
+    if (raw.empty() || !std::isdigit((unsigned char)raw[0])) return np;
+    size_t i = 0;
+    while (i < raw.size()) {
+        size_t nl = raw.find('\n', i); if (nl == std::string::npos) break;
+        long len = std::strtol(raw.substr(i, nl - i).c_str(), nullptr, 10);
+        if (len <= 0) break;
+        size_t start = nl + 1; if (start + (size_t)len > raw.size()) len = raw.size() - start;
+        json arr = json::parse(raw.substr(start, len), nullptr, false);
+        if (arr.is_array()) for (auto& ev : arr) {
+            if (!ev.is_array() || ev.size() < 2) continue;
+            if (ev[0].is_number_integer() && ev[0].get<int>() > np.aid) np.aid = ev[0].get<int>();
+            auto& b = ev[1];
+            if (!b.is_array() || b.empty() || !b[0].is_string()) continue;
+            std::string t = b[0];
+            if ((t == "nowPlaying" || t == "onStateChange") && b.size() >= 2 && b[1].is_object()) {
+                auto& d = b[1];
+                auto num = [&](const char* k)->double { auto it = d.find(k);
+                    if (it == d.end()) return -1;
+                    return it->is_string() ? std::atof(it->get<std::string>().c_str()) : it->get<double>(); };
+                double ct = num("currentTime"), du = num("duration"), st = num("state");
+                if (ct >= 0) { np.current_time = ct; np.valid = true; }
+                if (du >= 0) np.duration = du;
+                if (st >= -1 && d.contains("state")) np.state = (int)st;
+            }
+        }
+        i = start + len;
+    }
+    return np;
+}
+
 bool Cast::command(Session& s, const std::string& type, double arg) {
     if (!s.ok || s.sid.empty()) return false;
     std::vector<std::pair<std::string,std::string>> cmd = { {"count","1"},{"ofs",std::to_string(s.ofs)} };

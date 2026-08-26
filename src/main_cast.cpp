@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
+#include <thread>
+#include <atomic>
 
 static std::string cfg_dir() {
     const char* e = std::getenv("YTC_CONFIG");
@@ -69,7 +71,26 @@ int main(int argc, char** argv) {
         std::printf("chromecast %s -> %s (launching receiver...)\n", vid.c_str(), cc.name.c_str());
         auto s = cast.play(cc, vid, 0);
         std::printf(s.ok ? "OK — playing (web receiver)\n" : "failed\n");
-        if (s.ok) { sleep(6); std::printf("stopVideo -> %d\n", cast.command(s, "stopVideo")); }
+        if (s.ok) {
+            // Concurrent: keep the backchannel open in a reader thread while we send
+            // commands from the main thread (getNowPlaying/pause/play).
+            std::atomic<bool> run{true};
+            std::thread reader([&]() {
+                int aid = -1;
+                while (run) {
+                    auto np = cast.read_events(s, aid, 10);
+                    aid = np.aid;
+                    if (np.valid) std::printf("  [event] pos=%.1f / %.1f  state=%d  (aid=%d)\n",
+                                              np.current_time, np.duration, np.state, np.aid);
+                }
+            });
+            sleep(2); std::printf("-> getNowPlaying\n"); cast.command(s, "getNowPlaying");
+            sleep(4); std::printf("-> pause\n");         cast.command(s, "pause");
+            sleep(3); std::printf("-> play\n");          cast.command(s, "play");
+            sleep(4); std::printf("-> getNowPlaying\n"); cast.command(s, "getNowPlaying");
+            sleep(4);
+            run = false; reader.detach();   // let it die on its next timeout
+        }
         return s.ok ? 0 : 1;
     }
     if (cmd == "test") {   // play, then exercise the remote commands (watch the TV)

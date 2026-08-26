@@ -200,6 +200,21 @@ private:
     void render_remote(gfx::Renderer& rn);
     void open_manage_devices();         // Settings -> Linked Devices
     void manage_activate();             // Select in the manage list: remove, or link
+    void confirm_remove_device();       // actually forget the selected device (after Yes)
+public:
+    void test_seed_manage(const std::string& name) {   // testing only: fake paired device
+        cast_manage_open_ = true; cast_manage_sel_ = 0;
+        yt::Cast::Device d; d.name = name; cast_paired_ = { d };
+    }
+    void test_open_numeric_kb();   // testing only: open the TV-code numeric keypad
+    void test_open_comments(const std::string& id) {   // testing only
+        yt::SearchResult t;
+        if (id.rfind("Ugk", 0) == 0) { t.kind = yt::SearchResult::Kind::Post; t.post_id = id;
+            t.channel_id = "UCX6OQ3DkcsbYNE6H8uQQuVA"; }   // test: MrBeast
+        else { t.kind = yt::SearchResult::Kind::Video; t.video_id = id; }
+        open_comments(t);
+    }
+private:
     void link_device(const std::string& code);   // async pair (no cast)
     void poll_cast_link();              // apply a finished link
     void render_manage_devices(gfx::Renderer& rn);
@@ -224,7 +239,7 @@ private:
     // Start-button menu carries top-level navigation (Main).
     enum class MenuAction { FavoriteToggle, WatchLaterToggle, OpenChannel,
                             ShowDescription, ShowChannelDescription, ShowPlaylistDescription,
-                            PlayPostVideo,
+                            ShowComments, PlayPostVideo,
                             GoHome, GoFavorites, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
@@ -255,6 +270,9 @@ private:
     // Post-with-video overlay: a selectable video thumbnail on top + the post text
     // below. post_focus_ 0 = video (A plays), 1 = text (Up/Down scrolls).
     bool post_has_video_ = false;
+    bool desc_is_post_ = false;          // this desc overlay is a community post
+    std::string desc_post_id_;           // post id (for its comments), if any
+    std::string desc_post_channel_;      // the post's owning channel id
     int  post_focus_ = 0;
     std::string post_thumb_url_;
     std::string desc_title_, desc_text_;
@@ -265,6 +283,46 @@ private:
     std::mutex desc_m_;
     std::string desc_pending_, desc_pending_id_;
     std::string now_playing_desc_;          // free copy from the playback resolve
+
+    // Comments overlay (over the grid or the player). Scrollable; pages on demand.
+    bool comments_open_ = false, comments_loading_ = false, comments_paused_ = false;
+    bool comments_is_post_ = false;
+    std::string comments_target_id_;        // video_id or post_id being shown
+    std::string comments_channel_id_;       // post only: owning channel (for post-detail)
+    std::string comments_title_;
+    std::vector<yt::Comment> comments_;
+    std::string comments_cont_;             // next-page token ("" = no more)
+    std::string comments_total_;            // real total count text ("176"), from page 1
+    float comments_scroll_ = 0;
+    int   comments_sel_ = 0;                // selected displayed comment (top-level or reply)
+    bool  comments_dirty_ = true;           // rebuild the line/unit cache
+    // Flat, wrapped render lines built from comments_ (rewrapped on width change).
+    // kind 0 meta,1 body,2 spacer,3 toggle. For meta: author holds the name (colored if
+    // creator), text holds the trailing time/likes.
+    struct CommentLine { std::string text; int kind; int indent; std::string author; bool creator; };
+    std::vector<CommentLine> comment_lines_;
+    // One selectable displayed comment (spans several lines).
+    struct CommentUnit { int line_start, line_count; bool is_top; int top_idx; };
+    std::vector<CommentUnit> comment_units_;
+    float comments_wrap_w_ = 0;
+    std::thread comments_thread_;
+    std::atomic<bool> comments_running_{false}, comments_done_{false};
+    std::mutex comments_m_;
+    yt::CommentPage comments_pending_;
+    bool comments_pending_reset_ = false;   // true = first page (replace), false = append
+    // Async reply loading (for the expanded comment at comments_reply_idx_).
+    std::thread comments_reply_thread_;
+    std::atomic<bool> comments_reply_running_{false}, comments_reply_done_{false};
+    yt::CommentPage comments_reply_pending_;
+    int comments_reply_idx_ = -1;
+    void open_comments(const yt::SearchResult& t);
+    void load_more_comments();
+    void poll_comments();
+    void poll_comments_page();              // page/reply result handler
+    void pump_reply_loads();                // background reply loader (1 at a time)
+    void toggle_comment_replies();          // expand/collapse the selected comment
+    void render_comments(gfx::Renderer& rn);
+    void close_comments();
 
     // SponsorBlock: async-fetched skip segments for the playing video.
     bool sponsorblock_ = false;             // setting "sponsorblock" (default off)
@@ -312,6 +370,7 @@ private:
     std::string cast_link_name_;           // device name chosen to link (for storage/toast)
     std::string cast_target_id_, cast_target_title_;   // the video we're casting
     int cast_target_pos_ = 0;                          // hand-off position (seconds)
+    bool cast_target_is_short_ = false;                // Shorts need the web-receiver path
     // async discovery
     std::thread cast_disc_thread_;
     std::atomic<bool> cast_disc_running_{false}, cast_disc_done_{false};
@@ -328,11 +387,15 @@ private:
     enum class KbMode { Search, CastCode, LinkDevice };
     KbMode kb_mode_ = KbMode::Search;
     std::string kb_title_, kb_placeholder_;
+    // Device-linking modes use the dedicated numeric keypad (digits only).
+    bool kb_numeric() const { return kb_mode_ == KbMode::CastCode || kb_mode_ == KbMode::LinkDevice; }
 
     // Settings -> Linked Devices: manage paired TVs (link / remove).
     bool cast_manage_open_ = false;
     std::vector<yt::Cast::Device> cast_paired_;
     int cast_manage_sel_ = 0;
+    bool cast_confirm_remove_ = false;   // "Remove Device?" yes/no prompt
+    int  cast_confirm_sel_ = 0;          // 0 = No (default), 1 = Yes
     std::thread cast_link_thread_;         // async pair_with_code for "Link a device"
     std::atomic<bool> cast_link_running_{false}, cast_link_done_{false};
     std::mutex cast_link_m_;
@@ -345,6 +408,14 @@ private:
     unsigned cast_started_ms_ = 0;         // ticks when the estimated-position clock started
     double cast_base_pos_ = 0;             // estimated position at cast_started_ms_ (seconds)
     int cast_vol_ = 100;                   // our local estimate of TV volume (0..100)
+    // Real TV position, read from the lounge event backchannel (accurate seek).
+    std::thread cast_events_thread_;
+    std::atomic<bool> cast_events_run_{false};
+    std::atomic<double> cast_ev_pos_{0}, cast_ev_dur_{0};
+    std::atomic<unsigned> cast_ev_ts_{0};  // ticks when cast_ev_pos_ was received
+    std::atomic<int> cast_ev_state_{-1};   // 1 playing, 2 paused, 3 buffering
+    std::atomic<bool> cast_ev_valid_{false};
+    unsigned cast_nowplaying_at_ = 0;      // last periodic getNowPlaying request
     // Remote commands run on a worker so a button press never blocks the UI thread.
     std::thread cast_cmd_thread_;
     std::atomic<bool> cast_cmd_running_{false};

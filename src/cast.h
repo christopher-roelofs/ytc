@@ -51,6 +51,17 @@ public:
     // seekTo (arg = seconds) | setVolume (arg = 0..100). Returns false on failure.
     bool command(Session& s, const std::string& type, double arg = 0);
 
+    // The TV's real playback state, read from the lounge event backchannel.
+    struct NowPlaying {
+        double current_time = 0, duration = 0;
+        int state = -1;        // 1 playing, 2 paused, 3 buffering, 0 ended, -1 unstarted
+        int aid = -1;          // last event id seen (feed back in as aid_in to continue)
+        bool valid = false;    // a position event was seen this poll
+    };
+    // One (bounded) poll of the event backchannel; returns the latest position seen and
+    // the new aid. Long-poll: returns when the TV sends events or after ~timeout_s.
+    NowPlaying read_events(const Session& s, int aid_in, long timeout_s = 8);
+
     // Previously-paired screens (from cast.json).
     std::vector<Device> paired() const;
     void forget(const std::string& screen_id);

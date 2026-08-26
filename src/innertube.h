@@ -74,9 +74,35 @@ struct SearchResult {
     bool is_short = false;        // YouTube Short (reel) — typed by the API
     std::string post_text;        // post only: full text (title holds a preview);
                                   // video_id set = the post has an attached video
+    std::string post_id;          // post only: backstage post id (for its comments)
     bool is_channel() const { return kind == Kind::Channel; }
     bool is_playlist() const { return kind == Kind::Playlist; }
     bool is_post() const { return kind == Kind::Post; }
+};
+
+// One comment (from a video/short or a community post).
+struct Comment {
+    std::string author;       // "@handle" or display name
+    std::string text;         // comment body (plain text, newlines preserved)
+    std::string likes;        // "1.2K" ("" if none)
+    std::string time;         // "3 days ago" ("" if unknown)
+    int  reply_count = 0;     // number of replies ("" -> 0)
+    bool pinned = false;      // pinned by the creator
+    bool hearted = false;     // hearted by the creator
+    bool is_creator = false;  // author is the channel owner
+    std::string reply_token;  // continuation to load this comment's replies ("" = none)
+    bool has_creator_reply = false;  // the channel owner replied in this thread
+    // UI state (populated as the user expands a thread).
+    std::vector<Comment> replies;
+    bool expanded = false;
+    bool replies_loaded = false;
+    bool replies_loading = false;
+};
+// A page of comments plus the token for the next page ("" when no more).
+struct CommentPage {
+    std::vector<Comment> items;
+    std::string continuation;
+    std::string total;        // total comment count text ("176"), first page only
 };
 
 // One SponsorBlock skip segment (seconds), from the community API.
@@ -283,6 +309,18 @@ public:
     // Related / up-next videos for a video (one /next call). Thread-safe; video rows
     // only (channels/playlists filtered out). Empty on failure. For autoplay.
     std::vector<SearchResult> related_videos(const std::string& video_id);
+
+    // Comments for a video/short (video_comments) or a community post (post_comments).
+    // Pass continuation="" for the first page; then feed back page.continuation for the
+    // next. Thread-safe (local HttpClient); never throws (empty page on failure). The
+    // first call resolves the comment-section token and follows header hops internally,
+    // so the returned page already holds comment items.
+    CommentPage video_comments(const std::string& video_id, const std::string& continuation = "");
+    CommentPage post_comments(const std::string& post_id, const std::string& channel_id,
+                              const std::string& continuation = "");
+    // All replies for one comment (follows reply_token to the end). is_post routes the
+    // continuation on /browse vs /next. Thread-safe; never throws.
+    CommentPage comment_replies(const std::string& reply_token, bool is_post);
     // Playlist description via its VL /browse (playlistMetadataRenderer). Thread-safe.
     std::string playlist_description(const std::string& playlist_id);
     std::vector<std::pair<std::string, bool>> restricted_cache();
@@ -335,6 +373,13 @@ private:
     // params may be null (playlists); chan_hint attributes lockups to a channel.
     Feed browse_tab(const std::string& browse_id, const char* params,
                     const std::string& chan_hint);
+    // Comments internals. comments_page issues one /next(continuation), parses the
+    // thread items, and (up to hop_budget) follows a header-only response through to the
+    // page that actually carries comments.
+    std::string video_comment_token(const std::string& video_id, std::string& count_out);
+    std::string post_comment_token(const std::string& post_id, const std::string& channel_id,
+                                   std::string& count_out);
+    CommentPage comments_page(const std::string& continuation, bool use_browse, int hop_budget);
 };
 
 } // namespace yt

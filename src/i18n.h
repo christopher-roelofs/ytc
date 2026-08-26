@@ -56,6 +56,9 @@ enum class Str {
     FooterRemote, FooterCastPicker, FooterCastCode,
     CastCodeTitle, CastCodeHint, KbEnter,
     SetLinkedDevices, CastLinkDevice, CastNoLinked, CastRemoved, FooterManage,
+    CastRemoveConfirm, Yes, No, FooterConfirm,
+    MenuShowComments, CommentsTitle, CommentsLoading, CommentsEmpty, CommentPinned, FooterComments,
+    CommentReplies, CommentHideReplies, FooterCommentsSel,
     COUNT
 };
 

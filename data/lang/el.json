@@ -125,7 +125,7 @@
   "CastPairFailed": "Αποτυχία σύνδεσης — ελέγξτε τον κωδικό",
   "FooterRemote": "A: αναπαρ./παύση    <>: μετακ.    ^v: ένταση    B: διακοπή",
   "FooterCastPicker": "A: επιλογή    B: ακύρωση",
-  "FooterCastCode": "πληκτρολ. τον κωδικό    A: πληκτρ.    Y: σύνδεση    B: ακύρωση",
+  "FooterCastCode": "A: πληκτρ.    B: ακύρωση",
   "CastCodeTitle": "Εισαγάγετε κωδικό TV",
   "CastCodeHint": "εισαγάγετε κωδικό",
   "KbEnter": "Εισαγωγή",
@@ -133,5 +133,18 @@
   "CastLinkDevice": "Σύνδεση συσκευής",
   "CastNoLinked": "Δεν υπάρχουν συνδεδεμένες συσκευές",
   "CastRemoved": "Αφαιρέθηκε",
-  "FooterManage": "A: αφαίρεση    B: πίσω"
+  "FooterManage": "A: αφαίρεση    B: πίσω",
+  "CastRemoveConfirm": "Αφαίρεση συσκευής;",
+  "Yes": "Ναι",
+  "No": "Όχι",
+  "FooterConfirm": "Αριστερά/Δεξιά: επιλογή    A: επιβεβαίωση    B: ακύρωση",
+  "MenuShowComments": "Εμφάνιση σχολίων",
+  "CommentsTitle": "Σχόλια",
+  "CommentsLoading": "Φόρτωση σχολίων…",
+  "CommentsEmpty": "Χωρίς σχόλια",
+  "CommentPinned": "Καρφιτσωμένο",
+  "FooterComments": "Πάνω/Κάτω: κύλιση    B: κλείσιμο",
+  "CommentReplies": "απαντήσεις",
+  "CommentHideReplies": "Απόκρυψη απαντήσεων",
+  "FooterCommentsSel": "Πάνω/Κάτω: επιλογή    A: απαντήσεις    B: κλείσιμο"
 }

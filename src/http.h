@@ -28,16 +28,16 @@ public:
         std::string header(const std::string& key) const;
     };
 
-    // headers: list of "Key: Value" strings.
+    // headers: list of "Key: Value" strings. timeout_s bounds the whole request.
     Response get(const std::string& url,
-                 const std::vector<std::string>& headers = {});
+                 const std::vector<std::string>& headers = {}, long timeout_s = 60);
     Response post(const std::string& url,
                   const std::string& body,
-                  const std::vector<std::string>& headers = {});
+                  const std::vector<std::string>& headers = {}, long timeout_s = 60);
 
 private:
     void* curl_ = nullptr; // CURL*
     Response perform(const std::string& url,
                      const std::string* post_body,
-                     const std::vector<std::string>& headers);
+                     const std::vector<std::string>& headers, long timeout_s);
 };

@@ -404,6 +404,43 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "MANAGESHOT done\n");
             return 0;
         }
+        if (std::getenv("YTC_CONFIRMSHOT")) {  // "Remove Device?" yes/no dialog
+            app.test_seed_manage("Living Room TV");
+            app.input(ui::App::Action::Select);      // -> opens confirm (default No)
+            app.render(rn); win->screenshot(std::string(shot) + "_confirm_no.png");
+            app.input(ui::App::Action::Right);       // -> Yes highlighted
+            app.render(rn); win->screenshot(std::string(shot) + "_confirm_yes.png");
+            std::fprintf(stderr, "CONFIRMSHOT done\n");
+            return 0;
+        }
+        if (const char* vid = std::getenv("YTC_COMMENTSSHOT")) {  // comments overlay
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1500);
+            app.test_open_comments(vid);
+            settle(6000);                        // fetch + render
+            app.render(rn); win->screenshot(std::string(shot) + "_comments.png");
+            // Find a comment with replies (first few), expand it.
+            for (int k = 0; k < 5; ++k) {
+                app.input(ui::App::Action::Select); settle(2500);   // expand selected
+                app.render(rn); win->screenshot(std::string(shot) + "_expanded.png");
+                app.input(ui::App::Action::Down);
+            }
+            for (int k = 0; k < 40; ++k) { app.input(ui::App::Action::Down); settle(120); }
+            app.render(rn); win->screenshot(std::string(shot) + "_paged.png");
+            std::fprintf(stderr, "COMMENTSSHOT done\n");
+            return 0;
+        }
+        if (std::getenv("YTC_NUMKBSHOT")) {  // dedicated numeric keypad for device linking
+            app.test_open_numeric_kb();
+            app.input(ui::App::Action::Select);   // tap '1'
+            app.input(ui::App::Action::Right);     // -> '2'
+            app.input(ui::App::Action::Select);   // tap '2'
+            app.input(ui::App::Action::Down);      // -> row 2
+            app.render(rn); win->screenshot(std::string(shot) + "_numkb.png");
+            std::fprintf(stderr, "NUMKBSHOT done\n");
+            return 0;
+        }
         if (std::getenv("YTC_CASTCODESHOT")) {  // cast picker -> Add a device -> code keyboard
             auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
                 win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };

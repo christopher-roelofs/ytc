@@ -125,7 +125,7 @@
   "CastPairFailed": "Не удалось связать — проверьте код",
   "FooterRemote": "A: пауза/пуск    <>: перемотка    ^v: громкость    B: остановить",
   "FooterCastPicker": "A: выбрать    B: отмена",
-  "FooterCastCode": "введите код    A: ввод    Y: связать    B: отмена",
+  "FooterCastCode": "A: ввод    B: отмена",
   "CastCodeTitle": "Введите код с ТВ",
   "CastCodeHint": "введите код",
   "KbEnter": "Ввод",
@@ -133,5 +133,18 @@
   "CastLinkDevice": "Связать устройство",
   "CastNoLinked": "Пока нет связанных устройств",
   "CastRemoved": "Удалено",
-  "FooterManage": "A: удалить    B: назад"
+  "FooterManage": "A: удалить    B: назад",
+  "CastRemoveConfirm": "Удалить устройство?",
+  "Yes": "Да",
+  "No": "Нет",
+  "FooterConfirm": "Влево/Вправо: выбор    A: подтвердить    B: отмена",
+  "MenuShowComments": "Показать комментарии",
+  "CommentsTitle": "Комментарии",
+  "CommentsLoading": "Загрузка комментариев…",
+  "CommentsEmpty": "Нет комментариев",
+  "CommentPinned": "Закреплено",
+  "FooterComments": "Вверх/Вниз: прокрутка    B: закрыть",
+  "CommentReplies": "ответов",
+  "CommentHideReplies": "Скрыть ответы",
+  "FooterCommentsSel": "Вверх/Вниз: выбор    A: ответы    B: закрыть"
 }

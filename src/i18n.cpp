@@ -44,6 +44,9 @@ const char* kKeys[(int)Str::COUNT] = {
     "FooterRemote","FooterCastPicker","FooterCastCode",
     "CastCodeTitle","CastCodeHint","KbEnter",
     "SetLinkedDevices","CastLinkDevice","CastNoLinked","CastRemoved","FooterManage",
+    "CastRemoveConfirm","Yes","No","FooterConfirm",
+    "MenuShowComments","CommentsTitle","CommentsLoading","CommentsEmpty","CommentPinned","FooterComments",
+    "CommentReplies","CommentHideReplies","FooterCommentsSel",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -95,10 +98,14 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Casting to","Connecting\xE2\x80\xA6","Couldn't cast to that device","Pairing failed \xE2\x80\x94 check the code",
     "A: play/pause    <>: seek    ^v: volume    B: stop casting",
     "A: select    B: cancel",
-    "type the code    A: type    Y: pair    B: cancel",
+    "A: type    B: cancel",
     "Enter TV Code","enter code","Enter",
     "Linked Devices","Link a device","No linked devices yet","Removed",
     "A: remove    B: back",
+    "Remove Device?","Yes","No","Left/Right: choose    A: confirm    B: cancel",
+    "Show Comments","Comments","Loading comments\xE2\x80\xA6","No comments","Pinned",
+    "Up/Down: scroll    B: close",
+    "replies","Hide replies","Up/Down: select    A: replies    B: close",
 };
 
 struct Lang {

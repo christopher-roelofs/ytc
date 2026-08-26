@@ -12,6 +12,7 @@
 #include <mutex>
 #include <atomic>
 #include <unordered_map>
+#include <functional>
 
 using json = nlohmann::json;
 
@@ -458,6 +459,10 @@ static void collect_results(const json& node, const std::string& chan_hint,
             SearchResult sr;
             sr.kind = SearchResult::Kind::Post;
             sr.channel_id = chan_hint;
+            if (sr.channel_id.empty())   // fall back to the author link (search/home posts)
+                sr.channel_id = n.value(json::json_pointer(
+                    "/authorEndpoint/browseEndpoint/browseId"), std::string());
+            sr.post_id = n.value("postId", "");
             if (n.contains("contentText"))
                 for (auto& run : n["contentText"].value("runs", json::array()))
                     sr.post_text += run.value("text", "");
@@ -1575,6 +1580,295 @@ std::vector<SearchResult> Innertube::related_videos(const std::string& video_id)
                 vids.push_back(std::move(s));
         return vids;
     } catch (...) { return {}; }
+}
+
+// ---- Comments ----------------------------------------------------------------
+// YouTube serves comment CONTENT as "entity payloads" in frameworkUpdates.mutations,
+// keyed by an entity key; the continuationItems only reference those keys via a
+// commentViewModel. We build the key->content maps first, then walk the thread list.
+
+// Minimal protobuf + base64url, used to build the FEpost_detail browse params
+// (community-post detail page) from a channelId + postId.
+static void pb_varint(std::string& out, uint64_t v) {
+    do { uint8_t b = v & 0x7f; v >>= 7; if (v) b |= 0x80; out += (char)b; } while (v);
+}
+static void pb_string(std::string& out, int field, const std::string& val) {
+    pb_varint(out, (uint64_t)field << 3 | 2);
+    pb_varint(out, val.size());
+    out += val;
+}
+static std::string base64url_nopad(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    std::string out; size_t i = 0;
+    while (i + 3 <= in.size()) {
+        uint32_t n = (uint8_t)in[i]<<16 | (uint8_t)in[i+1]<<8 | (uint8_t)in[i+2];
+        out += T[n>>18&63]; out += T[n>>12&63]; out += T[n>>6&63]; out += T[n&63]; i += 3;
+    }
+    if (size_t rem = in.size() - i) {
+        uint32_t n = (uint8_t)in[i]<<16 | (rem>1 ? (uint8_t)in[i+1]<<8 : 0);
+        out += T[n>>18&63]; out += T[n>>12&63];
+        if (rem > 1) out += T[n>>6&63];
+    }
+    return out;
+}
+// FEpost_detail params = base64url( field56{ field2:channelId, field3:postId, field11:channelId } ).
+static std::string post_detail_params(const std::string& post_id, const std::string& channel_id) {
+    std::string inner;
+    pb_string(inner, 2, channel_id);
+    pb_string(inner, 3, post_id);
+    pb_string(inner, 11, channel_id);
+    std::string outer;
+    pb_string(outer, 56, inner);   // field 56, wire type 2 (a nested message)
+    return base64url_nopad(outer);
+}
+
+// Find the comments engagement-panel continuation token in a /next(videoId) response.
+static std::string comment_section_token(const json& j) {
+    const json* panels = find_key(j, "engagementPanels");
+    if (panels && panels->is_array()) {
+        for (const auto& p : *panels) {
+            std::string id = p.value(json::json_pointer(
+                "/engagementPanelSectionListRenderer/panelIdentifier"), std::string());
+            if (id.find("comment") != std::string::npos) {
+                std::string tok = continuation_token(p);
+                if (!tok.empty()) return tok;
+            }
+        }
+    }
+    return "";
+}
+// The total comment count ("176") from the comments panel header's contextualInfo.
+static std::string comment_count_text(const json& j) {
+    const json* panels = find_key(j, "engagementPanels");
+    if (panels && panels->is_array()) {
+        for (const auto& p : *panels) {
+            std::string id = p.value(json::json_pointer(
+                "/engagementPanelSectionListRenderer/panelIdentifier"), std::string());
+            if (id.find("comment") == std::string::npos) continue;
+            if (const json* hdr = find_key(p, "engagementPanelTitleHeaderRenderer"))
+                if (const json* ci = find_key(*hdr, "contextualInfo"))
+                    return ci->value(json::json_pointer("/runs/0/text"), std::string());
+        }
+    }
+    return "";
+}
+
+CommentPage Innertube::comments_page(const std::string& continuation, bool use_browse,
+                                     int hop_budget) {
+    CommentPage page;
+    if (continuation.empty()) return page;
+    try {
+        const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
+        HttpClient http;
+        std::string vd = visitor_token();
+        json client = json::parse(fp.context_json);
+        if (!vd.empty()) client["visitorData"] = vd;
+        apply_ctx_locale(client, locale());
+        json body = {{"continuation", continuation}, {"context", {{"client", client}}}};
+        // Video comments continue on /next; community-post comments continue on /browse.
+        std::string url = std::string(kInnertubeBase) + (use_browse ? "/browse" : "/next");
+        if (!api_key_.empty()) url += "?key=" + api_key_;
+        auto r = http.post(url, body.dump(), client_headers(fp));
+        if (!r.ok()) return page;
+        auto j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded()) return page;
+
+        // 1) Build key -> content and surfaceKey -> pinned maps from the mutations.
+        std::unordered_map<std::string, Comment> content;
+        std::unordered_map<std::string, bool> pinned_by_surface;
+        if (const json* muts = find_key(j, "mutations")) if (muts->is_array()) {
+            for (const auto& m : *muts) {
+                const json* pl = m.contains("payload") ? &m["payload"] : nullptr;
+                if (!pl) continue;
+                if (const json* ce = pl->contains("commentEntityPayload")
+                                     ? &(*pl)["commentEntityPayload"] : nullptr) {
+                    std::string key = ce->value("key", "");
+                    if (key.empty()) continue;
+                    Comment c;
+                    c.author = ce->value(json::json_pointer("/author/displayName"), std::string());
+                    c.is_creator = ce->value(json::json_pointer("/author/isCreator"), false);
+                    c.text = ce->value(json::json_pointer("/properties/content/content"), std::string());
+                    c.time = ce->value(json::json_pointer("/properties/publishedTime"), std::string());
+                    c.likes = ce->value(json::json_pointer("/toolbar/likeCountNotliked"), std::string());
+                    std::string rc = ce->value(json::json_pointer("/toolbar/replyCount"), std::string());
+                    c.reply_count = rc.empty() ? 0 : std::atoi(rc.c_str());
+                    content[key] = std::move(c);
+                } else if (const json* se = pl->contains("commentSurfaceEntityPayload")
+                                            ? &(*pl)["commentSurfaceEntityPayload"] : nullptr) {
+                    std::string key = se->value("key", "");
+                    std::string pin = se->value(json::json_pointer("/pinnedText/content"), std::string());
+                    if (!key.empty()) pinned_by_surface[key] = !pin.empty();
+                }
+            }
+        }
+
+        // Build a Comment from a commentViewModel node (found in top-level threads and in
+        // bare reply items). th_for_reply, when set, is the enclosing commentThreadRenderer
+        // (top level) so we can grab its reply continuation.
+        auto push_vm = [&](const json& vm_holder, const json* th_for_reply) {
+            const json* ckn = find_key(vm_holder, "commentKey");
+            const json* skn = find_key(vm_holder, "commentSurfaceKey");
+            std::string ckey = ckn && ckn->is_string() ? ckn->get<std::string>() : "";
+            std::string skey = skn && skn->is_string() ? skn->get<std::string>() : "";
+            auto f = content.find(ckey);
+            if (f == content.end()) return false;
+            Comment c = f->second;
+            if (auto p = pinned_by_surface.find(skey); p != pinned_by_surface.end())
+                c.pinned = p->second;
+            if (th_for_reply) {   // reply continuation lives on the thread's replies renderer
+                if (const json* rp = find_key(*th_for_reply, "commentRepliesRenderer"))
+                    c.reply_token = rp->value(json::json_pointer(
+                        "/contents/0/continuationItemRenderer/continuationEndpoint"
+                        "/continuationCommand/token"), std::string());
+                if (c.reply_token.empty())
+                    if (const json* cir = th_for_reply->contains("replies")
+                                          ? find_key((*th_for_reply)["replies"], "continuationItemRenderer")
+                                          : nullptr)
+                        c.reply_token = cir->value(json::json_pointer(
+                            "/continuationEndpoint/continuationCommand/token"), std::string());
+                c.has_creator_reply = find_key(*th_for_reply, "viewRepliesCreatorThumbnail") != nullptr;
+            }
+            if (!c.text.empty() || !c.author.empty()) page.items.push_back(std::move(c));
+            return true;
+        };
+        // 2) Collect the continuation items (reload/append commands).
+        auto handle_items = [&](const json& items) {
+            for (const auto& it : items) {
+                if (const json* th = it.contains("commentThreadRenderer")
+                                     ? &it["commentThreadRenderer"] : nullptr) {
+                    if (const json* vm = th->contains("commentViewModel")
+                                         ? &(*th)["commentViewModel"] : nullptr) {
+                        push_vm(*vm, th); continue;
+                    }
+                    // Legacy inline commentRenderer fallback.
+                    if (const json* cr = find_key(*th, "commentRenderer")) {
+                        Comment c;
+                        c.author = cr->value(json::json_pointer("/authorText/simpleText"), std::string());
+                        if (const json* runs = find_key(*cr, "contentText"))
+                            for (auto& run : runs->value("runs", json::array()))
+                                c.text += run.value("text", "");
+                        c.time = cr->value(json::json_pointer("/publishedTimeText/runs/0/text"), std::string());
+                        c.likes = cr->value(json::json_pointer("/voteCount/simpleText"), std::string());
+                        c.pinned = find_key(*th, "pinnedCommentBadge") != nullptr;
+                        if (!c.text.empty() || !c.author.empty()) page.items.push_back(std::move(c));
+                    }
+                } else if (it.contains("commentViewModel")) {   // bare reply item
+                    push_vm(it, nullptr);
+                } else if (it.contains("continuationItemRenderer")) {
+                    std::string tok = it["continuationItemRenderer"].value(json::json_pointer(
+                        "/continuationEndpoint/continuationCommand/token"), std::string());
+                    // The reply-thread continuations also live under commentThreadRenderer;
+                    // this top-level one is the next page of comments.
+                    if (!tok.empty()) page.continuation = tok;
+                }
+            }
+        };
+        // The comment list lands under continuationItems, but the wrapping command varies
+        // by page (reloadContinuationItemsCommand / appendContinuationItemsCommand /
+        // appendContinuationItemsAction). Just process every continuationItems array.
+        std::function<void(const json&)> walk = [&](const json& n) {
+            if (n.is_object()) {
+                auto it = n.find("continuationItems");
+                if (it != n.end() && it->is_array()) handle_items(*it);
+                for (auto& kv : n.items()) walk(kv.value());
+            } else if (n.is_array()) {
+                for (auto& e : n) walk(e);
+            }
+        };
+        walk(j);
+
+        // 3) Header-only response (comments live one hop deeper): follow it through.
+        // A community-post token first opens the comments engagement panel, whose own
+        // continuation (comment_section_token) then yields the threads.
+        if (page.items.empty() && page.continuation.empty())
+            page.continuation = comment_section_token(j);
+        if (std::getenv("YTC_DEBUG"))
+            std::fprintf(stderr, "[comments_page] browse=%d body=%zu items=%zu cont=%zu hop=%d\n",
+                         (int)use_browse, r.body.size(), page.items.size(),
+                         page.continuation.size(), hop_budget);
+        if (page.items.empty() && !page.continuation.empty() && hop_budget > 0)
+            return comments_page(page.continuation, use_browse, hop_budget - 1);
+        return page;
+    } catch (...) { return page; }
+}
+
+std::string Innertube::video_comment_token(const std::string& video_id, std::string& count_out) {
+    try {
+        const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
+        HttpClient http;
+        std::string vd = visitor_token();
+        json client = json::parse(fp.context_json);
+        if (!vd.empty()) client["visitorData"] = vd;
+        apply_ctx_locale(client, locale());
+        json body = {{"videoId", video_id}, {"context", {{"client", client}}}};
+        std::string url = std::string(kInnertubeBase) + "/next";
+        if (!api_key_.empty()) url += "?key=" + api_key_;
+        auto r = http.post(url, body.dump(), client_headers(fp));
+        if (!r.ok()) return "";
+        auto j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded()) return "";
+        count_out = comment_count_text(j);
+        return comment_section_token(j);
+    } catch (...) { return ""; }
+}
+
+std::string Innertube::post_comment_token(const std::string& post_id,
+                                          const std::string& channel_id, std::string& count_out) {
+    if (channel_id.empty()) return "";   // need the channel to address the post-detail page
+    try {
+        const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
+        HttpClient http;
+        std::string vd = visitor_token();
+        json client = json::parse(fp.context_json);
+        if (!vd.empty()) client["visitorData"] = vd;
+        apply_ctx_locale(client, locale());
+        // The single-post detail page carries the comments engagement panel, same as a
+        // watch page. It's addressed by browseId "FEpost_detail" + a params protobuf.
+        json body = {{"browseId", "FEpost_detail"},
+                     {"params", post_detail_params(post_id, channel_id)},
+                     {"context", {{"client", client}}}};
+        std::string url = std::string(kInnertubeBase) + "/browse";
+        if (!api_key_.empty()) url += "?key=" + api_key_;
+        auto r = http.post(url, body.dump(), client_headers(fp));
+        if (!r.ok()) return "";
+        auto j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded()) return "";
+        count_out = comment_count_text(j);
+        std::string tok = comment_section_token(j);
+        if (!tok.empty()) return tok;
+        // Some post pages expose the comments continuation inline rather than in a panel.
+        return continuation_token(j);
+    } catch (...) { return ""; }
+}
+
+CommentPage Innertube::video_comments(const std::string& video_id,
+                                                 const std::string& continuation) {
+    std::string count, tok = continuation;
+    if (continuation.empty()) tok = video_comment_token(video_id, count);
+    CommentPage pg = comments_page(tok, /*use_browse=*/false, 3);
+    pg.total = count;
+    return pg;
+}
+CommentPage Innertube::post_comments(const std::string& post_id, const std::string& channel_id,
+                                     const std::string& continuation) {
+    std::string count, tok = continuation;
+    if (continuation.empty()) tok = post_comment_token(post_id, channel_id, count);
+    CommentPage pg = comments_page(tok, /*use_browse=*/true, 3);
+    pg.total = count;
+    return pg;
+}
+CommentPage Innertube::comment_replies(const std::string& reply_token, bool is_post) {
+    CommentPage all;
+    std::string cont = reply_token;
+    for (int i = 0; i < 20 && !cont.empty(); ++i) {   // follow to the end (replies are few)
+        CommentPage pg = comments_page(cont, /*use_browse=*/is_post, 3);
+        all.items.insert(all.items.end(),
+                         std::make_move_iterator(pg.items.begin()),
+                         std::make_move_iterator(pg.items.end()));
+        if (pg.items.empty() || pg.continuation == cont) break;   // no progress -> stop
+        cont = pg.continuation;
+    }
+    return all;   // continuation intentionally left empty (fully loaded)
 }
 
 std::string Innertube::caption_vtt(const std::string& base_url, const std::string& tlang) {

@@ -125,7 +125,7 @@
   "CastPairFailed": "Associazione non riuscita — controlla il codice",
   "FooterRemote": "A: play/pausa    <>: scorri    ^v: volume    B: ferma",
   "FooterCastPicker": "A: seleziona    B: annulla",
-  "FooterCastCode": "digita il codice    A: digita    Y: collega    B: annulla",
+  "FooterCastCode": "A: digita    B: annulla",
   "CastCodeTitle": "Inserisci il codice TV",
   "CastCodeHint": "inserisci il codice",
   "KbEnter": "Invio",
@@ -133,5 +133,18 @@
   "CastLinkDevice": "Collega un dispositivo",
   "CastNoLinked": "Nessun dispositivo collegato",
   "CastRemoved": "Rimosso",
-  "FooterManage": "A: rimuovi    B: indietro"
+  "FooterManage": "A: rimuovi    B: indietro",
+  "CastRemoveConfirm": "Rimuovere il dispositivo?",
+  "Yes": "Sì",
+  "No": "No",
+  "FooterConfirm": "Sinistra/Destra: scegli    A: conferma    B: annulla",
+  "MenuShowComments": "Mostra commenti",
+  "CommentsTitle": "Commenti",
+  "CommentsLoading": "Caricamento commenti…",
+  "CommentsEmpty": "Nessun commento",
+  "CommentPinned": "Fissato",
+  "FooterComments": "Su/Giù: scorri    B: chiudi",
+  "CommentReplies": "risposte",
+  "CommentHideReplies": "Nascondi risposte",
+  "FooterCommentsSel": "Su/Giù: seleziona    A: risposte    B: chiudi"
 }

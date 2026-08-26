@@ -125,7 +125,7 @@
   "CastPairFailed": "Pairing failed — check the code",
   "FooterRemote": "A: play/pause    <>: seek    ^v: volume    B: stop casting",
   "FooterCastPicker": "A: select    B: cancel",
-  "FooterCastCode": "type the code    A: type    Y: pair    B: cancel",
+  "FooterCastCode": "A: type    B: cancel",
   "CastCodeTitle": "Enter TV Code",
   "CastCodeHint": "enter code",
   "KbEnter": "Enter",
@@ -133,5 +133,18 @@
   "CastLinkDevice": "Link a device",
   "CastNoLinked": "No linked devices yet",
   "CastRemoved": "Removed",
-  "FooterManage": "A: remove    B: back"
+  "FooterManage": "A: remove    B: back",
+  "CastRemoveConfirm": "Remove Device?",
+  "Yes": "Yes",
+  "No": "No",
+  "FooterConfirm": "Left/Right: choose    A: confirm    B: cancel",
+  "MenuShowComments": "Show Comments",
+  "CommentsTitle": "Comments",
+  "CommentsLoading": "Loading comments…",
+  "CommentsEmpty": "No comments",
+  "CommentPinned": "Pinned",
+  "FooterComments": "Up/Down: scroll    B: close",
+  "CommentReplies": "replies",
+  "CommentHideReplies": "Hide replies",
+  "FooterCommentsSel": "Up/Down: select    A: replies    B: close"
 }

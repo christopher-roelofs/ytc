@@ -35,6 +35,15 @@ const std::vector<std::vector<Key>> KB = {
      {"space",KSPACE,' ',4},{"-",KCHAR,'-',1},{"_",KCHAR,'_',1},
      {"Search",KSUBMIT,0,2}},
 };
+// Dedicated numeric keypad for device linking (TV codes are digits only). A squared
+// 4-column dialpad; each row totals 4 units, keys are drawn square.
+const std::vector<std::vector<Key>> KB_NUM = {
+    {{"1",KCHAR,'1',1},{"2",KCHAR,'2',1},{"3",KCHAR,'3',1},{"4",KCHAR,'4',1}},
+    {{"5",KCHAR,'5',1},{"6",KCHAR,'6',1},{"7",KCHAR,'7',1},{"8",KCHAR,'8',1}},
+    {{"9",KCHAR,'9',1},{"0",KCHAR,'0',1},
+     {"\xE2\x8C\xAB",KDEL,0,1},{"\xE2\x9C\x93",KSUBMIT,0,1}},                    // 9 0 ⌫ ✓
+    {{"space",KSPACE,' ',4}},                                                   // full-width space bar
+};
 } // namespace
 
 // Relative "age" for display. Search results already come as "3 months ago"
@@ -316,6 +325,8 @@ App::App(const std::string& config_path, gfx::Window* win)
 }
 
 App::~App() {
+    cast_events_run_ = false;
+    if (cast_events_thread_.joinable()) cast_events_thread_.join();
     if (resolve_thread_.joinable()) resolve_thread_.join();
     if (chinfo_thread_.joinable()) chinfo_thread_.join();
     if (more_thread_.joinable()) more_thread_.join();
@@ -326,6 +337,8 @@ App::~App() {
     if (cast_link_thread_.joinable()) cast_link_thread_.join();
     if (refresh_thread_.joinable()) refresh_thread_.join();
     if (desc_thread_.joinable()) desc_thread_.join();
+    if (comments_thread_.joinable()) comments_thread_.join();
+    if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
     if (cc_thread_.joinable()) cc_thread_.join();
     if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
@@ -581,6 +594,11 @@ void App::queue_restricted_checks() {
 // ---------- Top-level menu (Start button) ----------
 void App::open_main_menu() {
     if (menu_open_) return;               // don't stack on an already-open menu
+    // Don't open behind another modal overlay — Start is wired straight to this from the
+    // event loop (bypassing input()), so guard here for every caller.
+    if (cast_picker_open_ || cast_confirm_remove_ || cast_manage_open_ ||
+        resume_prompt_open_ || desc_open_ || comments_open_ || casting_ ||
+        mode_ == Mode::Search) return;
     menu_kind_ = MenuKind::Main;
     menu_items_.clear();
     using i18n::tr; using S = i18n::Str;
@@ -824,6 +842,7 @@ void App::open_description(const yt::SearchResult& v) {
     desc_lines_.clear();
     desc_scroll_ = 0; desc_wrap_w_ = 0;
     post_has_video_ = false;   // plain description, not the post-with-video layout
+    desc_is_post_ = false; desc_post_id_.clear();
     desc_open_ = true;
     // Playing video: the description arrived with the resolve — no fetch needed.
     if (mode_ == Mode::Playing && !v.is_playlist() &&
@@ -951,6 +970,7 @@ void App::open_channel_description(const std::string& channel_id, const std::str
     desc_lines_.clear();
     desc_scroll_ = 0; desc_wrap_w_ = 0;
     post_has_video_ = false;   // plain description, not the post-with-video layout
+    desc_is_post_ = false; desc_post_id_.clear();
     desc_open_ = true;
     desc_loading_ = true;
     if (desc_running_) return;
@@ -977,6 +997,7 @@ void App::open_post(const yt::SearchResult& p) {
     desc_loading_ = false;
     // Attached video: show its thumbnail (selected) on top; A plays it, Down -> text.
     post_has_video_ = !p.video_id.empty();
+    desc_is_post_ = true; desc_post_id_ = p.post_id; desc_post_channel_ = p.channel_id;
     post_thumb_url_ = p.thumbnail_url;
     post_focus_ = 0;
     if (post_has_video_ && !post_thumb_url_.empty()) thumbs_.request(post_thumb_url_);
@@ -1065,19 +1086,34 @@ void App::render_description(gfx::Renderer& rn) {
     float body_top = my + 62*s, body_bot = my + ph - 46*s;
     float wrap_w = pw - pad*2;
     // Post with an attached video: a selectable thumbnail on top (A plays it).
+    bool has_comments_btn = desc_is_post_ && !desc_post_id_.empty();
+    int vid_idx = post_has_video_ ? 0 : -1;
+    int com_idx = has_comments_btn ? (post_has_video_ ? 1 : 0) : -1;
     if (post_has_video_) {
         float tw = std::min(pw - pad*2, 360*s);
         float th = tw * 9.f/16.f;
         gfx::Rect vr{tx, body_top, tw, th};
-        if (post_focus_ == 0)   // selection border
+        if (post_focus_ == vid_idx)   // selection border
             rn.quad({vr.x-4*s, vr.y-4*s, vr.w+8*s, vr.h+8*s}, theme_.accent);
         rn.quad(vr, theme_.thumb_bg);
         gfx::Texture* vt = post_thumb_url_.empty() ? nullptr : thumbs_.get(post_thumb_url_);
         if (vt) rn.textured_cover(vr, *vt, {1,1,1,1});
         // Play glyph in the corner.
-        rn.text(*font_small_, post_focus_ == 0 ? i18n::tr(i18n::Str::PressAToPlay) : "",
+        rn.text(*font_small_, post_focus_ == vid_idx ? i18n::tr(i18n::Str::PressAToPlay) : "",
                 vr.x, vr.y + vr.h + 6*s, theme_.text_dim);
         body_top = vr.y + vr.h + 56*s;   // text starts well below the hint
+    }
+    // Selectable "Show Comments" button (A opens the comments overlay).
+    if (has_comments_btn) {
+        bool sel = (post_focus_ == com_idx);
+        std::string lbl = std::string("\xF0\x9F\x92\xAC  ") + i18n::tr(i18n::Str::MenuShowComments); // 💬
+        float bw = std::min(pw - pad*2, 300*s), bh = 44*s;
+        gfx::Rect br{tx, body_top, bw, bh};
+        rn.quad(br, sel ? theme_.card_sel : theme_.card);
+        if (sel) rn.quad({br.x, br.y, 4*s, bh}, theme_.accent);
+        rn.text(*font_small_, lbl, br.x + 14*s, br.y + (bh - font_small_->line_height())/2 + 2*s,
+                sel ? theme_.text : theme_.text_dim);
+        body_top = br.y + bh + 22*s;
     }
     if (desc_loading_) {
         rn.text(*font_small_, i18n::tr(i18n::Str::LoadingDescription), tx, body_top, theme_.text_dim);
@@ -1114,6 +1150,257 @@ void App::render_description(gfx::Renderer& rn) {
     rn.end();
 }
 
+// ---------- Comments overlay ----------
+void App::open_comments(const yt::SearchResult& t) {
+    comments_is_post_ = t.is_post();
+    comments_target_id_ = comments_is_post_ ? t.post_id : t.video_id;
+    comments_channel_id_ = t.channel_id;
+    comments_title_ = i18n::tr(i18n::Str::CommentsTitle);
+    comments_.clear(); comment_lines_.clear(); comment_units_.clear(); comments_wrap_w_ = 0;
+    comments_scroll_ = 0; comments_cont_.clear();
+    comments_sel_ = 0; comments_dirty_ = true; comments_reply_idx_ = -1;
+    comments_open_ = true;
+    comments_loading_ = true;
+    if (comments_target_id_.empty()) { comments_loading_ = false; return; }
+    // First page: reset (replace) the list.
+    if (comments_running_) return;
+    comments_running_ = true; comments_done_ = false;
+    if (comments_thread_.joinable()) comments_thread_.join();
+    std::string id = comments_target_id_, cid = comments_channel_id_; bool is_post = comments_is_post_;
+    comments_thread_ = std::thread([this, id, cid, is_post]() {
+        yt::CommentPage pg;
+        try { pg = is_post ? it_.post_comments(id, cid) : it_.video_comments(id); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(comments_m_);
+          comments_pending_ = std::move(pg); comments_pending_reset_ = true; }
+        comments_running_ = false; comments_done_ = true;
+    });
+}
+
+void App::load_more_comments() {
+    if (comments_running_ || comments_cont_.empty() || comments_target_id_.empty()) return;
+    comments_running_ = true; comments_done_ = false;
+    if (comments_thread_.joinable()) comments_thread_.join();
+    std::string id = comments_target_id_, cid = comments_channel_id_, cont = comments_cont_;
+    bool is_post = comments_is_post_;
+    comments_thread_ = std::thread([this, id, cid, cont, is_post]() {
+        yt::CommentPage pg;
+        try { pg = is_post ? it_.post_comments(id, cid, cont) : it_.video_comments(id, cont); }
+        catch (...) {}
+        { std::lock_guard<std::mutex> lk(comments_m_);
+          comments_pending_ = std::move(pg); comments_pending_reset_ = false; }
+        comments_running_ = false; comments_done_ = true;
+    });
+}
+
+void App::poll_comments_page() {
+    if (!comments_done_.exchange(false)) return;
+    if (comments_thread_.joinable()) comments_thread_.join();
+    yt::CommentPage pg; bool reset;
+    { std::lock_guard<std::mutex> lk(comments_m_);
+      pg = std::move(comments_pending_); reset = comments_pending_reset_; }
+    if (!comments_open_) return;   // closed meanwhile — discard
+    if (reset) { comments_ = std::move(pg.items); comments_total_ = pg.total; }
+    else comments_.insert(comments_.end(),
+                          std::make_move_iterator(pg.items.begin()),
+                          std::make_move_iterator(pg.items.end()));
+    comments_cont_ = pg.continuation;
+    comments_loading_ = false;
+    comments_dirty_ = true;   // re-wrap / rebuild units
+}
+
+// Load replies for one comment at a time in the background: user-expanded threads
+// first, then threads where the creator replied (shown inline as a preview).
+void App::pump_reply_loads() {
+    if (!comments_open_ || comments_reply_running_) return;
+    int idx = -1;
+    for (int i = 0; i < (int)comments_.size(); ++i) {
+        yt::Comment& c = comments_[i];
+        if (c.replies_loaded || c.replies_loading || c.reply_token.empty()) continue;
+        if (c.expanded) { idx = i; break; }            // priority: user expanded
+        if (c.has_creator_reply && idx < 0) idx = i;   // otherwise: creator-reply preview
+    }
+    if (idx < 0) return;
+    comments_[idx].replies_loading = true;
+    comments_reply_running_ = true; comments_reply_done_ = false;
+    comments_reply_idx_ = idx;
+    if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
+    std::string tok = comments_[idx].reply_token; bool is_post = comments_is_post_;
+    comments_reply_thread_ = std::thread([this, tok, is_post]() {
+        yt::CommentPage pg;
+        try { pg = it_.comment_replies(tok, is_post); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(comments_m_); comments_reply_pending_ = std::move(pg); }
+        comments_reply_running_ = false; comments_reply_done_ = true;
+    });
+}
+
+// Expand or collapse the replies under the selected top-level comment.
+void App::toggle_comment_replies() {
+    if (comments_sel_ < 0 || comments_sel_ >= (int)comment_units_.size()) return;
+    const CommentUnit& u = comment_units_[comments_sel_];
+    if (!u.is_top || u.top_idx < 0 || u.top_idx >= (int)comments_.size()) return;
+    yt::Comment& c = comments_[u.top_idx];
+    if (c.reply_token.empty()) return;                 // no replies to show
+    c.expanded = !c.expanded;                          // pump_reply_loads() fetches them
+    comments_dirty_ = true;
+}
+
+void App::poll_comments() {
+    if (comments_reply_done_.exchange(false)) {
+        if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
+        yt::CommentPage pg;
+        { std::lock_guard<std::mutex> lk(comments_m_); pg = std::move(comments_reply_pending_); }
+        if (comments_open_ && comments_reply_idx_ >= 0 &&
+            comments_reply_idx_ < (int)comments_.size()) {
+            comments_[comments_reply_idx_].replies = std::move(pg.items);
+            comments_[comments_reply_idx_].replies_loaded = true;
+            comments_[comments_reply_idx_].replies_loading = false;
+            comments_dirty_ = true;
+        }
+        comments_reply_idx_ = -1;
+    }
+    poll_comments_page();
+    pump_reply_loads();
+}
+
+void App::close_comments() {
+    comments_open_ = false;
+    if (comments_paused_ && mode_ == Mode::Playing) player_.set_pause(false);
+    comments_paused_ = false;
+}
+
+void App::render_comments(gfx::Renderer& rn) {
+    const int W = win_->width(), H = win_->height();
+    float s = H / 720.f;
+    rn.begin(W, H);
+    rn.quad({0, 0, (float)W, (float)H}, theme_.bg);
+    float mx = 70*s, my = 46*s;
+    float pw = W - mx*2, ph = H - my*2;
+    rn.quad({mx, my, pw, ph}, theme_.panel);
+    rn.quad({mx, my, pw, 4*s}, theme_.accent);
+    float pad = 26*s;
+    float tx = mx + pad;
+    std::string head = comments_title_;
+    if (!comments_total_.empty()) head += "  (" + comments_total_ + ")";      // real total
+    else if (!comments_.empty()) head += "  (" + std::to_string(comments_.size())
+                                       + (comments_cont_.empty() ? "" : "+") + ")";
+    rn.text(*font_body_, font_body_->ellipsize(head, pw - pad*2), tx, my + 16*s, theme_.text);
+    float body_top = my + 62*s, body_bot = my + ph - 46*s;
+    float wrap_w = pw - pad*2;
+
+    if (comments_loading_ && comments_.empty()) {
+        rn.text(*font_small_, i18n::tr(i18n::Str::CommentsLoading), tx, body_top, theme_.text_dim);
+        rn.end(); return;
+    }
+    if (!comments_loading_ && comments_.empty()) {
+        rn.text(*font_small_, i18n::tr(i18n::Str::CommentsEmpty), tx, body_top, theme_.text_dim);
+        rn.text(*font_small_, i18n::tr(i18n::Str::FooterComments), tx, my + ph - 34*s, theme_.text_dim);
+        rn.end(); return;
+    }
+
+    float ind = 34*s;   // reply indent
+    // Rebuild the wrapped line list + selectable units when the data or width changes.
+    if (comments_dirty_ || comments_wrap_w_ != wrap_w) {
+        comment_lines_.clear(); comment_units_.clear();
+        auto emit = [&](const yt::Comment& c, int indent) {
+            std::string name = c.author.empty() ? "\xE2\x80\x94" : c.author;
+            if (c.pinned) name = std::string("\xF0\x9F\x93\x8C ") + name;   // 📌
+            std::string sub;
+            if (!c.time.empty()) sub += c.time;
+            if (!c.likes.empty()) sub += (sub.empty()?"":"   ") + std::string("\xE2\x96\xB2 ") + c.likes;
+            if (indent == 0 && c.reply_count > 0)
+                sub += (sub.empty()?"":"   ") + std::to_string(c.reply_count) + " \xE2\x86\xB3";
+            comment_lines_.push_back({sub, 0, indent, name, c.is_creator});   // meta: name + rest
+            for (auto& l : wrap_text(*font_small_, c.text, wrap_w - indent*ind))
+                comment_lines_.push_back({l, 1, indent, "", false});
+        };
+        for (int i = 0; i < (int)comments_.size(); ++i) {
+            const yt::Comment& c = comments_[i];
+            CommentUnit u{(int)comment_lines_.size(), 0, true, i};
+            emit(c, 0);
+            // Collapsed creator reply preview (shown inline like the Android app).
+            if (!c.expanded && c.has_creator_reply && c.replies_loaded)
+                for (const auto& r : c.replies) if (r.is_creator) emit(r, 1);
+            if (!c.reply_token.empty()) {
+                std::string tog = !c.expanded
+                    ? std::string("\xE2\x96\xB8 ") + std::to_string(c.reply_count)
+                      + " " + i18n::tr(i18n::Str::CommentReplies)   // ▸ N replies
+                    : (c.replies_loaded ? std::string("\xE2\x96\xBE ") + i18n::tr(i18n::Str::CommentHideReplies)
+                                        : std::string("\xE2\x96\xBE ") + i18n::tr(i18n::Str::CommentsLoading));
+                comment_lines_.push_back({tog, 3, 0});
+            }
+            u.line_count = (int)comment_lines_.size() - u.line_start;
+            comment_units_.push_back(u);
+            comment_lines_.push_back({"", 2, 0});
+            if (c.expanded)
+                for (const auto& r : c.replies) {
+                    CommentUnit ru{(int)comment_lines_.size(), 0, false, i};
+                    emit(r, 1);
+                    ru.line_count = (int)comment_lines_.size() - ru.line_start;
+                    comment_units_.push_back(ru);
+                    comment_lines_.push_back({"", 2, 1});
+                }
+        }
+        comments_wrap_w_ = wrap_w; comments_dirty_ = false;
+    }
+    if (comments_sel_ >= (int)comment_units_.size()) comments_sel_ = (int)comment_units_.size() - 1;
+    if (comments_sel_ < 0) comments_sel_ = 0;
+
+    float lh = font_small_->line_height() + 4*s;
+    float total = comment_lines_.size() * lh;
+    float view = body_bot - body_top;
+    float max_scroll = total > view ? total - view : 0;
+    // Keep the selected unit in view.
+    if (!comment_units_.empty()) {
+        const CommentUnit& su = comment_units_[comments_sel_];
+        float s0 = su.line_start * lh, s1 = (su.line_start + su.line_count) * lh;
+        if (s0 < comments_scroll_) comments_scroll_ = s0;
+        if (s1 > comments_scroll_ + view) comments_scroll_ = s1 - view;
+    }
+    if (comments_scroll_ < 0) comments_scroll_ = 0;
+    if (comments_scroll_ > max_scroll) comments_scroll_ = max_scroll;
+    // Auto-page more top-level comments when the selection nears the end.
+    if (comments_sel_ >= (int)comment_units_.size() - 3 && !comments_cont_.empty() && !comments_running_)
+        load_more_comments();
+
+    // Selection highlight (behind the selected unit's lines).
+    if (!comment_units_.empty()) {
+        const CommentUnit& su = comment_units_[comments_sel_];
+        float hy = body_top + su.line_start * lh - comments_scroll_ - 3*s;
+        float hh = su.line_count * lh + 4*s;
+        if (hy < body_bot && hy + hh > body_top) {
+            float cy = std::max(hy, body_top), cb = std::min(hy + hh, body_bot);
+            rn.quad({mx + 10*s, cy, pw - 20*s, cb - cy}, theme_.card_sel);
+            rn.quad({mx + 10*s, cy, 4*s, cb - cy}, theme_.accent);
+        }
+    }
+    float y = body_top - comments_scroll_;
+    for (const auto& cl : comment_lines_) {
+        if (y >= body_top - 0.5f && y <= body_bot - lh * 0.4f) {
+            float x = tx + cl.indent*ind;
+            if (cl.kind == 0) {   // meta: colored author name, then dimmed time/likes
+                gfx::Color acol = cl.creator ? theme_.accent : theme_.text;
+                rn.text(*font_small_, cl.author, x, y, acol);
+                if (!cl.text.empty())
+                    rn.text(*font_small_, cl.text,
+                            x + font_small_->text_width(cl.author) + 12*s, y, theme_.text_dim);
+            } else {
+                gfx::Color col = cl.kind == 3 ? theme_.accent : theme_.text_dim;
+                rn.text(*font_small_, cl.text, x, y, col);
+            }
+        }
+        y += lh;
+    }
+    if (max_scroll > 0) {   // scrollbar
+        float track_h = view, knob_h = view * (view / total);
+        if (knob_h < 24*s) knob_h = 24*s;
+        float ky = body_top + (track_h - knob_h) * (comments_scroll_ / max_scroll);
+        rn.quad({mx + pw - 8*s, body_top, 4*s, track_h}, theme_.card_sel);
+        rn.quad({mx + pw - 8*s, ky, 4*s, knob_h}, theme_.accent);
+    }
+    rn.text(*font_small_, i18n::tr(i18n::Str::FooterCommentsSel), tx, my + ph - 34*s, theme_.text_dim);
+    rn.end();
+}
+
 // ---------- Context options menu ----------
 void App::open_menu() {
     menu_kind_ = MenuKind::Context;
@@ -1128,6 +1415,8 @@ void App::open_menu() {
         menu_items_.push_back({tr(S::ReadPost), MenuAction::ShowDescription});
         if (!t.video_id.empty())
             menu_items_.push_back({tr(S::PlayAttachedVideo), MenuAction::PlayPostVideo});
+        if (!t.post_id.empty())
+            menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
     } else if (t.is_playlist()) {
         bool wl = wl_ids_.count(t.playlist_id) > 0;
         menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
@@ -1154,6 +1443,8 @@ void App::open_menu() {
             menu_items_.push_back({tr(S::MenuCastToDevice), MenuAction::CastToDevice});
         if (!t.video_id.empty())
             menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
+        if (!t.video_id.empty())
+            menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
         // Channel description on every video tile with a known uploader.
         if (!t.channel_id.empty())
             menu_items_.push_back({tr(S::ShowChannelDescription),
@@ -1230,6 +1521,14 @@ void App::menu_activate() {
             else open_description(t);
             return;
         }
+        case MenuAction::ShowComments: {
+            menu_open_ = false;
+            // Inherit the menu's pause (resumed when the comments overlay closes).
+            comments_paused_ = menu_paused_;
+            menu_paused_ = false;
+            open_comments(t);
+            return;
+        }
         case MenuAction::PlayPostVideo:
             menu_open_ = false;
             menu_paused_ = false;
@@ -1240,6 +1539,7 @@ void App::menu_activate() {
             // open the device picker. If casting from the player, hand off the position.
             cast_target_id_ = t.video_id;
             cast_target_title_ = t.title;
+            cast_target_is_short_ = t.is_short;
             cast_target_pos_ = (mode_ == Mode::Playing) ? (int)player_.position() : 0;
             menu_open_ = false; menu_paused_ = false;
             open_cast_picker();
@@ -1617,7 +1917,11 @@ void App::rebuild_picker_rows() {
         if (d.kind == yt::Cast::Kind::DialYouTube) {
             cast_devices_.push_back(d);                 // smart TV: native, no code
         } else if (d.kind == yt::Cast::Kind::CastDevice) {
-            if (!d.screen_id.empty()) cast_devices_.push_back(d);   // paired native row
+            // The native TV app plays a Short in its Shorts UI, which ignores the lounge
+            // remote — so hide the linked (paired) row for Shorts. The web-receiver row
+            // below plays it as a normal, controllable video.
+            if (!d.screen_id.empty() && !cast_target_is_short_)
+                cast_devices_.push_back(d);              // paired native row
             if (!d.ip.empty()) {                         // code-free "· Chromecast" row (web receiver)
                 yt::Cast::Device cc = d; cc.screen_id.clear();
                 cast_devices_.push_back(cc);
@@ -1660,7 +1964,14 @@ void App::cast_activate_cast() {
     if (cast_sel_ >= 0 && cast_sel_ < n) start_cast(cast_devices_[cast_sel_]);
 }
 double App::cast_est_pos() const {
-    double e = cast_base_pos_;
+    if (cast_ev_valid_) {   // real TV position + elapsed since it was reported (if playing)
+        double e = cast_ev_pos_.load();
+        if (cast_ev_state_.load() == 1) e += (SDL_GetTicks() - cast_ev_ts_.load()) / 1000.0;
+        double dur = cast_ev_dur_.load();
+        if (dur > 0 && e > dur) e = dur;
+        return e < 0 ? 0 : e;
+    }
+    double e = cast_base_pos_;   // fallback before the first event arrives
     if (!cast_paused_) e += (SDL_GetTicks() - cast_started_ms_) / 1000.0;
     return e < 0 ? 0 : e;
 }
@@ -1714,6 +2025,26 @@ void App::poll_cast_play() {
         cast_paused_ = false; cast_vol_ = 100;
         cast_base_pos_ = cast_target_pos_; cast_started_ms_ = SDL_GetTicks();
         cast_picker_open_ = false;
+        // Start the event-reader: long-poll the lounge backchannel for the TV's real
+        // position (used for accurate seek). Runs on a copy of the session; RID=rpc so
+        // it never touches the command rid counter.
+        cast_ev_valid_ = false; cast_nowplaying_at_ = 0;
+        if (cast_events_thread_.joinable()) cast_events_thread_.join();
+        cast_events_run_ = true;
+        yt::Cast::Session es = s;
+        cast_events_thread_ = std::thread([this, es]() {
+            int aid = -1;
+            while (cast_events_run_) {
+                yt::Cast::NowPlaying np;
+                try { np = cast_.read_events(es, aid, 4); } catch (...) {}
+                aid = np.aid;
+                if (np.valid) {
+                    cast_ev_pos_ = np.current_time; cast_ev_dur_ = np.duration;
+                    cast_ev_state_ = np.state; cast_ev_ts_ = SDL_GetTicks();
+                    cast_ev_valid_ = true;
+                }
+            }
+        });
         // Option B: local playback stops; the handheld becomes the remote.
         if (mode_ == Mode::Playing) { save_resume_position(); player_.stop(); mode_ = Mode::Grid; }
         status_msg_.clear();
@@ -1733,8 +2064,11 @@ void App::cast_command(const std::string& type, double arg) {
 }
 void App::stop_casting() {
     casting_ = false;
+    cast_events_run_ = false;
+    if (cast_events_thread_.joinable()) cast_events_thread_.join();
     if (cast_cmd_thread_.joinable()) cast_cmd_thread_.join();   // don't free the session under it
     cast_session_ = {};
+    cast_ev_valid_ = false;
 }
 
 // ---- Settings -> Linked Devices ----
@@ -1748,14 +2082,19 @@ void App::manage_activate() {
         open_link_picker();
         return;
     }
-    if (cast_manage_sel_ >= 0 && cast_manage_sel_ < n) {   // remove this device
-        std::string name = cast_paired_[cast_manage_sel_].name;
-        cast_.forget(cast_paired_[cast_manage_sel_].screen_id);
-        cast_paired_ = cast_.paired();
-        if (cast_manage_sel_ >= (int)cast_paired_.size()) cast_manage_sel_ = std::max(0, (int)cast_paired_.size());
-        status_msg_ = std::string(i18n::tr(i18n::Str::CastRemoved)) + ": " + name;
-        status_until_ = SDL_GetTicks() + 2500;
+    if (cast_manage_sel_ >= 0 && cast_manage_sel_ < n) {   // confirm before removing
+        cast_confirm_remove_ = true; cast_confirm_sel_ = 0;   // default to "No"
     }
+}
+void App::confirm_remove_device() {
+    int n = (int)cast_paired_.size();
+    if (cast_manage_sel_ < 0 || cast_manage_sel_ >= n) return;
+    std::string name = cast_paired_[cast_manage_sel_].name;
+    cast_.forget(cast_paired_[cast_manage_sel_].screen_id);
+    cast_paired_ = cast_.paired();
+    if (cast_manage_sel_ >= (int)cast_paired_.size()) cast_manage_sel_ = std::max(0, (int)cast_paired_.size());
+    status_msg_ = std::string(i18n::tr(i18n::Str::CastRemoved)) + ": " + name;
+    status_until_ = SDL_GetTicks() + 2500;
 }
 void App::link_device(const std::string& code) {
     if (cast_link_running_ || code.empty()) return;
@@ -1818,14 +2157,21 @@ void App::input(Action a) {
     // Remote mode: the handheld controls the TV (playback continues there).
     if (casting_) {
         switch (a) {
-            case Action::Select:   // A: play/pause
-                if (cast_paused_) { cast_command("play"); cast_base_pos_ = cast_est_pos();
-                    cast_started_ms_ = SDL_GetTicks(); cast_paused_ = false; }
-                else { cast_base_pos_ = cast_est_pos(); cast_paused_ = true; cast_command("pause"); }
+            case Action::Select: {   // A: play/pause
+                double at = cast_est_pos();
+                cast_paused_ = !cast_paused_;
+                cast_command(cast_paused_ ? "pause" : "play");
+                // Optimistic local update; the next event corrects it.
+                cast_ev_pos_ = at; cast_ev_ts_ = SDL_GetTicks();
+                cast_ev_state_ = cast_paused_ ? 2 : 1; cast_ev_valid_ = true;
+                cast_base_pos_ = at; cast_started_ms_ = SDL_GetTicks();
                 break;
-            case Action::Left: case Action::Right: {   // seek +/- 10s (estimated position)
+            }
+            case Action::Left: case Action::Right: {   // seek +/- 10s (real position)
                 double t = cast_est_pos() + (a == Action::Right ? 10 : -10); if (t < 0) t = 0;
-                cast_command("seekTo", t); cast_base_pos_ = t; cast_started_ms_ = SDL_GetTicks();
+                cast_command("seekTo", t);
+                cast_ev_pos_ = t; cast_ev_ts_ = SDL_GetTicks(); cast_ev_valid_ = true;
+                cast_base_pos_ = t; cast_started_ms_ = SDL_GetTicks();
                 break;
             }
             case Action::Up: case Action::Down:   // volume
@@ -1853,6 +2199,19 @@ void App::input(Action a) {
         }
         return;
     }
+    // "Remove Device?" confirmation prompt (topmost over the manage list).
+    if (cast_confirm_remove_ && mode_ != Mode::Search) {
+        switch (a) {
+            case Action::Left: case Action::Right: cast_confirm_sel_ ^= 1; break;
+            case Action::Select:
+                if (cast_confirm_sel_ == 1) confirm_remove_device();
+                cast_confirm_remove_ = false;
+                break;
+            case Action::Back:   cast_confirm_remove_ = false; break;  // cancel = No
+            default: break;
+        }
+        return;
+    }
     // Linked-devices management overlay (Settings -> Linked Devices).
     if (cast_manage_open_ && mode_ != Mode::Search) {
         int rows = (int)cast_paired_.size() + 1;    // + "Link a device"
@@ -1865,6 +2224,22 @@ void App::input(Action a) {
         }
         return;
     }
+    // Comments overlay consumes input while open (topmost). Up/Down move the selected
+    // comment; A expands/collapses its replies; Left/Right jump; B closes.
+    if (comments_open_) {
+        int n = (int)comment_units_.size();
+        switch (a) {
+            case Action::Up:    if (comments_sel_ > 0) comments_sel_--; break;
+            case Action::Down:  if (comments_sel_ + 1 < n) comments_sel_++; break;
+            case Action::Left:  comments_sel_ = std::max(0, comments_sel_ - 6); break;
+            case Action::Right: comments_sel_ = std::min(n - 1, comments_sel_ + 6); break;
+            case Action::Select: toggle_comment_replies(); break;
+            case Action::Back:
+            case Action::Menu:  close_comments(); break;
+            default: break;
+        }
+        return;
+    }
     // Description overlay consumes input while open (topmost).
     if (desc_open_) {
         float step = font_small_ ? (font_small_->line_height() + 4) * 3 : 60;
@@ -1873,25 +2248,38 @@ void App::input(Action a) {
             if (desc_paused_ && mode_ == Mode::Playing) player_.set_pause(false);
             desc_paused_ = false;
         };
-        // Post with an attached video: navigate between the video (top) and the text.
-        if (post_has_video_) {
+        // Post overlay: selectable top buttons (video, comments) then the scrolling text.
+        // Focus 0..n_top-1 = buttons in order [video, comments]; n_top = text scroll.
+        bool has_comments_btn = desc_is_post_ && !desc_post_id_.empty();
+        int n_top = (post_has_video_ ? 1 : 0) + (has_comments_btn ? 1 : 0);
+        if (n_top > 0) {
+            int vid_idx = post_has_video_ ? 0 : -1;
+            int com_idx = has_comments_btn ? (post_has_video_ ? 1 : 0) : -1;
+            int text_focus = n_top;
             switch (a) {
                 case Action::Up:
-                    if (post_focus_ == 1) { if (desc_scroll_ > 0) desc_scroll_ -= step;
-                                            else post_focus_ = 0; }
+                    if (post_focus_ == text_focus) {
+                        if (desc_scroll_ > 0) desc_scroll_ -= step; else post_focus_ = n_top - 1;
+                    } else if (post_focus_ > 0) post_focus_--;
                     break;
                 case Action::Down:
-                    if (post_focus_ == 0) post_focus_ = 1; else desc_scroll_ += step;
+                    if (post_focus_ < text_focus) post_focus_++; else desc_scroll_ += step;
                     break;
                 case Action::Select:
-                    if (post_focus_ == 0) {          // play the attached video
+                    if (post_focus_ == vid_idx) {          // play the attached video
                         close_desc();
-                        request_playback();          // selected() is the post; plays its video
+                        request_playback();
+                    } else if (post_focus_ == com_idx) {   // open this post's comments
+                        yt::SearchResult tmp;
+                        tmp.kind = yt::SearchResult::Kind::Post; tmp.post_id = desc_post_id_;
+                        tmp.channel_id = desc_post_channel_;
+                        comments_paused_ = false;          // the post overlay keeps the pause
+                        open_comments(tmp);
                     }
                     break;
                 case Action::Back:
-                    // On the text: first B returns to the video; a second B closes.
-                    if (post_focus_ == 1) { post_focus_ = 0; desc_scroll_ = 0; }
+                    // From the text: first B returns to the buttons; from a button: close.
+                    if (post_focus_ == text_focus) { post_focus_ = n_top - 1; desc_scroll_ = 0; }
                     else close_desc();
                     break;
                 case Action::Menu:  close_desc(); break;
@@ -1976,18 +2364,19 @@ void App::input(Action a) {
         return;
     }
     if (mode_ == Mode::Search) {
+        const auto& kb = kb_numeric() ? KB_NUM : KB;
         switch (a) {
             case Action::Left:  if (kb_col_ > 0) kb_col_--; break;
-            case Action::Right: if (kb_col_ < (int)KB[kb_row_].size()-1) kb_col_++; break;
+            case Action::Right: if (kb_col_ < (int)kb[kb_row_].size()-1) kb_col_++; break;
             case Action::Up:    if (kb_row_ > 0) kb_row_--; break;
-            case Action::Down:  if (kb_row_ < (int)KB.size()-1) kb_row_++; break;
+            case Action::Down:  if (kb_row_ < (int)kb.size()-1) kb_row_++; break;
             case Action::Select: kb_activate(); break;
             case Action::Search: submit_search(); break;      // Y submits
             case Action::Back:   mode_ = Mode::Grid;           // cancel; code entry -> picker
                                  kb_mode_ = KbMode::Search; break;
             default: break;
         }
-        if (kb_col_ >= (int)KB[kb_row_].size()) kb_col_ = KB[kb_row_].size()-1;
+        if (kb_col_ >= (int)kb[kb_row_].size()) kb_col_ = kb[kb_row_].size()-1;
         return;
     }
     // Grid / carousel browse. Any user input here cancels a pending autoplay countdown.
@@ -2066,8 +2455,15 @@ void App::pump_async() {
     poll_cast_discovery();
     poll_cast_play();
     poll_cast_link();
+    // Periodically ask the TV for its real position; the reply lands on the event
+    // backchannel and refreshes cast_ev_pos_ for accurate seek.
+    if (casting_ && SDL_GetTicks() - cast_nowplaying_at_ > 3000) {
+        cast_command("getNowPlaying");
+        cast_nowplaying_at_ = SDL_GetTicks();
+    }
     poll_refresh();
     poll_description();
+    poll_comments();
     poll_sponsorblock();
     poll_captions();
     poll_caption_download();
@@ -2208,6 +2604,7 @@ void App::render(gfx::Renderer& rn) {
     }
     if (menu_open_) render_menu(rn);   // overlay on top of whatever view
     if (desc_open_) render_description(rn);   // description floats above everything
+    if (comments_open_) render_comments(rn);  // comments float above everything
     if (resume_prompt_open_) render_resume_prompt(rn);
     if (casting_) render_remote(rn);
     else if (cast_picker_open_ && mode_ != Mode::Search) render_cast_picker(rn);
@@ -2349,6 +2746,34 @@ void App::render_manage_devices(gfx::Renderer& rn) {
                      ? i18n::tr(i18n::Str::FooterCastPicker)   // A: select   B: cancel
                      : i18n::tr(i18n::Str::FooterManage);      // A: remove   B: back
     rn.text(*font_small_, foot, px, iy + 10*s, theme_.text_dim);
+
+    // "Remove Device?" yes/no dialog on top of the list.
+    if (cast_confirm_remove_ &&
+        cast_manage_sel_ >= 0 && cast_manage_sel_ < (int)cast_paired_.size()) {
+        rn.quad({0, 0, (float)W, (float)H}, theme_.bg.with_a(0.6f));
+        float dw = std::min(460.f*s, W*0.82f), dh = 210*s;
+        float dx = (W-dw)/2, dy = (H-dh)/2;
+        rn.quad({dx-20*s, dy-20*s, dw+40*s, dh+40*s}, theme_.panel);
+        rn.quad({dx-20*s, dy-20*s, dw+40*s, 4*s}, theme_.accent);
+        rn.text(*font_body_, i18n::tr(i18n::Str::CastRemoveConfirm), dx, dy, theme_.text);
+        std::string dname = font_body_->ellipsize(cast_paired_[cast_manage_sel_].name, dw);
+        rn.text(*font_small_, dname, dx, dy + 40*s, theme_.text_dim);
+        // No / Yes buttons.
+        float bw = (dw - 16*s)/2, bh = 52*s, by = dy + dh - bh - 34*s;
+        const i18n::Str labels[2] = { i18n::Str::No, i18n::Str::Yes };
+        for (int i = 0; i < 2; ++i) {
+            bool sel = (i == cast_confirm_sel_);
+            float bx = dx + i*(bw + 16*s);
+            rn.quad({bx, by, bw, bh}, sel ? theme_.card_sel : theme_.card);
+            if (sel) rn.quad({bx, by, bw, 3*s}, theme_.accent);
+            const char* lbl = i18n::tr(labels[i]);
+            float tw = font_body_->text_width(lbl);
+            rn.text(*font_body_, lbl, bx + (bw-tw)/2, by + (bh-font_body_->line_height())/2 + 3*s,
+                    sel ? theme_.text : theme_.text_dim);
+        }
+        rn.text(*font_small_, i18n::tr(i18n::Str::FooterConfirm),
+                dx, by + bh + 12*s, theme_.text_dim);
+    }
     rn.end();
 }
 
@@ -3074,8 +3499,16 @@ void App::input_text(const std::string& s) {
 void App::backspace() {
     if (kb_caret_ > 0) { query_input_.erase(query_input_.begin() + (kb_caret_-1)); kb_caret_--; }
 }
+void App::test_open_numeric_kb() {
+    open_search();
+    query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
+    kb_mode_ = KbMode::CastCode;
+    kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
+    kb_placeholder_.clear();
+}
 void App::kb_activate() {
-    const Key& k = KB[kb_row_][kb_col_];
+    const auto& kb = kb_numeric() ? KB_NUM : KB;
+    const Key& k = kb[kb_row_][kb_col_];
     switch (k.type) {
         case KCHAR: {
             char c = k.ch;
@@ -3179,19 +3612,22 @@ void App::render_search(gfx::Renderer& rn) {
     if ((SDL_GetTicks() / 500) % 2 == 0)
         rn.quad({caret_x + 1*s, by + 12*s, 2*s, bh - 24*s}, theme_.text);
 
-    // Keyboard grid — centered, full-width; selected key drawn white (ATV style).
-    float gap = 10*s;
-    float gridW = W * 0.94f;
-    float unit = (gridW - 9*gap) / 10.f;    // every row totals 10 units
-    float keyh = 60*s;
-    float gy = by + bh + 28*s;
-    for (int r = 0; r < (int)KB.size(); ++r) {
+    // Keyboard grid — centered; selected key drawn white (ATV style). The numeric
+    // keypad (device linking) uses square keys on a narrow, centered grid.
+    const auto& kb = kb_numeric() ? KB_NUM : KB;
+    bool numeric = kb_numeric();
+    float gap = numeric ? 14*s : 10*s;
+    float keyh = numeric ? 92*s : 60*s;
+    float unit = numeric ? keyh                    // square digit keys
+                         : (W * 0.94f - 9*gap) / 10.f;   // qwerty: every row totals 10 units
+    float gy = by + bh + (numeric ? 26*s : 28*s);
+    for (int r = 0; r < (int)kb.size(); ++r) {
         float roww = -gap;   // true laid-out width (count each span's internal gaps too)
-        for (const auto& k : KB[r]) roww += unit * k.span + gap * k.span;
+        for (const auto& k : kb[r]) roww += unit * k.span + gap * k.span;
         float x = (W - roww) / 2;
         float ky = gy + r*(keyh+gap);
-        for (int c = 0; c < (int)KB[r].size(); ++c) {
-            const Key& k = KB[r][c];
+        for (int c = 0; c < (int)kb[r].size(); ++c) {
+            const Key& k = kb[r][c];
             float kw = unit * k.span + gap * (k.span - 1);
             bool sel = (r == kb_row_ && c == kb_col_);
             gfx::Rect kr{x, ky, kw, keyh};
@@ -3219,7 +3655,7 @@ void App::render_search(gfx::Renderer& rn) {
     // Footer hints.
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, i18n::tr(i18n::Str::FooterSearch),
+    rn.text(*font_small_, i18n::tr(numeric ? i18n::Str::FooterCastCode : i18n::Str::FooterSearch),
             32*s, H - fh + 12*s, theme_.text_dim);
     rn.end();
 }

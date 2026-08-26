@@ -125,7 +125,7 @@
   "CastPairFailed": "Не вдалося пов'язати — перевірте код",
   "FooterRemote": "A: пауза/пуск    <>: перемотка    ^v: гучність    B: зупинити",
   "FooterCastPicker": "A: вибрати    B: скасувати",
-  "FooterCastCode": "введіть код    A: ввід    Y: пов'язати    B: скасувати",
+  "FooterCastCode": "A: ввід    B: скасувати",
   "CastCodeTitle": "Введіть код ТВ",
   "CastCodeHint": "введіть код",
   "KbEnter": "Ввід",
@@ -133,5 +133,18 @@
   "CastLinkDevice": "Пов'язати пристрій",
   "CastNoLinked": "Ще немає пов'язаних пристроїв",
   "CastRemoved": "Видалено",
-  "FooterManage": "A: видалити    B: назад"
+  "FooterManage": "A: видалити    B: назад",
+  "CastRemoveConfirm": "Видалити пристрій?",
+  "Yes": "Так",
+  "No": "Ні",
+  "FooterConfirm": "Вліво/Вправо: вибір    A: підтвердити    B: скасувати",
+  "MenuShowComments": "Показати коментарі",
+  "CommentsTitle": "Коментарі",
+  "CommentsLoading": "Завантаження коментарів…",
+  "CommentsEmpty": "Немає коментарів",
+  "CommentPinned": "Закріплено",
+  "FooterComments": "Вгору/Вниз: прокрутка    B: закрити",
+  "CommentReplies": "відповідей",
+  "CommentHideReplies": "Сховати відповіді",
+  "FooterCommentsSel": "Вгору/Вниз: вибір    A: відповіді    B: закрити"
 }
