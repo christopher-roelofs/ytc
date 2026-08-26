@@ -122,8 +122,11 @@ bool Player::play(const std::string& video_url, const std::string& audio_url,
     // play. Live HLS manifests (.m3u8) must NOT be wrapped: mpv handles those.
     bool is_hls = video_url.find(".m3u8") != std::string::npos ||
                   video_url.find("/manifest/hls") != std::string::npos;
-    std::string vurl = is_hls ? video_url : ytn::wrap_url(video_url, user_agent);
-    impl_->pending_audio = (audio_url.empty() || is_hls)
+    // A local file (offline download): no scheme -> hand the raw path to mpv, unwrapped
+    // (the ytc:// range-fetcher only speaks http). The .mp4 is muxed, so no audio track.
+    bool is_local = video_url.find("://") == std::string::npos;
+    std::string vurl = (is_hls || is_local) ? video_url : ytn::wrap_url(video_url, user_agent);
+    impl_->pending_audio = (audio_url.empty() || is_hls || is_local)
                            ? audio_url : ytn::wrap_url(audio_url, user_agent);
     impl_->audio_added = false;
     // Optional resume point: pass mpv a "start=<sec>" loadfile option so it begins

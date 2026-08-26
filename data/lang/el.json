@@ -148,5 +148,13 @@
   "CommentHideReplies": "Απόκρυψη απαντήσεων",
   "FooterCommentsSel": "Πάνω/Κάτω: επιλογή    A: απαντήσεις    X: ταξινόμηση    B: κλείσιμο",
   "CommentSortTop": "Κορυφαία",
-  "CommentSortNewest": "Νεότερα"
+  "CommentSortNewest": "Νεότερα",
+  "MenuDownload": "Λήψη",
+  "MenuRemoveDownload": "Αφαίρεση λήψης",
+  "Downloads": "Λήψεις",
+  "Downloading": "Γίνεται λήψη",
+  "DownloadDone": "Ολοκληρώθηκε",
+  "DownloadFailed": "Η λήψη απέτυχε",
+  "DownloadBusy": "Μια λήψη βρίσκεται σε εξέλιξη",
+  "DownloadRemoved": "Η λήψη αφαιρέθηκε"
 }

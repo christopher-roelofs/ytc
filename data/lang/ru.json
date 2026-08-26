@@ -148,5 +148,13 @@
   "CommentHideReplies": "Скрыть ответы",
   "FooterCommentsSel": "Вверх/Вниз: выбор    A: ответы    X: сортировка    B: закрыть",
   "CommentSortTop": "Топ",
-  "CommentSortNewest": "Новые"
+  "CommentSortNewest": "Новые",
+  "MenuDownload": "Скачать",
+  "MenuRemoveDownload": "Удалить загрузку",
+  "Downloads": "Загрузки",
+  "Downloading": "Загрузка…",
+  "DownloadDone": "Загружено",
+  "DownloadFailed": "Ошибка загрузки",
+  "DownloadBusy": "Загрузка уже выполняется",
+  "DownloadRemoved": "Загрузка удалена"
 }

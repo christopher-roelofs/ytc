@@ -148,5 +148,13 @@
   "CommentHideReplies": "Nascondi risposte",
   "FooterCommentsSel": "Su/Giù: seleziona    A: risposte    X: ordina    B: chiudi",
   "CommentSortTop": "Top",
-  "CommentSortNewest": "Recenti"
+  "CommentSortNewest": "Recenti",
+  "MenuDownload": "Scarica",
+  "MenuRemoveDownload": "Rimuovi download",
+  "Downloads": "Download",
+  "Downloading": "Download in corso",
+  "DownloadDone": "Scaricato",
+  "DownloadFailed": "Download non riuscito",
+  "DownloadBusy": "Un download è già in corso",
+  "DownloadRemoved": "Download rimosso"
 }

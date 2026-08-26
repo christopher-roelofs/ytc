@@ -8,6 +8,9 @@
 #include <cstring>
 #include <cstdint>
 #include <ctime>
+#include <cstdio>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -89,6 +92,16 @@ Innertube::Innertube(const std::string& config_path) {
         search_client_ = parse_fingerprint(cfg.at("search_client"));
         has_search_client_ = true;
     }
+    if (cfg.contains("download_client")) {
+        download_client_ = parse_fingerprint(cfg.at("download_client"));
+        has_download_client_ = true;
+    }
+}
+
+VideoInfo Innertube::resolve_for_download(const std::string& id) {
+    if (!has_download_client_) return resolve(id);
+    ensure_visitor_data();               // warm the session token first
+    return try_client(download_client_, id);
 }
 
 std::vector<std::string> Innertube::client_headers(const ClientFingerprint& fp) const {
@@ -1051,6 +1064,11 @@ std::vector<SearchResult> Innertube::home_posts(std::vector<std::string> channel
         for (auto& t : threads) t.join();
         for (auto& v : per) out.insert(out.end(),
             std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
+        // Interleave all channels' posts by age (newest first) instead of grouping by
+        // channel. Relative "N days ago" text is parsed to an approximate age.
+        std::stable_sort(out.begin(), out.end(), [](const SearchResult& a, const SearchResult& b) {
+            return approx_age_secs(a.published_text) < approx_age_secs(b.published_text);
+        });
         if (cursor) {
             cursor->channel_ids = channel_ids;
             cursor->cname = cname;
@@ -1099,6 +1117,10 @@ std::vector<SearchResult> Innertube::home_posts_more(HomeCursor& cursor, int per
                 if (++taken >= per_channel) break;
             }
         }
+        // Keep this page's newly fetched posts interleaved by age too.
+        std::stable_sort(out.begin(), out.end(), [](const SearchResult& a, const SearchResult& b) {
+            return approx_age_secs(a.published_text) < approx_age_secs(b.published_text);
+        });
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "[innertube] home_posts_more failed: %s\n", ex.what());
     }
@@ -2019,6 +2041,114 @@ const Format* VideoInfo::best_audio(const AudioPrefs& prefs) const {
         if (better) { best = &f; best_rank = rank; }
     }
     return best;
+}
+
+const Format* VideoInfo::best_progressive(int max_height) const {
+    const Format* best = nullptr;   // tallest at/below the cap
+    const Format* small = nullptr;  // smallest overall (fallback if all exceed the cap)
+    for (const auto& f : formats) {
+        if (!f.has_video || !f.has_audio || f.url.empty() || f.is_hls) continue;
+        if (!small || f.height < small->height) small = &f;
+        if (max_height > 0 && f.height > max_height) continue;
+        if (!best || f.height > best->height) best = &f;
+    }
+    return best ? best : small;
+}
+
+// ---- Offline downloads ----
+std::string Innertube::downloads_dir() {
+    // Top-level "downloads/" beside the port (sibling of config/), not inside config/.
+    // config_dir_ is ".../ytc/config" (or "config"); step up one to reach the port root.
+    auto slash = config_dir_.find_last_of('/');
+    std::string root = slash == std::string::npos ? "." : config_dir_.substr(0, slash);
+    std::string d = root + "/downloads";
+    ::mkdir(d.c_str(), 0755);   // no-op if it already exists
+    return d;
+}
+std::string Innertube::download_path(const std::string& id) {
+    return downloads_dir() + "/" + id + ".mp4";
+}
+std::string Innertube::download_thumb_path(const std::string& id) {
+    return downloads_dir() + "/" + id + ".jpg";
+}
+bool Innertube::is_downloaded(const std::string& id) {
+    if (id.empty()) return false;
+    std::ifstream f(download_path(id), std::ios::binary);
+    return (bool)f;
+}
+void Innertube::write_download_info(const std::string& id, const std::string& title,
+                                    const std::string& author, const std::string& channel_id,
+                                    long length_seconds, const std::string& thumb_url,
+                                    const std::string& description) {
+    json j;
+    j["id"] = id; j["title"] = title; j["author"] = author;
+    j["channel_id"] = channel_id; j["length"] = length_seconds;
+    j["thumb"] = thumb_url; j["description"] = description;
+    j["saved"] = (long long)time(nullptr);
+    std::ofstream o(downloads_dir() + "/" + id + ".info");
+    if (o) o << j.dump(2) << "\n";
+}
+std::string Innertube::download_description(const std::string& id) {
+    std::ifstream f(downloads_dir() + "/" + id + ".info");
+    if (!f) return "";
+    json j = json::parse(f, nullptr, false);
+    if (j.is_discarded()) return "";
+    return j.value("description", std::string());
+}
+bool Innertube::remove_download(const std::string& id) {
+    if (id.empty()) return false;
+    std::string dir = downloads_dir();
+    std::remove((dir + "/" + id + ".mp4").c_str());
+    std::remove((dir + "/" + id + ".info").c_str());
+    std::remove((dir + "/" + id + ".jpg").c_str());
+    return true;
+}
+std::vector<std::string> Innertube::download_ids() {
+    std::vector<std::string> ids;
+    std::string dir = downloads_dir();
+    if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.size() > 4 && n.substr(n.size() - 4) == ".mp4")
+                ids.push_back(n.substr(0, n.size() - 4));
+        }
+        closedir(d);
+    }
+    return ids;
+}
+std::vector<SearchResult> Innertube::downloads() {
+    std::string dir = downloads_dir();
+    std::vector<std::pair<long long, SearchResult>> items;   // (mtime, tile)
+    if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.size() <= 5 || n.substr(n.size() - 5) != ".info") continue;
+            std::string id = n.substr(0, n.size() - 5);
+            std::string mp4 = dir + "/" + id + ".mp4";
+            { std::ifstream mf(mp4, std::ios::binary); if (!mf) continue; }   // completed only
+            json j; { std::ifstream f(dir + "/" + n); j = json::parse(f, nullptr, false); }
+            if (j.is_discarded()) continue;
+            SearchResult sr;
+            sr.kind = SearchResult::Kind::Video;
+            sr.video_id = id;
+            sr.title = j.value("title", id);
+            sr.author = j.value("author", std::string());
+            sr.channel_id = j.value("channel_id", std::string());
+            sr.length_seconds = j.value("length", 0);
+            std::string thumb = dir + "/" + id + ".jpg";
+            { std::ifstream tf(thumb, std::ios::binary);
+              sr.thumbnail_url = tf ? thumb : ("https://i.ytimg.com/vi/" + id + "/mqdefault.jpg"); }
+            struct stat st{}; long long mt = 0;
+            if (stat((dir + "/" + n).c_str(), &st) == 0) mt = (long long)st.st_mtime;
+            items.emplace_back(mt, std::move(sr));
+        }
+        closedir(d);
+    }
+    std::sort(items.begin(), items.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });   // newest first
+    std::vector<SearchResult> out;
+    for (auto& p : items) out.push_back(std::move(p.second));
+    return out;
 }
 
 // ---------------- SponsorBlock ----------------

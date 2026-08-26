@@ -148,5 +148,13 @@
   "CommentHideReplies": "Сховати відповіді",
   "FooterCommentsSel": "Вгору/Вниз: вибір    A: відповіді    X: сортування    B: закрити",
   "CommentSortTop": "Топ",
-  "CommentSortNewest": "Нові"
+  "CommentSortNewest": "Нові",
+  "MenuDownload": "Завантажити",
+  "MenuRemoveDownload": "Видалити завантаження",
+  "Downloads": "Завантаження",
+  "Downloading": "Завантаження…",
+  "DownloadDone": "Завантажено",
+  "DownloadFailed": "Помилка завантаження",
+  "DownloadBusy": "Завантаження вже триває",
+  "DownloadRemoved": "Завантаження видалено"
 }

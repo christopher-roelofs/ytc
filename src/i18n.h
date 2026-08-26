@@ -60,6 +60,8 @@ enum class Str {
     MenuShowComments, CommentsTitle, CommentsLoading, CommentsEmpty, CommentPinned, FooterComments,
     CommentReplies, CommentHideReplies, FooterCommentsSel,
     CommentSortTop, CommentSortNewest,
+    MenuDownload, MenuRemoveDownload, Downloads,
+    Downloading, DownloadDone, DownloadFailed, DownloadBusy, DownloadRemoved,
     COUNT
 };
 

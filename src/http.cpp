@@ -118,6 +118,79 @@ std::string HttpClient::Response::header(const std::string& key) const {
     return "";
 }
 
+namespace {
+struct DlCtx { std::ofstream* f; long long chunk_bytes; };
+size_t file_write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* d = static_cast<DlCtx*>(userdata);
+    size_t n = size * nmemb;
+    d->f->write(ptr, n);
+    if (!d->f->good()) return 0;   // short write aborts the transfer
+    d->chunk_bytes += (long long)n;
+    return n;
+}
+// Parse the total size from a "Content-Range: bytes A-B/TOTAL" response header.
+struct HdrCtx { long long total; };
+size_t range_hdr_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    size_t n = size * nmemb;
+    std::string line(ptr, n);
+    auto slash = line.find('/');
+    if (slash != std::string::npos &&
+        (line.compare(0, 14, "Content-Range:") == 0 || line.compare(0, 14, "content-range:") == 0)) {
+        long long t = std::strtoll(line.c_str() + slash + 1, nullptr, 10);
+        if (t > 0) static_cast<HdrCtx*>(userdata)->total = t;
+    }
+    return n;
+}
+} // namespace
+
+bool HttpClient::download(const std::string& url, const std::string& dest_path,
+                          const std::vector<std::string>& headers,
+                          ProgressFn progress, long timeout_s) {
+    std::ofstream out(dest_path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    CURL* c = static_cast<CURL*>(curl_);
+    struct curl_slist* base_hdrs = nullptr;
+    for (const auto& h : headers) base_hdrs = curl_slist_append(base_hdrs, h.c_str());
+    // googlevideo throttles/closes open-ended GETs (audio streams truncate). Pull the
+    // file in bounded range chunks, the same way the player's stream layer does.
+    const long long kChunk = 4 * 1024 * 1024;
+    long long off = 0, total = -1;
+    bool ok = true;
+    while (ok) {
+        curl_easy_reset(c);
+        DlCtx dc{&out, 0};
+        HdrCtx hc{-1};
+        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, file_write_cb);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &dc);
+        curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, range_hdr_cb);
+        curl_easy_setopt(c, CURLOPT_HEADERDATA, &hc);
+        curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
+        curl_easy_setopt(c, CURLOPT_TIMEOUT, timeout_s);
+        curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
+        if (const char* ca = http_ca_bundle()) curl_easy_setopt(c, CURLOPT_CAINFO, ca);
+        if (base_hdrs) curl_easy_setopt(c, CURLOPT_HTTPHEADER, base_hdrs);
+        char range[64];
+        std::snprintf(range, sizeof range, "%lld-%lld", off, off + kChunk - 1);
+        curl_easy_setopt(c, CURLOPT_RANGE, range);
+        CURLcode rc = curl_easy_perform(c);
+        long status = 0; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
+        if (rc != CURLE_OK || status < 200 || status >= 300) { ok = false; break; }
+        if (total < 0) total = hc.total;                 // learned from Content-Range
+        off += dc.chunk_bytes;
+        if (progress && !progress(off, total < 0 ? 0 : total)) { ok = false; break; }  // cancelled
+        if (status == 200) break;                        // server ignored Range -> whole file sent
+        if (dc.chunk_bytes < kChunk) break;              // last (short) chunk
+        if (total >= 0 && off >= total) break;           // done
+    }
+    if (base_hdrs) curl_slist_free_all(base_hdrs);
+    out.close();
+    if (!ok) return false;
+    return total < 0 ? (off > 0) : (off >= total);       // complete only if we got it all
+}
+
 HttpClient::Response HttpClient::get(const std::string& url,
                                      const std::vector<std::string>& headers, long timeout_s) {
     return perform(url, nullptr, headers, timeout_s);

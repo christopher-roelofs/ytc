@@ -48,6 +48,8 @@ const char* kKeys[(int)Str::COUNT] = {
     "MenuShowComments","CommentsTitle","CommentsLoading","CommentsEmpty","CommentPinned","FooterComments",
     "CommentReplies","CommentHideReplies","FooterCommentsSel",
     "CommentSortTop","CommentSortNewest",
+    "MenuDownload","MenuRemoveDownload","Downloads",
+    "Downloading","DownloadDone","DownloadFailed","DownloadBusy","DownloadRemoved",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -108,6 +110,8 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Up/Down: scroll    B: close",
     "replies","Hide replies","Up/Down: select    A: replies    X: sort    B: close",
     "Top","Newest",
+    "Download","Remove Download","Downloads",
+    "Downloading","Downloaded","Download failed","A download is in progress","Download removed",
 };
 
 struct Lang {

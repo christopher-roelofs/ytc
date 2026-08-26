@@ -4,12 +4,16 @@
 //
 // Headless mode uses the SDL "offscreen" driver so the exact GLES2 UI path is
 // exercised with no display, letting us verify the UI visually via screenshots.
+#include "remux.h"
 #include "ui.h"
 #include "i18n.h"
+#include "innertube.h"
+#include "http.h"
 #include <SDL.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <fstream>
 #include <unistd.h>   // readlink (exe_dir)
 
 static const char* config_path() {
@@ -55,6 +59,12 @@ static ui::App::Action map_button(Uint8 b) {
 }
 
 int main(int argc, char** argv) {
+    if (const char* spec = std::getenv("YTC_REMUXTEST")) {   // "video:audio:out" (no SDL)
+        std::string s = spec; auto c1 = s.find(':'), c2 = s.rfind(':');
+        bool r = ytn::remux_to_mp4(s.substr(0, c1), s.substr(c1 + 1, c2 - c1 - 1), s.substr(c2 + 1));
+        std::fprintf(stderr, "REMUXTEST result=%d\n", (int)r);
+        return r ? 0 : 1;
+    }
     std::string query = argc > 1 ? argv[1] : "";   // no query => Latest/empty state
     const char* shot = std::getenv("YTC_SHOT");
     bool headless = shot != nullptr;
@@ -438,6 +448,20 @@ int main(int argc, char** argv) {
             settle(6000);
             app.render(rn); win->screenshot(std::string(shot) + "_B_loaded.png");
             std::fprintf(stderr, "COMMENTSLEAK done\n");
+            return 0;
+        }
+        if (const char* vid = std::getenv("YTC_DLTEST")) {  // download -> Downloads grid
+            auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+                win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+            settle(1200);
+            app.test_download(vid, "Download Test Video");
+            int waited = 0;
+            while (app.test_download_busy() && waited < 300000) { app.pump_async(); SDL_Delay(200); waited += 200; }
+            settle(500);
+            app.test_load_downloads();
+            settle(2500);
+            app.render(rn); win->screenshot(std::string(shot) + "_downloads.png");
+            std::fprintf(stderr, "DLTEST done\n");
             return 0;
         }
         if (const char* vid = std::getenv("YTC_COMMENTSSHOT")) {  // comments overlay

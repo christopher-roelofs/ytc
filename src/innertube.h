@@ -144,6 +144,10 @@ struct VideoInfo {
     const Format* best_video(const VideoPrefs& prefs = {}) const;
     // Best audio-only format under the given policy.
     const Format* best_audio(const AudioPrefs& prefs = {}) const;
+    // Best progressive format (audio+video in one URL — itag 18/22), for a single-file
+    // download. Prefers the tallest at or below max_height (0 = uncapped); falls back to
+    // the smallest if all exceed it. nullptr if none are directly downloadable.
+    const Format* best_progressive(int max_height = 0) const;
 };
 
 // Full metadata for one channel (from its /browse page).
@@ -308,6 +312,28 @@ public:
     // track into that language server-side; "" fetches the track's own language.
     std::string caption_vtt(const std::string& base_url, const std::string& tlang = "");
 
+    // ---- Offline downloads (progressive .mp4 + <id>.info sidecar + <id>.jpg thumb) ----
+    // All files live under downloads_dir() (created on demand). A download is "present"
+    // once its .mp4 exists.
+    std::string downloads_dir();                       // config_dir/downloads (mkdir'd)
+    std::string download_path(const std::string& id);  // .../downloads/<id>.mp4
+    std::string download_thumb_path(const std::string& id);
+    bool is_downloaded(const std::string& id);         // the .mp4 exists
+    // Write the <id>.info sidecar (title/author/channel/length/thumb/description + date).
+    void write_download_info(const std::string& id, const std::string& title,
+                             const std::string& author, const std::string& channel_id,
+                             long length_seconds, const std::string& thumb_url,
+                             const std::string& description);
+    // The saved description for a downloaded video ("" if none). Thread-safe.
+    std::string download_description(const std::string& id);
+    bool remove_download(const std::string& id);       // delete mp4 + info + jpg
+    // Resolve specifically for downloading: uses the ANDROID_VR client, whose stream
+    // URLs allow a plain (non-ranged) GET and include a progressive fallback. Falls back
+    // to the normal resolve if no download client is configured. Thread-safe.
+    VideoInfo resolve_for_download(const std::string& id);
+    std::vector<std::string> download_ids();           // ids of present downloads
+    std::vector<SearchResult> downloads();             // ready-to-show tiles, newest first
+
     // Related / up-next videos for a video (one /next call). Thread-safe; video rows
     // only (channels/playlists filtered out). Empty on failure. For autoplay.
     std::vector<SearchResult> related_videos(const std::string& video_id);
@@ -354,6 +380,8 @@ private:
     std::vector<ClientFingerprint> clients_;
     ClientFingerprint search_client_;
     bool has_search_client_ = false;
+    ClientFingerprint download_client_;   // ANDROID_VR: progressive + plain-GET adaptive
+    bool has_download_client_ = false;
     // visitorData is fetched once then reused by many worker threads. All access goes
     // through the mutex (fetch is serialized; reads take a copy) — no torn reads, and
     // no shared CURL handle (every network call uses a local HttpClient).

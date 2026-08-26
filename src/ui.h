@@ -110,6 +110,7 @@ public:
     void load_home();            // "Home": RSS feed from favorite channels (empty by default)
     void load_favorites();       // favorite channels as tiles (local channels.json)
     void load_watch_later();     // watch-later videos as tiles (local watch_later.json)
+    void load_downloads();       // offline downloads as tiles (downloads/*.info)
     void load_history();         // previously-watched videos as tiles (local history.json)
     void open_main_menu();       // top-level menu (Start button): views + navigation
 
@@ -207,6 +208,12 @@ public:
         yt::Cast::Device d; d.name = name; cast_paired_ = { d };
     }
     void test_open_numeric_kb();   // testing only: open the TV-code numeric keypad
+    void test_download(const std::string& id, const std::string& title) {   // testing only
+        yt::SearchResult t; t.kind = yt::SearchResult::Kind::Video; t.video_id = id;
+        t.title = title; t.author = "Test"; start_download(t);
+    }
+    bool test_download_busy() const { return dl_running_.load(); }
+    void test_load_downloads() { load_downloads(); }
     void test_open_comments(const std::string& id) {   // testing only
         yt::SearchResult t;
         if (id.rfind("Ugk", 0) == 0) { t.kind = yt::SearchResult::Kind::Post; t.post_id = id;
@@ -220,6 +227,9 @@ private:
     void render_manage_devices(gfx::Renderer& rn);
     void refresh_favorites();           // reload the favorite-id cache from channels.json
     void refresh_watch_later();         // reload the watch-later id cache
+    void refresh_downloads();           // reload the downloaded-id cache
+    void start_download(const yt::SearchResult& t);   // begin an async download
+    void poll_download();               // apply a finished download on the GL thread
     void filter_hidden(std::vector<yt::SearchResult>& items);  // drop restricted/Shorts per settings
     void queue_restricted_checks();     // background-check unknown channels in results_
     void refresh_current_view(bool is_retry = false);  // ASYNC re-fetch of the current list
@@ -246,7 +256,7 @@ private:
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
-                            GoLinkedDevices, Quit };
+                            GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads, Quit };
     enum class MenuKind { Context, Main, Settings };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -588,6 +598,13 @@ private:
     std::vector<MenuItem> menu_items_;
     yt::SearchResult menu_target_;        // the item the menu acts on
     std::unordered_set<std::string> wl_ids_;   // cached watch-later video ids
+    std::unordered_set<std::string> dl_ids_;   // cached downloaded video ids
+
+    // Offline download (one at a time), run on a worker thread.
+    std::thread dl_thread_;
+    std::atomic<bool> dl_running_{false}, dl_done_{false}, dl_ok_{false}, dl_cancel_{false};
+    std::atomic<int> dl_progress_{0};          // 0..100
+    std::string dl_id_, dl_title_;             // the download in flight
     RestrictedCheck rcheck_{&it_};             // per-channel restricted-delivery verdicts
     bool hide_restricted_ = false;             // setting: filter restricted channels from lists
     bool hide_shorts_ = false;                 // setting: filter Shorts from lists

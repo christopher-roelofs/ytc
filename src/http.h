@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <functional>
 
 // First existing CA-bundle path across common CFW locations (or a CURL_CA_BUNDLE /
 // SSL_CERT_FILE env override), cached. nullptr if none found. Used to pin
@@ -34,6 +35,14 @@ public:
     Response post(const std::string& url,
                   const std::string& body,
                   const std::vector<std::string>& headers = {}, long timeout_s = 60);
+
+    // Stream a URL straight to dest_path (for large media). progress(downloaded, total)
+    // is called periodically; return false from it to abort. total may be 0 if the
+    // server sends no length. Returns true only on a fully successful 2xx download.
+    using ProgressFn = std::function<bool(long long downloaded, long long total)>;
+    bool download(const std::string& url, const std::string& dest_path,
+                  const std::vector<std::string>& headers = {},
+                  ProgressFn progress = {}, long timeout_s = 0);
 
 private:
     void* curl_ = nullptr; // CURL*

@@ -148,5 +148,13 @@
   "CommentHideReplies": "Hide replies",
   "FooterCommentsSel": "Up/Down: select    A: replies    X: sort    B: close",
   "CommentSortTop": "Top",
-  "CommentSortNewest": "Newest"
+  "CommentSortNewest": "Newest",
+  "MenuDownload": "Download",
+  "MenuRemoveDownload": "Remove Download",
+  "Downloads": "Downloads",
+  "Downloading": "Downloading",
+  "DownloadDone": "Downloaded",
+  "DownloadFailed": "Download failed",
+  "DownloadBusy": "A download is in progress",
+  "DownloadRemoved": "Download removed"
 }

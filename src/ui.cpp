@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "i18n.h"
+#include "remux.h"
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
@@ -109,11 +110,18 @@ void ThumbCache::worker() {
         { std::lock_guard<std::mutex> lk(m_);
           if (!queue_.empty()) { url = queue_.front(); queue_.pop_front(); } }
         if (url.empty()) { SDL_Delay(10); continue; }
-        auto r = http.get(url);
-        if (getenv("YTC_DEBUG"))
-            std::fprintf(stderr, "[thumb] GET %.50s -> %ld %zub\n", url.c_str(), r.status, r.body.size());
-        Pending p{url, {}, r.ok()};
-        if (r.ok()) p.bytes.assign(r.body.begin(), r.body.end());
+        Pending p{url, {}, false};
+        if (url.find("://") == std::string::npos) {   // local file (offline download thumb)
+            std::ifstream f(url, std::ios::binary);
+            if (f) { p.bytes.assign(std::istreambuf_iterator<char>(f),
+                                    std::istreambuf_iterator<char>()); p.ok = !p.bytes.empty(); }
+        } else {
+            auto r = http.get(url);
+            if (getenv("YTC_DEBUG"))
+                std::fprintf(stderr, "[thumb] GET %.50s -> %ld %zub\n", url.c_str(), r.status, r.body.size());
+            p.ok = r.ok();
+            if (r.ok()) p.bytes.assign(r.body.begin(), r.body.end());
+        }
         std::lock_guard<std::mutex> lk(m_);
         done_.push_back(std::move(p));
     }
@@ -301,6 +309,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     if (const char* vm = getenv("YTC_VIEW")) view_mode_ = (ViewMode)atoi(vm);
     refresh_favorites();
     refresh_watch_later();
+    refresh_downloads();
     hide_restricted_ = it_.setting_int("hide_restricted", 0) != 0;
     hide_shorts_ = it_.setting_int("hide_shorts", 0) != 0;
     ask_resume_ = it_.setting_int("ask_resume", 1) != 0;   // default ON
@@ -339,6 +348,8 @@ App::~App() {
     if (desc_thread_.joinable()) desc_thread_.join();
     if (comments_thread_.joinable()) comments_thread_.join();
     if (comments_reply_thread_.joinable()) comments_reply_thread_.join();
+    dl_cancel_ = true;
+    if (dl_thread_.joinable()) dl_thread_.join();
     if (sb_thread_.joinable()) sb_thread_.join();
     if (cc_thread_.joinable()) cc_thread_.join();
     if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
@@ -414,6 +425,13 @@ void App::load_watch_later() {
     set_results(it_.watch_later());
 }
 
+void App::load_downloads() {
+    query_.clear(); view_label_ = "Downloads";
+    in_channel_view_ = false; cont_token_.clear();
+    subview_playlist_.clear(); tab_focus_ = false; view_stack_.clear();
+    set_results(it_.downloads());   // tiles built from downloads/*.info (local thumbs)
+}
+
 void App::load_history() {
     query_.clear(); view_label_ = "History";
     in_channel_view_ = false; cont_token_.clear();
@@ -434,6 +452,133 @@ void App::refresh_favorites() {
 void App::refresh_watch_later() {
     wl_ids_.clear();
     for (auto& id : it_.watch_later_ids()) wl_ids_.insert(id);
+}
+void App::refresh_downloads() {
+    dl_ids_.clear();
+    for (auto& id : it_.download_ids()) dl_ids_.insert(id);
+}
+
+// Download the highlighted/playing video as a progressive .mp4 (offline), matching the
+// current playback quality where a progressive stream allows.
+void App::start_download(const yt::SearchResult& t) {
+    if (t.video_id.empty()) return;
+    if (dl_running_) {
+        status_msg_ = i18n::tr(i18n::Str::DownloadBusy);
+        status_until_ = SDL_GetTicks() + 2500; return;
+    }
+    if (it_.is_downloaded(t.video_id)) {
+        status_msg_ = i18n::tr(i18n::Str::DownloadDone);
+        status_until_ = SDL_GetTicks() + 2500; return;
+    }
+    dl_running_ = true; dl_done_ = false; dl_ok_ = false; dl_cancel_ = false;
+    dl_progress_ = 0; dl_id_ = t.video_id; dl_title_ = t.title;
+    int max_h = play_prefs_.max_height;   // match the quality that would have played
+    yt::SearchResult item = t;
+    if (dl_thread_.joinable()) dl_thread_.join();
+    dl_thread_ = std::thread([this, item, max_h]() {
+        bool ok = false;
+        try {
+            // Use the same resolve that plays the video — it works for every video we
+            // show, and its adaptive streams download via the chunked (ranged) fetch.
+            yt::VideoInfo info = it_.resolve(item.video_id);
+            if (getenv("YTC_DEBUG")) {
+                const yt::Format* dv = nullptr; { yt::VideoPrefs vp; vp.max_height=max_h; dv=info.best_video(vp); }
+                const yt::Format* da = info.best_audio();
+                std::fprintf(stderr, "[dl] status=%s formats=%zu vf=%s(%d) af=%s remux=%d\n",
+                    info.status.c_str(), info.formats.size(),
+                    dv?(dv->url.empty()?"nourl":"ok"):"null", dv?dv->height:0,
+                    da?(da->url.empty()?"nourl":"ok"):"null", (int)ytn::remux_available());
+            }
+            if (info.ok()) {
+                const std::string id = item.video_id;
+                std::string mp4 = it_.download_path(id);
+                std::string finalpart = mp4 + ".part";
+                HttpClient http;
+                auto ua_hdrs = [](const std::string& ua) {
+                    std::vector<std::string> h;
+                    if (!ua.empty()) h.push_back("User-Agent: " + ua);
+                    return h;
+                };
+                auto prog = [this](int base, int span) {
+                    return [this, base, span](long long dn, long long tot) {
+                        if (tot > 0) dl_progress_ = base + (int)(dn * span / tot);
+                        return !dl_cancel_.load();
+                    };
+                };
+                // Fetch to dest, verifying the byte count matches content_length; retry a
+                // couple times so a dropped connection doesn't silently downgrade quality.
+                auto fetch = [&](const std::string& url, const std::string& dest,
+                                 long long expect, int base, int span,
+                                 const std::vector<std::string>& hdrs) -> bool {
+                    for (int attempt = 0; attempt < 3 && !dl_cancel_; ++attempt) {
+                        if (!http.download(url, dest, hdrs, prog(base, span))) continue;
+                        if (expect <= 0) return true;
+                        std::ifstream f(dest, std::ios::binary | std::ios::ate);
+                        if (f && (long long)f.tellg() == expect) return true;
+                    }
+                    return false;
+                };
+                // Mux adaptive video (up to the cap) + audio into one .mp4, matching the
+                // quality that would have played.
+                yt::VideoPrefs vp; vp.max_height = max_h;
+                const yt::Format* vf = info.best_video(vp);
+                const yt::Format* af = info.best_audio();
+                if (ytn::remux_available() && vf && af && !vf->url.empty() && !af->url.empty()) {
+                    auto h = ua_hdrs(info.user_agent);
+                    std::string vtmp = mp4 + ".v", atmp = mp4 + ".a";
+                    bool dv = fetch(vf->url, vtmp, (long long)vf->content_length, 0, 65, h);
+                    bool da = dv && !dl_cancel_ && fetch(af->url, atmp, (long long)af->content_length, 65, 30, h);
+                    if (dv && da) { dl_progress_ = 96; ok = ytn::remux_to_mp4(vtmp, atmp, finalpart); }
+                    if (!getenv("YTC_DEBUG")) { std::remove(vtmp.c_str()); std::remove(atmp.c_str()); }
+                }
+                if (!ok && !dl_cancel_) {   // no muxer (dev build): 360p single-file
+                    // The playback resolve has no progressive stream; only ANDROID_VR
+                    // serves the combined itag 18, so resolve once more just for it.
+                    yt::VideoInfo pinfo = it_.resolve_for_download(item.video_id);
+                    const yt::Format* pf = pinfo.ok() ? pinfo.best_progressive(max_h) : nullptr;
+                    if (pf && !pf->url.empty())
+                        ok = fetch(pf->url, finalpart, (long long)pf->content_length, 0, 98,
+                                   ua_hdrs(pinfo.user_agent));
+                }
+                if (ok) {
+                    dl_progress_ = 100;
+                    std::rename(finalpart.c_str(), mp4.c_str());
+                    std::string th = !item.thumbnail_url.empty() ? item.thumbnail_url
+                                   : ("https://i.ytimg.com/vi/" + id + "/mqdefault.jpg");
+                    auto tr = http.get(th);
+                    if (tr.ok() && !tr.body.empty()) {
+                        std::ofstream tf(it_.download_thumb_path(id), std::ios::binary);
+                        tf.write(tr.body.data(), tr.body.size());
+                    }
+                    it_.write_download_info(id, item.title, item.author,
+                                            item.channel_id, info.length_seconds, th,
+                                            info.description);
+                } else { std::remove(finalpart.c_str()); }
+            }
+        } catch (...) {}
+        if (getenv("YTC_DEBUG")) std::fprintf(stderr, "[dl] finished ok=%d cancel=%d\n",
+                                              (int)ok, (int)dl_cancel_.load());
+        dl_ok_ = ok; dl_running_ = false; dl_done_ = true;
+    });
+    status_msg_ = std::string(i18n::tr(i18n::Str::Downloading)) + ": "
+                + font_body_->ellipsize(dl_title_, win_->width() * 0.5f);
+    status_until_ = SDL_GetTicks() + 60000;
+}
+
+void App::poll_download() {
+    // Live progress line while downloading.
+    if (dl_running_) {
+        status_msg_ = std::string(i18n::tr(i18n::Str::Downloading)) + " "
+                    + std::to_string(dl_progress_.load()) + "%: " + dl_title_;
+        status_until_ = SDL_GetTicks() + 2000;
+    }
+    if (!dl_done_.exchange(false)) return;
+    if (dl_thread_.joinable()) dl_thread_.join();
+    refresh_downloads();
+    status_msg_ = std::string(i18n::tr(dl_ok_ ? i18n::Str::DownloadDone
+                                              : i18n::Str::DownloadFailed)) + ": " + dl_title_;
+    status_until_ = SDL_GetTicks() + 3000;
+    if (dl_ok_ && view_label_ == "Downloads") load_downloads();   // show the new tile
 }
 // Drop items per the hide settings: restricted channels (checked or learned) and/or
 // Shorts. FAVORITE channels are never hidden by the restricted rule — favoriting is
@@ -478,6 +623,7 @@ void App::refresh_current_view(bool is_retry) {
     if (!in_channel_view_) {
         if (view_label_ == "Favorite Channels") { load_favorites(); return; }
         if (view_label_ == "Watch Later")       { load_watch_later(); return; }
+        if (view_label_ == "Downloads")         { load_downloads(); return; }
         if (view_label_ == "History")           { load_history(); return; }
     }
     if (refresh_running_) return;              // one refresh at a time
@@ -605,6 +751,7 @@ void App::open_main_menu() {
     menu_items_.push_back({tr(S::Home),             MenuAction::GoHome});
     menu_items_.push_back({tr(S::FavoriteChannels), MenuAction::GoFavorites});
     menu_items_.push_back({tr(S::WatchLater),       MenuAction::GoWatchLater});
+    menu_items_.push_back({tr(S::Downloads),        MenuAction::GoDownloads});
     menu_items_.push_back({tr(S::History),          MenuAction::GoHistory});
     menu_items_.push_back({tr(S::Settings),         MenuAction::GoSettings});
     menu_items_.push_back({tr(S::Exit),             MenuAction::Quit});
@@ -848,6 +995,13 @@ void App::open_description(const yt::SearchResult& v) {
     if (mode_ == Mode::Playing && !v.is_playlist() &&
         v.video_id == now_playing_item_.video_id) {
         desc_text_ = now_playing_desc_.empty() ? "(no description)" : now_playing_desc_;
+        desc_loading_ = false;
+        return;
+    }
+    // Downloaded video: read the description saved in its .info (offline, instant).
+    if (!v.is_playlist() && !v.video_id.empty() && it_.is_downloaded(v.video_id)) {
+        std::string d = it_.download_description(v.video_id);
+        desc_text_ = d.empty() ? "(no description)" : d;
         desc_loading_ = false;
         return;
     }
@@ -1481,6 +1635,15 @@ void App::open_menu() {
         menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
                                MenuAction::FavoriteToggle});
         menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowChannelDescription});
+    } else if (!t.video_id.empty() && dl_ids_.count(t.video_id)) {
+        // Downloaded (offline) video: only options that work without the network —
+        // no comments, channel info, casting, quality, or captions.
+        menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
+        if (mode_ == Mode::Playing) {   // playback speed is a local mpv setting
+            char sb[24]; std::snprintf(sb, sizeof sb, ":  %gx", playback_speed_);
+            menu_items_.push_back({tr(S::MenuSpeed) + std::string(sb), MenuAction::CycleSpeed});
+        }
+        menu_items_.push_back({tr(S::MenuRemoveDownload), MenuAction::RemoveDownload});
     } else {
         if (!t.channel_id.empty()) {
             bool fav = fav_ids_.count(t.channel_id) > 0;
@@ -1496,6 +1659,11 @@ void App::open_menu() {
             menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         if (!t.video_id.empty())
             menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
+        if (!t.video_id.empty())
+            menu_items_.push_back({tr(dl_ids_.count(t.video_id) ? S::MenuRemoveDownload
+                                                                : S::MenuDownload),
+                                   dl_ids_.count(t.video_id) ? MenuAction::RemoveDownload
+                                                             : MenuAction::DownloadVideo});
         // Channel description on every video tile with a known uploader.
         if (!t.channel_id.empty())
             menu_items_.push_back({tr(S::ShowChannelDescription),
@@ -1560,6 +1728,17 @@ void App::menu_activate() {
                                        t.thumbnail_url, t.author, t.view_count_text);
                 status_msg_ = i18n::tr(i18n::Str::AddedWatchLater); }
             status_until_ = SDL_GetTicks() + 4000; refresh_watch_later();
+            break;
+        }
+        case MenuAction::DownloadVideo:
+            menu_open_ = false; menu_paused_ = false;
+            start_download(t);
+            return;
+        case MenuAction::RemoveDownload: {
+            it_.remove_download(t.video_id); refresh_downloads();
+            status_msg_ = i18n::tr(i18n::Str::DownloadRemoved);
+            status_until_ = SDL_GetTicks() + 2500;
+            if (view_label_ == "Downloads") load_downloads();
             break;
         }
         case MenuAction::ShowDescription: {
@@ -1629,6 +1808,7 @@ void App::menu_activate() {
         case MenuAction::GoHome:
         case MenuAction::GoFavorites:
         case MenuAction::GoWatchLater:
+        case MenuAction::GoDownloads:
         case MenuAction::GoHistory: {
             MenuAction act = menu_items_[menu_sel_].action;
             menu_open_ = false;
@@ -1639,6 +1819,7 @@ void App::menu_activate() {
             if      (act == MenuAction::GoHome)       load_home();
             else if (act == MenuAction::GoFavorites)  load_favorites();
             else if (act == MenuAction::GoWatchLater) load_watch_later();
+            else if (act == MenuAction::GoDownloads)  load_downloads();
             else                                      load_history();
             return;
         }
@@ -2516,6 +2697,7 @@ void App::pump_async() {
     poll_refresh();
     poll_description();
     poll_comments();
+    poll_download();
     poll_sponsorblock();
     poll_captions();
     poll_caption_download();
@@ -3885,6 +4067,15 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
         bool dbg = getenv("YTC_DEBUG");
         ResolveResult r;
         r.title = fallback_title;
+        // Offline download: skip the network resolve and play the local file directly.
+        if (it_.is_downloaded(video_id)) {
+            r.ok = true; r.video_url = it_.download_path(video_id);
+            r.audio_url.clear(); r.user_agent.clear();
+            r.description = it_.download_description(video_id);   // from the .info sidecar
+            { std::lock_guard<std::mutex> lk(resolve_m_); resolve_result_ = std::move(r); }
+            resolve_running_ = false; resolve_done_ = true;
+            return;
+        }
         try {
         if (dbg) std::fprintf(stderr, "[play] resolving %s (cap=%d)...\n",
                               video_id.c_str(), prefs.max_height);

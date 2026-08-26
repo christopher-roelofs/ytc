@@ -148,5 +148,13 @@
   "CommentHideReplies": "Masquer les réponses",
   "FooterCommentsSel": "Haut/Bas : sélectionner    A : réponses    X : trier    B : fermer",
   "CommentSortTop": "Top",
-  "CommentSortNewest": "Récentes"
+  "CommentSortNewest": "Récentes",
+  "MenuDownload": "Télécharger",
+  "MenuRemoveDownload": "Supprimer le téléchargement",
+  "Downloads": "Téléchargements",
+  "Downloading": "Téléchargement…",
+  "DownloadDone": "Téléchargé",
+  "DownloadFailed": "Échec du téléchargement",
+  "DownloadBusy": "Un téléchargement est en cours",
+  "DownloadRemoved": "Téléchargement supprimé"
 }

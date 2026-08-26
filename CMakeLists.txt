@@ -40,9 +40,25 @@ if(BUILD_UI)
   pkg_check_modules(SDL2 sdl2)
   pkg_check_modules(GLES glesv2)
   if(SDL2_FOUND AND GLES_FOUND)
-    add_library(ytgfx STATIC src/gfx.cpp src/ui.cpp src/player.cpp src/stream.cpp src/i18n.cpp)
+    add_library(ytgfx STATIC src/gfx.cpp src/ui.cpp src/player.cpp src/stream.cpp src/remux.cpp src/i18n.cpp)
     target_include_directories(ytgfx PUBLIC ${SDL2_INCLUDE_DIRS} ${GLES_INCLUDE_DIRS})
     target_link_libraries(ytgfx PUBLIC ytcore ${SDL2_LIBRARIES} ${GLES_LIBRARIES} Threads::Threads)
+
+    # Offline-download muxing: remux adaptive video+audio into one .mp4 via libavformat
+    # (stream copy, no re-encode). Optional — without it, downloads fall back to the
+    # 360p progressive single stream. Uses the SAME ffmpeg the bundle ships (v60), so on
+    # the Pi point PKG_CONFIG_PATH at ~/mpvbuild/prefix-clean/lib/pkgconfig when building
+    # the port; locally the system ffmpeg (also v60) is used.
+    pkg_check_modules(AVFORMAT libavformat libavcodec libavutil)
+    if(AVFORMAT_FOUND)
+      target_compile_definitions(ytgfx PUBLIC YTC_HAVE_AVFORMAT)
+      target_include_directories(ytgfx PUBLIC ${AVFORMAT_INCLUDE_DIRS})
+      target_link_libraries(ytgfx PUBLIC ${AVFORMAT_LIBRARIES})
+      target_link_directories(ytgfx PUBLIC ${AVFORMAT_LIBRARY_DIRS})
+      message(STATUS "libavformat found: downloads can mux HD (video+audio)")
+    else()
+      message(STATUS "libavformat NOT found: downloads limited to 360p progressive")
+    endif()
 
     # Playback is a compile-time capability: real when libmpv is present,
     # otherwise a no-op stub so the UI still builds/iterates without mpv.
