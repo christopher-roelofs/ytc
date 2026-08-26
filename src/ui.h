@@ -252,7 +252,7 @@ private:
                             ShowComments, PlayPostVideo,
                             GoHome, GoFavorites, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
-                            ToggleHideRestricted, ToggleHideShorts, ToggleAskResume,
+                            ToggleHideRestricted, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
@@ -485,7 +485,7 @@ private:
     bool in_channel_view_ = false;
     std::string subview_playlist_;      // non-empty => the subview is a PLAYLIST
     // Tab strips (All / Videos / Shorts / Playlists) — channel views AND Home.
-    int  chan_tab_ = 0;                 // channel view: 0=All 1=Videos 2=Shorts 3=Playlists
+    int  chan_tab_ = 0;                 // channel view: 0=All 1=Videos 2=Shorts 3=Posts 4=Playlists
     int  home_tab_ = 0;                 // Home: same indices
     bool tab_focus_ = false;            // d-pad focus is on the tab strip
     void load_channel_tab(int tab);     // ASYNC fetch + show the given channel tab (0..4)
@@ -607,7 +607,6 @@ private:
     std::string dl_id_, dl_title_;             // the download in flight
     RestrictedCheck rcheck_{&it_};             // per-channel restricted-delivery verdicts
     bool hide_restricted_ = false;             // setting: filter restricted channels from lists
-    bool hide_shorts_ = false;                 // setting: filter Shorts from lists
     bool ask_resume_ = true;                   // setting: prompt to resume partially-watched videos
 
     // Resume prompt (shown before playback when a saved position exists).

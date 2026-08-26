@@ -16,7 +16,7 @@ namespace {
 const char* kKeys[(int)Str::COUNT] = {
     "Home","Search","FavoriteChannels","WatchLater","History","Settings","Exit",
     "TabAll","TabVideos","TabShorts","TabPlaylists","TabPosts",
-    "SetMaxQuality","SetVolume","SetVideoDecode","SetHidePaced","SetHideShorts",
+    "SetMaxQuality","SetVolume","SetVideoDecode","SetHidePaced",
     "SetAskResume","SetHomeFeed","SetAutoplay","SetSponsorBlock","SetView","SetLanguage",
     "On","Off","Hardware","Software","Favorites","FavoritesPlusHistory",
     "ViewGrid","ViewCarousel","View3DCarousel","ViewCoverflow","AutoHighest",
@@ -58,7 +58,7 @@ const char* kKeys[(int)Str::COUNT] = {
 const char* kEnglish[(int)Str::COUNT] = {
     "Home","Search","Favorite Channels","Watch Later","History","Settings","Exit",
     "All","Videos","Shorts","Playlists","Posts",
-    "Max Quality","Volume","Video Decode","Hide Paced Videos","Hide Shorts",
+    "Max Quality","Volume","Video Decode","Hide Paced Videos",
     "Ask to Resume","Home Feed","Autoplay","SponsorBlock","View","Language",
     "On","Off","Hardware","Software","Favorites","Favorites + History",
     "Grid","Carousel","3D Carousel","Coverflow","Auto (highest)",

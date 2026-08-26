@@ -311,7 +311,6 @@ App::App(const std::string& config_path, gfx::Window* win)
     refresh_watch_later();
     refresh_downloads();
     hide_restricted_ = it_.setting_int("hide_restricted", 0) != 0;
-    hide_shorts_ = it_.setting_int("hide_shorts", 0) != 0;
     ask_resume_ = it_.setting_int("ask_resume", 1) != 0;   // default ON
     volume_ = it_.setting_int("volume", 100);              // app-local playback volume %
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
@@ -437,9 +436,9 @@ void App::load_history() {
     in_channel_view_ = false; cont_token_.clear();
     subview_playlist_.clear(); tab_focus_ = false; view_stack_.clear();
     std::vector<yt::SearchResult> items;
-    for (auto& [id, title] : it_.history()) {
+    for (auto& [id, title, channel] : it_.history()) {
         yt::SearchResult r;
-        r.video_id = id; r.title = title;
+        r.video_id = id; r.title = title; r.author = channel;
         r.thumbnail_url = thumb_for(id);
         items.push_back(std::move(r));
     }
@@ -585,12 +584,10 @@ void App::poll_download() {
 // explicit user intent (their videos still play, with limited seeking) — but the
 // Shorts rule applies everywhere.
 void App::filter_hidden(std::vector<yt::SearchResult>& items) {
-    if (!hide_restricted_ && !hide_shorts_) return;
+    if (!hide_restricted_) return;
     items.erase(std::remove_if(items.begin(), items.end(),
         [&](const yt::SearchResult& r) {
-            if (hide_shorts_ && r.is_short) return true;
-            return hide_restricted_ && !r.channel_id.empty() &&
-                   fav_ids_.count(r.channel_id) == 0 &&
+            return !r.channel_id.empty() && fav_ids_.count(r.channel_id) == 0 &&
                    rcheck_.verdict(r.channel_id) == 1;
         }), items.end());
 }
@@ -605,8 +602,8 @@ std::string App::view_sig() const {
         return "pl:" + id;
     }
     if (!view_label_.empty()) return "label:" + view_label_;
-    if (query_.empty()) return home_tab_ == 3 ? "home:pl"
-                             : home_tab_ == 4 ? "home:posts" : "home";
+    if (query_.empty()) return home_tab_ == 3 ? "home:posts"
+                             : home_tab_ == 4 ? "home:pl" : "home";
     return "q:" + query_;
 }
 
@@ -629,8 +626,8 @@ void App::refresh_current_view(bool is_retry) {
     if (refresh_running_) return;              // one refresh at a time
     int kind = in_channel_view_
                   ? (!subview_playlist_.empty() ? RK_PLAYLIST : RK_CHANNEL)
-                  : query_.empty() ? (home_tab_ == 3 ? RK_HOME_PLAYLISTS
-                                       : home_tab_ == 4 ? RK_HOME_POSTS : RK_HOME)
+                  : query_.empty() ? (home_tab_ == 3 ? RK_HOME_POSTS
+                                       : home_tab_ == 4 ? RK_HOME_PLAYLISTS : RK_HOME)
                                    : RK_SEARCH;
     std::string id = kind == RK_PLAYLIST ? subview_playlist_
                    : !channel_info_.channel_id.empty() ? channel_info_.channel_id
@@ -649,12 +646,12 @@ void App::refresh_current_view(bool is_retry) {
             if (kind == RK_CHANNEL) {
                 if (tab == 0)      f = it_.channel_all_feed(id);
                 else if (tab == 2) f = it_.channel_shorts_feed(id);
-                else if (tab == 3) f = it_.channel_playlists_feed(id);
-                else if (tab == 4) f = it_.channel_posts_feed(id);
+                else if (tab == 3) f = it_.channel_posts_feed(id);
+                else if (tab == 4) f = it_.channel_playlists_feed(id);
                 else               f = it_.channel_feed(id);
             }
             else if (kind == RK_PLAYLIST)        f = it_.playlist_feed(id);
-            else if (kind == RK_HOME) { f.items = it_.home_feed({}, 120, home_source_ == 1, &hc);
+            else if (kind == RK_HOME) { f.items = it_.home_all({}, home_source_ == 1, &hc);
                 // ok unless we have favourites but couldn't reach the network
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else if (kind == RK_HOME_PLAYLISTS){ f.items = it_.home_playlists({}, &hc);
@@ -708,11 +705,12 @@ void App::poll_refresh() {
         default:
             cont_token_ = f.continuation; cont_endpoint_ = f.endpoint;
             cont_channel_id_ = f.channel_id;
-            set_results(std::move(f.items));
-            // Channel tabs: rows omit the uploader; the view title is the channel name.
+            // Channel tabs: rows omit the uploader; the view title (query_) is the channel
+            // name. Fill it in BEFORE set_results so the composed tiles show it.
             if (refresh_kind_ == RK_CHANNEL)
-                for (auto& r : results_)
+                for (auto& r : f.items)
                     if (r.author.empty()) r.author = query_;
+            set_results(std::move(f.items));
             break;
     }
     // Network fetch failed (e.g. opened before wifi reconnected) -> auto-retry with
@@ -784,8 +782,6 @@ void App::open_settings() {
                            MenuAction::CycleHwdec});
     menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
                            MenuAction::ToggleHideRestricted});
-    menu_items_.push_back({tr(S::SetHideShorts) + std::string(":  ") + onoff(hide_shorts_),
-                           MenuAction::ToggleHideShorts});
     menu_items_.push_back({tr(S::SetAskResume) + std::string(":  ") + onoff(ask_resume_),
                            MenuAction::ToggleAskResume});
     menu_items_.push_back({tr(S::SetHomeFeed) + std::string(":  ")
@@ -823,19 +819,6 @@ void App::adjust_setting(MenuAction a, int dir) {
             queue_restricted_checks();        // ...and start judging the rest
         } else if (mode_ != Mode::Playing) {
             refresh_current_view();           // bring the hidden items back
-        }
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
-        return;
-    }
-    if (a == MenuAction::ToggleHideShorts) {
-        hide_shorts_ = !hide_shorts_;
-        it_.set_setting_int("hide_shorts", hide_shorts_ ? 1 : 0);
-        if (hide_shorts_) {
-            filter_hidden(results_);          // Shorts vanish from the current list
-            if (sel_ >= (int)results_.size())
-                sel_ = results_.empty() ? 0 : (int)results_.size() - 1;
-        } else if (mode_ != Mode::Playing) {
-            refresh_current_view();           // Shorts come back
         }
         int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
@@ -1840,7 +1823,6 @@ void App::menu_activate() {
         case MenuAction::CycleMaxQuality:
         case MenuAction::ToggleStats:
         case MenuAction::ToggleHideRestricted:
-        case MenuAction::ToggleHideShorts:
         case MenuAction::ToggleAskResume:
         case MenuAction::CycleView:
         case MenuAction::CycleVolume:
@@ -1909,9 +1891,9 @@ void App::open_channel(const yt::SearchResult& ch) {
     channel_info_ = {}; channel_info_.channel_id = id;  // subs/videos fill in async
     auto f = it_.channel_all_feed(id);                   // home/featured (mixed, paginated)
     cont_token_ = f.continuation; cont_endpoint_ = f.endpoint; cont_channel_id_ = f.channel_id;
+    for (auto& r : f.items)                              // channel rows omit the uploader; fill
+        if (r.author.empty()) r.author = name;           // it in BEFORE composing the tiles
     set_results(std::move(f.items));
-    for (auto& r : results_)                             // channel-tab rows omit the uploader
-        if (r.author.empty()) r.author = name;
     if (results_.empty()) {
         status_msg_ = i18n::tr(i18n::Str::NoRecentUploads);
         status_until_ = SDL_GetTicks() + 5000;
@@ -1949,9 +1931,9 @@ void App::load_home_tab(int tab) {
     tab_focus_ = false;                                 // first video selected on load
     cont_token_.clear();
     if (tab == 3 || tab == 4) {
-        bool loaded = tab == 3 ? home_playlists_loaded_ : home_posts_loaded_;
+        bool loaded = tab == 3 ? home_posts_loaded_ : home_playlists_loaded_;
         if (loaded) {
-            auto copy = tab == 3 ? home_playlists_ : home_posts_;
+            auto copy = tab == 3 ? home_posts_ : home_playlists_;
             set_results(std::move(copy));
         } else {
             results_.clear(); sel_ = 0; scroll_ = 0;
@@ -1966,8 +1948,8 @@ void App::load_home_tab(int tab) {
 void App::apply_home_tab() {
     std::vector<yt::SearchResult> items;
     for (const auto& r : home_items_) {
-        if (home_tab_ == 1 && r.is_short) continue;     // Videos only
-        if (home_tab_ == 2 && !r.is_short) continue;    // Shorts only
+        if (home_tab_ == 1 && (r.is_short || r.is_post())) continue;  // Videos only
+        if (home_tab_ == 2 && !r.is_short) continue;                  // Shorts only
         items.push_back(r);
     }
     set_results(std::move(items));
@@ -2042,7 +2024,7 @@ void App::poll_more() {
 // The active Home sub-tab's cursor: Playlists (3) and Posts (4) are separate
 // aggregated feeds with their own per-channel cursors; All/Videos/Shorts share one.
 yt::Innertube::HomeCursor& App::home_cursor_for(int tab) {
-    return tab == 3 ? home_pl_cursor_ : tab == 4 ? home_posts_cursor_ : home_cursor_;
+    return tab == 3 ? home_posts_cursor_ : tab == 4 ? home_pl_cursor_ : home_cursor_;
 }
 void App::maybe_load_more_home() {
     if (home_more_running_) return;
@@ -2057,8 +2039,8 @@ void App::maybe_load_more_home() {
     home_more_thread_ = std::thread([this, cursor, tab]() mutable {
         std::vector<yt::SearchResult> batch;
         try {
-            batch = tab == 3 ? it_.home_playlists_more(cursor)
-                  : tab == 4 ? it_.home_posts_more(cursor)
+            batch = tab == 3 ? it_.home_posts_more(cursor)
+                  : tab == 4 ? it_.home_playlists_more(cursor)
                              : it_.home_feed_more(cursor);
         } catch (...) {}
         { std::lock_guard<std::mutex> lk(home_more_m_);
@@ -2078,31 +2060,34 @@ void App::poll_more_home() {
     // Still on the home master view AND the same sub-tab the page was fetched for?
     if (!(query_.empty() && view_label_.empty() && !in_channel_view_)) return;
     if (home_tab_ != tab) return;
-    filter_hidden(batch);
     if (batch.empty()) return;
-    for (auto& v : batch) thumbs_.request(v.thumbnail_url);
     int base = (int)results_.size();
     if (tab == 3 || tab == 4) {
+        filter_hidden(batch);                 // restricted only here (homogeneous feed)
+        for (auto& v : batch) thumbs_.request(v.thumbnail_url);
         // Playlists / Posts: append into the tab's cache (so a round-trip keeps them)
         // and the visible list. No is_short filter — the feed is homogeneous.
-        auto& cache = (tab == 3) ? home_playlists_ : home_posts_;
+        auto& cache = (tab == 3) ? home_posts_ : home_playlists_;
         for (auto& v : batch) { cache.push_back(v); results_.push_back(std::move(v)); }
     } else {
+        // Append the raw page to the master (keeps Shorts so the Shorts tab still has
+        // them), then add to the visible list respecting the tab + hide-shorts rule.
         size_t added = batch.size();
         home_items_.insert(home_items_.end(), std::make_move_iterator(batch.begin()),
                            std::make_move_iterator(batch.end()));
-        // Append newcomers to results_ respecting the current tab filter, so the
-        // selection/scroll position is preserved — set_results would reset both to 0.
+        std::vector<yt::SearchResult> add;
         for (size_t i = home_items_.size() - added; i < home_items_.size(); ++i) {
             const auto& r = home_items_[i];
-            if (home_tab_ == 1 && r.is_short) continue;   // Videos only
-            if (home_tab_ == 2 && !r.is_short) continue;  // Shorts only
-            results_.push_back(r);
+            if (home_tab_ == 1 && (r.is_short || r.is_post())) continue;  // Videos only
+            if (home_tab_ == 2 && !r.is_short) continue;                  // Shorts only
+            add.push_back(r);
         }
+        filter_hidden(add);                   // restricted + Shorts (only on the All tab)
+        for (auto& v : add) { thumbs_.request(v.thumbnail_url); results_.push_back(std::move(v)); }
     }
     if ((int)results_.size() > base) { build_tile_lines(); queue_restricted_checks(); }
     if (getenv("YTC_DEBUG")) {
-        const char* tag = tab == 3 ? ":pl" : tab == 4 ? ":posts" : "";
+        const char* tag = tab == 3 ? ":posts" : tab == 4 ? ":pl" : "";
         std::fprintf(stderr, "[home-more%s] +%d shown -> %zu (%s)\n", tag,
                      (int)results_.size() - base, results_.size(),
                      home_cursor_for(tab).has_more() ? "more available" : "END");
@@ -2541,7 +2526,7 @@ void App::input(Action a) {
                 if (menu_sel_ >= n) break;
                 MenuAction act = menu_items_[menu_sel_].action;
                 if (act == MenuAction::CycleMaxQuality || act == MenuAction::ToggleStats ||
-                    act == MenuAction::ToggleHideRestricted || act == MenuAction::ToggleHideShorts ||
+                    act == MenuAction::ToggleHideRestricted ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
@@ -2893,7 +2878,7 @@ void App::render_menu(gfx::Renderer& rn) {
     bool has_value = false;
     for (auto& it : menu_items_)
         if (it.action == MenuAction::CycleMaxQuality || it.action == MenuAction::ToggleStats ||
-            it.action == MenuAction::ToggleHideRestricted || it.action == MenuAction::ToggleHideShorts ||
+            it.action == MenuAction::ToggleHideRestricted ||
             it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
             it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec)
             has_value = true;
@@ -3119,10 +3104,12 @@ App::TileLines App::compose_lines(const yt::SearchResult& v, ChannelMetaCache& c
         t.l3 = cmeta.video_count(v.channel_id); if (t.l3.empty()) t.l3 = v.author;
     } else if (v.is_post()) {
         t.l1 = v.title.substr(0, v.title.find('\n'));
-        t.l2 = v.view_count_text;
-        if (!v.published_text.empty()) t.l2 += (t.l2.empty()?"":"   -   ") + v.published_text;
-        t.l3 = v.video_id.empty() ? i18n::tr(i18n::Str::TilePost)
+        t.l2 = v.author;                             // channel name
+        std::string type = v.video_id.empty() ? i18n::tr(i18n::Str::TilePost)
              : std::string(i18n::tr(i18n::Str::TilePost)) + "   -   " + i18n::tr(i18n::Str::TileVideo);
+        std::string meta = v.view_count_text;        // "N likes"
+        if (!v.published_text.empty()) meta += (meta.empty()?"":"   -   ") + v.published_text;
+        t.l3 = meta.empty() ? type : (type + "   -   " + meta);
     } else if (v.is_playlist()) {
         t.l1 = v.title; t.l2 = v.author; t.l3 = i18n::tr(i18n::Str::TilePlaylist);
     } else {
@@ -3219,7 +3206,7 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
         float ty0 = hy + hbar;
         rn.quad({0, ty0, (float)W, tm.tabs_h}, theme_.panel.with_a(0.6f));
         using S = i18n::Str;
-        const S kTabs[] = {S::TabAll, S::TabVideos, S::TabShorts, S::TabPlaylists, S::TabPosts};
+        const S kTabs[] = {S::TabAll, S::TabVideos, S::TabShorts, S::TabPosts, S::TabPlaylists};
         int ntabs = 5;   // channel: All/Videos/Shorts/Playlists/Posts; home mirrors it
         float tx = 32 * s;
         for (int i = 0; i < ntabs; ++i) {

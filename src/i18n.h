@@ -18,7 +18,7 @@ enum class Str {
     // Tab strip
     TabAll, TabVideos, TabShorts, TabPlaylists, TabPosts,
     // Settings row labels
-    SetMaxQuality, SetVolume, SetVideoDecode, SetHidePaced, SetHideShorts,
+    SetMaxQuality, SetVolume, SetVideoDecode, SetHidePaced,
     SetAskResume, SetHomeFeed, SetAutoplay, SetSponsorBlock, SetView, SetLanguage,
     // Settings values
     On, Off, Hardware, Software, Favorites, FavoritesPlusHistory,

@@ -12,6 +12,7 @@
 #include <optional>
 #include <mutex>
 #include <utility>
+#include <tuple>
 #include <unordered_map>
 #include "http.h"
 
@@ -232,6 +233,12 @@ public:
                                         int max_results = 120,
                                         bool include_history = false,
                                         HomeCursor* cursor = nullptr);
+    // The "All" home feed: home_feed (videos + Shorts) with community Posts folded in,
+    // date-sorted. cursor captures the Videos/Shorts continuations (posts are first-page
+    // only in All — the Posts tab paginates them). Never throws.
+    std::vector<SearchResult> home_all(std::vector<std::string> channel_ids = {},
+                                       bool include_history = false,
+                                       HomeCursor* cursor = nullptr);
     // Next page of the home feed: continues each channel's Videos tab one page,
     // merges + date-sorts the new batch, and advances the cursor. Never throws.
     std::vector<SearchResult> home_feed_more(HomeCursor& cursor, int per_channel = 30);
@@ -276,7 +283,7 @@ public:
 
     // Stored lists as (id, name/title) pairs, for building the menu views.
     std::vector<std::pair<std::string,std::string>> favorites();     // (channel_id, name)
-    std::vector<std::pair<std::string,std::string>> history();       // (video_id, title), recent first
+    std::vector<std::tuple<std::string,std::string,std::string>> history();  // (id, title, channel), recent first
 
     // Watch history, persisted in history.json (most-recent first, deduped, capped).
     void add_history(const std::string& video_id, const std::string& title,

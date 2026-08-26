@@ -301,6 +301,7 @@ static std::string run_text(const json& node) {
 }
 
 static const json* find_key(const json& node, const char* key);   // defined below
+static long long approx_age_secs(const std::string& s);            // defined below
 
 // Parse a lockupViewModel (YouTube's newer video item, used on channel/home tabs
 // and continuations) into a video SearchResult. chan_hint = the channel we're
@@ -318,20 +319,29 @@ static SearchResult parse_lockup(const json& lv, const std::string& chan_hint) {
         sr.playlist_id = cid;
         if (const json* meta = find_key(lv, "lockupMetadataViewModel")) {
             if (const json* t = find_key(*meta, "title")) sr.title = t->value("content", "");
+            // The owner is the metadata part that links to a channel (browseId "UC…").
+            // Other parts ("Updated today", "N videos", "View full playlist") have no
+            // such link, so we must not mistake them for the author.
+            std::string fallback;
             if (const json* rows = find_key(*meta, "metadataRows"))
                 for (auto& row : *rows)
                     for (auto& part : row.value("metadataParts", json::array())) {
                         std::string txt = part.value(json::json_pointer("/text/content"), std::string());
-                        // First plain row part is the owner; skip labels/track previews.
-                        if (!txt.empty() && sr.author.empty() && txt != "Playlist" &&
-                            txt.find("View full") == std::string::npos &&
-                            txt.find(" · ") == std::string::npos) {
-                            sr.author = txt;
-                            sr.channel_id = part.value(json::json_pointer(
-                                "/text/commandRuns/0/onTap/innertubeCommand/browseEndpoint/browseId"),
-                                std::string());
+                        if (txt.empty()) continue;
+                        std::string bid = part.value(json::json_pointer(
+                            "/text/commandRuns/0/onTap/innertubeCommand/browseEndpoint/browseId"),
+                            std::string());
+                        if (bid.rfind("UC", 0) == 0) {          // linked channel = the owner
+                            sr.author = txt; sr.channel_id = bid;
+                        } else if (fallback.empty() && txt != "Playlist" &&
+                                   txt.find("View full") == std::string::npos &&
+                                   txt.find("Updated") == std::string::npos &&
+                                   txt.find(" ago") == std::string::npos &&
+                                   txt.find(" · ") == std::string::npos) {
+                            fallback = txt;
                         }
                     }
+            if (sr.author.empty()) sr.author = fallback;
         }
         if (const json* badge = find_key(lv, "thumbnailBadgeViewModel"))
             sr.view_count_text = badge->value("text", "");   // "960 videos"
@@ -476,6 +486,8 @@ static void collect_results(const json& node, const std::string& chan_hint,
                 sr.channel_id = n.value(json::json_pointer(
                     "/authorEndpoint/browseEndpoint/browseId"), std::string());
             sr.post_id = n.value("postId", "");
+            sr.author = n.value(json::json_pointer("/authorText/runs/0/text"),
+                        n.value(json::json_pointer("/authorText/simpleText"), std::string()));
             if (n.contains("contentText"))
                 for (auto& run : n["contentText"].value("runs", json::array()))
                     sr.post_text += run.value("text", "");
@@ -629,6 +641,19 @@ Innertube::Feed Innertube::channel_all_feed(const std::string& channel_id) {
     // No params = the channel's home/featured page: mixed shelves of videos,
     // Shorts, and playlists (document order).
     Feed f = browse_tab(channel_id, nullptr, channel_id);
+    // The All tab shows all *content* types, not Playlists (no good sort for them).
+    f.items.erase(std::remove_if(f.items.begin(), f.items.end(),
+        [](const SearchResult& r) { return r.is_playlist(); }), f.items.end());
+    // Fold in the channel's community Posts, then date-sort the whole thing.
+    try {
+        Feed pf = channel_posts_feed(channel_id);
+        f.items.insert(f.items.end(), std::make_move_iterator(pf.items.begin()),
+                       std::make_move_iterator(pf.items.end()));
+        std::stable_sort(f.items.begin(), f.items.end(),
+            [](const SearchResult& a, const SearchResult& b) {
+                return approx_age_secs(a.published_text) < approx_age_secs(b.published_text);
+            });
+    } catch (...) {}
     return f;
 }
 
@@ -883,6 +908,23 @@ std::vector<SearchResult> Innertube::home_feed(std::vector<std::string> channel_
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "[innertube] home_feed failed: %s\n", ex.what());
     }
+    return out;
+}
+
+std::vector<SearchResult> Innertube::home_all(std::vector<std::string> channel_ids,
+                                              bool include_history, HomeCursor* cursor) {
+    // Videos + Shorts (with the Videos/Shorts continuations in cursor) ...
+    std::vector<SearchResult> out = home_feed(channel_ids, 120, include_history, cursor);
+    // ... then community Posts folded in and the whole thing re-sorted by age. Posts
+    // paginate only on the dedicated Posts tab, so we don't keep their cursor here.
+    try {
+        std::vector<SearchResult> posts = home_posts(channel_ids, cursor);
+        out.insert(out.end(), std::make_move_iterator(posts.begin()),
+                   std::make_move_iterator(posts.end()));
+        std::stable_sort(out.begin(), out.end(), [](const SearchResult& a, const SearchResult& b) {
+            return approx_age_secs(a.published_text) < approx_age_secs(b.published_text);
+        });
+    } catch (...) {}
     return out;
 }
 
@@ -1364,15 +1406,15 @@ std::vector<SearchResult> Innertube::watch_later() {
     return out;
 }
 
-std::vector<std::pair<std::string,std::string>> Innertube::history() {
-    std::vector<std::pair<std::string,std::string>> out;
+std::vector<std::tuple<std::string,std::string,std::string>> Innertube::history() {
+    std::vector<std::tuple<std::string,std::string,std::string>> out;
     std::ifstream f(config_dir_ + "/history.json");
     if (!f) return out;
     json cfg = json::parse(f, nullptr, false);
     if (cfg.is_discarded()) return out;
     for (const auto& v : cfg.value("videos", json::array())) {
         std::string id = v.value("id", "");
-        if (!id.empty()) out.emplace_back(id, v.value("title", ""));
+        if (!id.empty()) out.emplace_back(id, v.value("title", ""), v.value("channel", ""));
     }
     return out;
 }
