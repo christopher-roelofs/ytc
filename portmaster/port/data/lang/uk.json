@@ -48,7 +48,7 @@
   "LoadingCaptions": "Завантаження субтитрів...",
   "FooterBrowse": "D-Pad: рух    A: відтв.    Select: опції    Start: меню    Y: пошук    B: назад",
   "FooterSubview": "Вліво/Вправо: огляд    A: відкр.    L/R: вкладки    V: вигляд    B: назад",
-  "FooterSearch": "D-Pad: рух    A: ввід    Y: пошук    B: скас.    (або друкуйте)",
+  "FooterSearch": "D-Pad: рух    A: ввід    Y: пошук    B: скас.",
   "FooterHomeMin": "Y: пошук    Start: меню    V: сітка/карусель",
   "FooterResume": "Вгору/Вниз: вибір    A: ок    B: скас.",
   "FooterDesc": "Вліво/Вправо: змінити    B: назад",
@@ -155,5 +155,6 @@
   "DownloadDone": "Завантажено",
   "DownloadFailed": "Помилка завантаження",
   "DownloadBusy": "Завантаження вже триває",
-  "DownloadRemoved": "Завантаження видалено"
+  "DownloadRemoved": "Завантаження видалено",
+  "TileLive": "Наживо"
 }

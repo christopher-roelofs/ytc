@@ -48,7 +48,7 @@
   "LoadingCaptions": "Untertitel werden geladen...",
   "FooterBrowse": "D-Pad: bewegen    A: abspielen    Select: Optionen    Start: Menü    Y: Suche    B: zurück",
   "FooterSubview": "Links/Rechts: blättern    A: öffnen    L/R: Tabs    V: Ansicht    B: zurück",
-  "FooterSearch": "D-Pad: bewegen    A: tippen    Y: Suche    B: abbrechen    (oder tippen)",
+  "FooterSearch": "D-Pad: bewegen    A: tippen    Y: Suche    B: abbrechen",
   "FooterHomeMin": "Y: Suche    Start: Menü    V: Raster/Karussell",
   "FooterResume": "Hoch/Runter: wählen    A: bestätigen    B: abbrechen",
   "FooterDesc": "Links/Rechts: ändern    B: zurück",
@@ -155,5 +155,6 @@
   "DownloadDone": "Heruntergeladen",
   "DownloadFailed": "Download fehlgeschlagen",
   "DownloadBusy": "Ein Download läuft bereits",
-  "DownloadRemoved": "Download entfernt"
+  "DownloadRemoved": "Download entfernt",
+  "TileLive": "Live"
 }

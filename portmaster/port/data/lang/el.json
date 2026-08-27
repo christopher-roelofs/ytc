@@ -48,7 +48,7 @@
   "LoadingCaptions": "Φόρτωση υποτίτλων...",
   "FooterBrowse": "D-Pad: κίνηση    A: αναπ.    Select: επιλ.    Start: μενού    Y: αναζήτ.    B: πίσω",
   "FooterSubview": "Αρ/Δε: περιήγ.    A: άνοιγμα    L/R: καρτ.    V: προβ.    B: πίσω",
-  "FooterSearch": "D-Pad: κίν.    A: πληκτρ.    Y: αναζήτ.    B: ακύρωση    (ή πληκτρολογήστε)",
+  "FooterSearch": "D-Pad: κίν.    A: πληκτρ.    Y: αναζήτ.    B: ακύρωση",
   "FooterHomeMin": "Y: αναζήτ.    Start: μενού    V: πλέγμα/καρουζέλ",
   "FooterResume": "Πάνω/Κάτω: επιλ.    A: OK    B: ακύρ.",
   "FooterDesc": "Αρ/Δε: αλλαγή    B: πίσω",
@@ -155,5 +155,6 @@
   "DownloadDone": "Ολοκληρώθηκε",
   "DownloadFailed": "Η λήψη απέτυχε",
   "DownloadBusy": "Μια λήψη βρίσκεται σε εξέλιξη",
-  "DownloadRemoved": "Η λήψη αφαιρέθηκε"
+  "DownloadRemoved": "Η λήψη αφαιρέθηκε",
+  "TileLive": "Ζωντανά"
 }

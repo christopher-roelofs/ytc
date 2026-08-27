@@ -48,7 +48,7 @@
   "LoadingCaptions": "Caricamento sottotitoli...",
   "FooterBrowse": "D-Pad: muovi    A: riproduci    Select: opzioni    Start: menu    Y: cerca    B: indietro",
   "FooterSubview": "Sx/Dx: sfoglia    A: apri    L/R: schede    V: vista    B: indietro",
-  "FooterSearch": "D-Pad: muovi    A: digita    Y: cerca    B: annulla    (o digita)",
+  "FooterSearch": "D-Pad: muovi    A: digita    Y: cerca    B: annulla",
   "FooterHomeMin": "Y: cerca    Start: menu    V: griglia/carosello",
   "FooterResume": "Su/Giù: scegli    A: conferma    B: annulla",
   "FooterDesc": "Sx/Dx: cambia    B: indietro",
@@ -155,5 +155,6 @@
   "DownloadDone": "Scaricato",
   "DownloadFailed": "Download non riuscito",
   "DownloadBusy": "Un download è già in corso",
-  "DownloadRemoved": "Download rimosso"
+  "DownloadRemoved": "Download rimosso",
+  "TileLive": "In diretta"
 }
