@@ -482,6 +482,14 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "COMMENTSSHOT done\n");
             return 0;
         }
+        if (std::getenv("YTC_DESCSHOT")) {  // description overlay: long-title wrapping
+            app.test_show_description(
+                "This is a really long video title that should wrap onto the next line to the left instead of being cut off with an ellipsis",
+                "Here is the description body text. It sits below the wrapped title and scrolls independently.\n\nSecond paragraph.");
+            app.render(rn); win->screenshot(std::string(shot) + "_desc.png");
+            std::fprintf(stderr, "DESCSHOT done\n");
+            return 0;
+        }
         if (std::getenv("YTC_NUMKBSHOT")) {  // dedicated numeric keypad for device linking
             app.test_open_numeric_kb();
             app.input(ui::App::Action::Select);   // tap '1'
@@ -1051,6 +1059,32 @@ int main(int argc, char** argv) {
     A nav_action = A::None;
     Uint8 nav_btn = 255;
     Uint32 nav_hold_start = 0, nav_last_rep = 0;
+    // Shared d-pad hold setup / teardown, so the left analog stick can drive the exact
+    // same seek/navigate repeat behavior as the d-pad buttons.
+    auto start_hold = [&](Uint8 b) {
+        if (app.mode() == M::Playing && !app.menu_open() &&
+            (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT || b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
+            seek_dir = (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) ? -1 : +1;
+            seek_hold_start = seek_last_rep = SDL_GetTicks();
+        }
+        if (app.mode() == M::Grid && !app.menu_open()) {
+            A na = map_button(b);
+            if (na == A::Up || na == A::Down || na == A::Left || na == A::Right) {
+                nav_action = na; nav_btn = b;
+                nav_hold_start = nav_last_rep = SDL_GetTicks();
+            }
+        }
+    };
+    auto end_hold = [&](Uint8 b) {
+        if ((b == SDL_CONTROLLER_BUTTON_DPAD_LEFT  && seek_dir < 0) ||
+            (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && seek_dir > 0))
+            seek_dir = 0;
+        if (b == nav_btn) { nav_action = A::None; nav_btn = 255; }
+    };
+    // Left analog stick quantized to a d-pad direction (-1/0/+1 per axis); edges below
+    // synthesize the matching d-pad press/release so the stick == the d-pad everywhere.
+    int stick_x = 0, stick_y = 0;
+    const int kStickOn = 20000, kStickOff = 12000;   // hysteresis to avoid jitter
     SDL_StartTextInput();   // enable SDL_TEXTINPUT events for the OSK
     bool swallow_text = false;  // eat the "/" TEXTINPUT that follows opening search via slash
     while (running) {
@@ -1118,28 +1152,29 @@ int main(int argc, char** argv) {
                 else if (b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)  app.cycle_tab(-1);  // L = prev tab
                 else if (b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) app.cycle_tab(+1);  // R = next tab
                 else handle(map_button(b));
-                // Begin hold-to-seek tracking (playback only, menu closed).
-                if (app.mode() == M::Playing && !app.menu_open() &&
-                    (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ||
-                     b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
-                    seek_dir = (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) ? -1 : +1;
-                    seek_hold_start = seek_last_rep = SDL_GetTicks();
-                }
-                // Begin hold-to-navigate tracking (grid/carousel browse, menu closed).
-                if (app.mode() == M::Grid && !app.menu_open()) {
-                    A na = map_button(b);
-                    if (na == A::Up || na == A::Down || na == A::Left || na == A::Right) {
-                        nav_action = na; nav_btn = b;
-                        nav_hold_start = nav_last_rep = SDL_GetTicks();
-                    }
-                }
+                start_hold(b);   // begin hold-to-seek / hold-to-navigate as appropriate
             }
             else if (e.type == SDL_CONTROLLERBUTTONUP) {
-                Uint8 b = e.cbutton.button;
-                if ((b == SDL_CONTROLLER_BUTTON_DPAD_LEFT  && seek_dir < 0) ||
-                    (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && seek_dir > 0))
-                    seek_dir = 0;
-                if (b == nav_btn) { nav_action = A::None; nav_btn = 255; }
+                end_hold(e.cbutton.button);
+            }
+            else if (e.type == SDL_CONTROLLERAXISMOTION) {
+                // Left stick behaves like the d-pad: crossing the threshold in a direction
+                // fires the matching d-pad press (with hold-repeat); recentering releases it.
+                int* st; Uint8 lo, hi;
+                if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
+                    st = &stick_x; lo = SDL_CONTROLLER_BUTTON_DPAD_LEFT; hi = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    st = &stick_y; lo = SDL_CONTROLLER_BUTTON_DPAD_UP;   hi = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+                } else continue;
+                int v = e.caxis.value, prev = *st;
+                int cur = prev;
+                if (prev == 0) { if (v <= -kStickOn) cur = -1; else if (v >= kStickOn) cur = 1; }
+                else if (prev < 0) { if (v > -kStickOff) cur = (v >= kStickOn) ? 1 : 0; }
+                else { if (v < kStickOff) cur = (v <= -kStickOn) ? -1 : 0; }
+                if (cur == prev) continue;
+                if (prev != 0) end_hold(prev < 0 ? lo : hi);       // release old direction
+                if (cur != 0) { Uint8 b = cur < 0 ? lo : hi; handle(map_button(b)); start_hold(b); }
+                *st = cur;
             }
         }
         if (app.wants_quit()) running = false;   // Exit chosen from the Start menu

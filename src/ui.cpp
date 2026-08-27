@@ -584,10 +584,13 @@ void App::poll_download() {
 // explicit user intent (their videos still play, with limited seeking) — but the
 // Shorts rule applies everywhere.
 void App::filter_hidden(std::vector<yt::SearchResult>& items) {
-    if (!hide_restricted_) return;
+    // Live broadcasts are always hidden for now (playback is unreliable behind YouTube's
+    // bot wall); is_live detection stays so this can be re-enabled as an opt-in later.
     items.erase(std::remove_if(items.begin(), items.end(),
         [&](const yt::SearchResult& r) {
-            return !r.channel_id.empty() && fav_ids_.count(r.channel_id) == 0 &&
+            if (r.is_live) return true;
+            return hide_restricted_ && !r.channel_id.empty() &&
+                   fav_ids_.count(r.channel_id) == 0 &&
                    rcheck_.verdict(r.channel_id) == 1;
         }), items.end());
 }
@@ -777,9 +780,8 @@ void App::open_settings() {
                            MenuAction::CycleMaxQuality});
     menu_items_.push_back({tr(S::SetVolume) + std::string(":  ") + std::to_string(volume_) + "%",
                            MenuAction::CycleVolume});
-    menu_items_.push_back({tr(S::SetVideoDecode) + std::string(":  ")
-                           + tr(hwdec_mode_ ? S::Software : S::Hardware),
-                           MenuAction::CycleHwdec});
+    // Video Decode (hwdec) hidden for now: the bundled ffmpeg is software-only, so the
+    // toggle does nothing. Code kept (CycleHwdec/set_hwdec) for when a hw build lands.
     menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
                            MenuAction::ToggleHideRestricted});
     menu_items_.push_back({tr(S::SetAskResume) + std::string(":  ") + onoff(ask_resume_),
@@ -1218,10 +1220,23 @@ void App::render_description(gfx::Renderer& rn) {
     rn.quad({mx, my, pw, 4*s}, theme_.accent);
     float pad = 26*s;
     float tx = mx + pad;
-    rn.text(*font_body_, font_body_->ellipsize(desc_title_, pw - pad*2),
-            tx, my + 16*s, theme_.text);
-    float body_top = my + 62*s, body_bot = my + ph - 46*s;
     float wrap_w = pw - pad*2;
+    // Title: word-wrap (left-aligned) instead of a single ellipsized line, so a long
+    // title breaks at a word boundary and continues below. Capped so it can't eat the
+    // whole panel; the last shown line is ellipsized if still more remains.
+    float title_lh = font_body_->line_height() + 3*s;
+    std::vector<std::string> tlines = wrap_text(*font_body_, desc_title_, wrap_w);
+    const int kMaxTitleLines = 3;
+    float ty = my + 16*s;
+    int nt = std::min((int)tlines.size(), kMaxTitleLines);
+    for (int i = 0; i < nt; ++i) {
+        std::string line = tlines[i];
+        if (i == kMaxTitleLines - 1 && (int)tlines.size() > kMaxTitleLines)
+            line = font_body_->ellipsize(line + " \xE2\x80\xA6", wrap_w);   // … more remains
+        rn.text(*font_body_, line, tx, ty, theme_.text);
+        ty += title_lh;
+    }
+    float body_top = ty + 20*s, body_bot = my + ph - 46*s;
     // Post with an attached video: a selectable thumbnail on top (A plays it).
     bool has_comments_btn = desc_is_post_ && !desc_post_id_.empty();
     int vid_idx = post_has_video_ ? 0 : -1;
@@ -2583,12 +2598,30 @@ void App::input(Action a) {
     }
     if (mode_ == Mode::Search) {
         const auto& kb = kb_numeric() ? KB_NUM : KB;
+        // Rows have different key counts/spans, so vertical moves are SPATIAL: keep the
+        // horizontal center and land on whichever key in the target row spans it (a key
+        // above the space bar lands on space, above Enter lands on Enter, etc.).
+        auto xcenter = [&](int row, int col) {
+            float x = 0; for (int j = 0; j < col; ++j) x += kb[row][j].span;
+            return x + kb[row][col].span / 2.f;
+        };
+        auto col_at = [&](int row, float x) {
+            float acc = 0;
+            for (int j = 0; j < (int)kb[row].size(); ++j) {
+                acc += kb[row][j].span;
+                if (x < acc) return j;
+            }
+            return (int)kb[row].size() - 1;
+        };
         switch (a) {
-            case Action::Left:  if (kb_col_ > 0) kb_col_--; break;
-            case Action::Right: if (kb_col_ < (int)kb[kb_row_].size()-1) kb_col_++; break;
-            case Action::Up:    if (kb_row_ > 0) kb_row_--; break;
-            case Action::Down:  if (kb_row_ < (int)kb.size()-1) kb_row_++; break;
+            case Action::Left:  kb_col_ = (kb_col_ > 0) ? kb_col_ - 1 : (int)kb[kb_row_].size()-1; break;
+            case Action::Right: kb_col_ = (kb_col_ < (int)kb[kb_row_].size()-1) ? kb_col_ + 1 : 0; break;
+            case Action::Up:    if (kb_row_ > 0) { float c = xcenter(kb_row_, kb_col_);
+                                                   kb_col_ = col_at(--kb_row_, c); } break;
+            case Action::Down:  if (kb_row_ < (int)kb.size()-1) { float c = xcenter(kb_row_, kb_col_);
+                                                   kb_col_ = col_at(++kb_row_, c); } break;
             case Action::Select: kb_activate(); break;
+            case Action::Sort:   query_input_.clear(); kb_caret_ = 0; break;   // X clears
             case Action::Search: submit_search(); break;      // Y submits
             case Action::Back:   mode_ = Mode::Grid;           // cancel; code entry -> picker
                                  kb_mode_ = KbMode::Search; break;
@@ -3120,7 +3153,8 @@ App::TileLines App::compose_lines(const yt::SearchResult& v, ChannelMetaCache& c
         std::string age = humanize_age(v.published_text);
         std::string meta = v.view_count_text;
         if (!age.empty()) meta += (meta.empty()?"":"   -   ") + age;
-        std::string type = i18n::tr(v.is_short ? i18n::Str::TileShort : i18n::Str::TileVideo);
+        std::string type = i18n::tr(v.is_live ? i18n::Str::TileLive
+                                  : v.is_short ? i18n::Str::TileShort : i18n::Str::TileVideo);
         t.l3 = meta.empty() ? type : (type + "   -   " + meta);
     }
     return t;
@@ -3133,7 +3167,7 @@ void App::build_tile_lines() {
 // Draw the 3 metadata lines for item idx at (x,y), width maxw, tinted by alpha. Uses
 // the precomputed raw lines and only allocates a truncated string when text overflows.
 void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
-                    float x, float y, float maxw, float s, float alpha) {
+                    float x, float y, float maxw, float s, float alpha, bool center) {
     gfx::Color tc = theme_.text.with_a(alpha), dc = theme_.text_dim.with_a(alpha);
     TileLines local;
     const TileLines* t;
@@ -3149,10 +3183,12 @@ void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
     float lh1 = font_body_->line_height(), lh2 = font_small_->line_height();
     float y2 = y + lh1 + 4*s, y3 = y2 + lh2 + 3*s;
     // Emit without copying when the line already fits (ellipsize() copies unconditionally).
+    // center: center each line within [x, x+maxw] (carousel); else left-align (grid).
     auto emit = [&](gfx::Font& f, const std::string& raw, float yy, gfx::Color c) {
         if (raw.empty()) return;
-        if (f.text_width(raw) <= maxw) rn.text(f, raw, x, yy, c);
-        else rn.text(f, f.ellipsize(raw, maxw), x, yy, c);
+        const std::string& shown = f.text_width(raw) <= maxw ? raw : f.ellipsize(raw, maxw);
+        float lx = center ? x + (maxw - f.text_width(shown)) / 2 : x;
+        rn.text(f, shown, lx, yy, c);
     };
     emit(*font_body_,  l1, y,  tc);
     emit(*font_small_, l2, y2, dc);
@@ -3405,7 +3441,7 @@ void App::render_carousel(gfx::Renderer& rn) {
     // Centered item metadata below the strip (full, kind-aware, centered-ish).
     const auto& v = results_[sel_];
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + big_h/2 + 24*s;
-    draw_meta(rn, v, sel_, mx, my, mw, s, 1.0f);
+    draw_meta(rn, v, sel_, mx, my, mw, s, 1.0f, true);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 
@@ -3481,7 +3517,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
 
     // Centre metadata below the flow.
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + cardH*0.5f + 30*s;
-    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f);
+    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f, true);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 
@@ -3565,7 +3601,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
     }
 
     float mw = W * 0.7f, mx = (W - mw)/2, my = cy + hhC + 30*s;
-    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f);
+    draw_meta(rn, results_[sel_], sel_, mx, my, mw, s, 1.0f, true);
     std::string pos = std::to_string(sel_+1) + " / " + std::to_string(n);
     rn.text(*font_small_, pos, cx - font_small_->text_width(pos)/2, my + 82*s, theme_.text_dim);
 

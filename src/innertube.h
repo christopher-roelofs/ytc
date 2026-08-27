@@ -73,6 +73,7 @@ struct SearchResult {
     std::string thumbnail_url;    // video: mqdefault; channel: avatar
     long length_seconds = 0;
     bool is_short = false;        // YouTube Short (reel) — typed by the API
+    bool is_live = false;         // currently-live broadcast (LIVE badge on the tile)
     std::string post_text;        // post only: full text (title holds a preview);
                                   // video_id set = the post has an attached video
     std::string post_id;          // post only: backstage post id (for its comments)

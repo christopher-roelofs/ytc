@@ -49,7 +49,7 @@ enum class Str {
     FindingNext, NoMoreVideos, PacedResuming, NoMpv, PlayerFailed,
     ResumeFrom, StartOver,
     // Tile footer type labels
-    TileVideo, TileShort, TilePlaylist, TilePost, TileHasVideo,
+    TileVideo, TileShort, TilePlaylist, TilePost, TileHasVideo, TileLive,
     // Casting
     MenuCastToDevice, CastAddDevice, CastSearching, CastNoDevices, CastEnterCode,
     CastingTo, CastConnecting, CastFailed, CastPairFailed,

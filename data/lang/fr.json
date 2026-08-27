@@ -48,7 +48,7 @@
   "LoadingCaptions": "Chargement sous-titres...",
   "FooterBrowse": "D-Pad: naviguer    A: lire/ouvrir    Select: options    Start: menu    Y: rechercher    B: retour",
   "FooterSubview": "G/D: naviguer    A: ouvrir    L/R: onglets    V: affichage    B: retour",
-  "FooterSearch": "D-Pad: naviguer    A: saisir    Y: rechercher    B: annuler    (ou tapez)",
+  "FooterSearch": "D-Pad: naviguer    A: saisir    Y: rechercher    B: annuler",
   "FooterHomeMin": "Y: rechercher    Start: menu    V: grille/carrousel",
   "FooterResume": "Haut/Bas: choisir    A: confirmer    B: annuler",
   "FooterDesc": "G/D: changer    B: retour",
@@ -155,5 +155,6 @@
   "DownloadDone": "Téléchargé",
   "DownloadFailed": "Échec du téléchargement",
   "DownloadBusy": "Un téléchargement est en cours",
-  "DownloadRemoved": "Téléchargement supprimé"
+  "DownloadRemoved": "Téléchargement supprimé",
+  "TileLive": "En direct"
 }

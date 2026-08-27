@@ -48,7 +48,7 @@
   "LoadingCaptions": "Carregando legendas...",
   "FooterBrowse": "D-Pad: mover    A: reproduzir    Select: opções    Start: menu    Y: buscar    B: voltar",
   "FooterSubview": "Esq/Dir: navegar    A: abrir    L/R: abas    V: vista    B: voltar",
-  "FooterSearch": "D-Pad: mover    A: digitar    Y: buscar    B: cancelar    (ou digite)",
+  "FooterSearch": "D-Pad: mover    A: digitar    Y: buscar    B: cancelar",
   "FooterHomeMin": "Y: buscar    Start: menu    V: grade/carrossel",
   "FooterResume": "Cima/Baixo: escolher    A: confirmar    B: cancelar",
   "FooterDesc": "Esq/Dir: mudar    B: voltar",
@@ -155,5 +155,6 @@
   "DownloadDone": "Baixado",
   "DownloadFailed": "Falha no download",
   "DownloadBusy": "Um download está em andamento",
-  "DownloadRemoved": "Download removido"
+  "DownloadRemoved": "Download removido",
+  "TileLive": "Ao vivo"
 }

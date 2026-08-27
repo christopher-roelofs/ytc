@@ -155,7 +155,7 @@ private:
     void draw_thumb(gfx::Renderer& rn, const yt::SearchResult& v,
                     const gfx::Rect& r, float s, float alpha);
     void draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
-                   float x, float y, float maxw, float s, float alpha);
+                   float x, float y, float maxw, float s, float alpha, bool center = false);
     // Precomputed metadata lines per result (composed + humanize_age done ONCE, not
     // every frame). Rebuilt when results_ changes; draw_meta ellipsizes on demand.
     struct TileLines { std::string l1, l2, l3; };
@@ -208,6 +208,12 @@ public:
         yt::Cast::Device d; d.name = name; cast_paired_ = { d };
     }
     void test_open_numeric_kb();   // testing only: open the TV-code numeric keypad
+    void test_show_description(const std::string& title, const std::string& body) {  // testing
+        desc_title_ = title; desc_text_ = body.empty() ? "(no description)" : body;
+        desc_lines_.clear(); desc_wrap_w_ = 0; desc_scroll_ = 0;
+        post_has_video_ = false; desc_is_post_ = false; desc_post_id_.clear();
+        desc_loading_ = false; desc_open_ = true;
+    }
     void test_download(const std::string& id, const std::string& title) {   // testing only
         yt::SearchResult t; t.kind = yt::SearchResult::Kind::Video; t.video_id = id;
         t.title = title; t.author = "Test"; start_download(t);

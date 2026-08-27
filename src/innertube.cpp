@@ -385,6 +385,7 @@ static SearchResult parse_lockup(const json& lv, const std::string& chan_hint) {
     if (const json* badge = find_key(lv, "thumbnailBadgeViewModel"))
         sr.length_text = badge->value("text", "");
     sr.length_seconds = parse_duration(sr.length_text);
+    if (sr.length_text == "LIVE" || sr.length_text == "LIVE NOW") sr.is_live = true;
     if (!sr.video_id.empty())
         sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
     return sr;
@@ -412,6 +413,18 @@ static std::string video_channel_id(const json& vr) {
     return "";
 }
 
+// A currently-live broadcast: LIVE time-status overlay, or a LIVE_NOW metadata badge.
+static bool node_is_live(const json& n) {
+    if (const json* ov = find_key(n, "thumbnailOverlayTimeStatusRenderer"))
+        if (ov->value("style", std::string()) == "LIVE") return true;
+    if (const json* badges = find_key(n, "badges"))
+        if (badges->is_array())
+            for (const auto& b : *badges)
+                if (b.value(json::json_pointer("/metadataBadgeRenderer/style"), std::string())
+                        == "BADGE_STYLE_TYPE_LIVE_NOW") return true;
+    return false;
+}
+
 // Unified: walk a response subtree and build SearchResults from videoRenderer,
 // channelRenderer, and lockupViewModel (in document order). chan_hint = the
 // channel being viewed (for lockups, which omit the uploader id).
@@ -430,6 +443,7 @@ static void collect_results(const json& node, const std::string& chan_hint,
             if (n.contains("viewCountText")) sr.view_count_text = run_text(n["viewCountText"]);
             if (n.contains("publishedTimeText")) sr.published_text = run_text(n["publishedTimeText"]);
             sr.length_seconds = parse_duration(sr.length_text);
+            sr.is_live = node_is_live(n);
             sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
             if (!sr.video_id.empty() && !sr.title.empty()) out.push_back(std::move(sr));
         }
@@ -446,6 +460,7 @@ static void collect_results(const json& node, const std::string& chan_hint,
             if (n.contains("viewCountText")) sr.view_count_text = run_text(n["viewCountText"]);
             if (n.contains("publishedTimeText")) sr.published_text = run_text(n["publishedTimeText"]);
             sr.length_seconds = parse_duration(sr.length_text);
+            sr.is_live = node_is_live(n);
             sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
             if (!sr.video_id.empty() && !sr.title.empty()) out.push_back(std::move(sr));
         }

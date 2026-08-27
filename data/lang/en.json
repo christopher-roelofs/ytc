@@ -48,7 +48,7 @@
   "LoadingCaptions": "Loading captions...",
   "FooterBrowse": "D-Pad: move    A: play/open    Select: options    Start: menu    Y: search    B: back",
   "FooterSubview": "Left/Right: browse    A: open    L/R: switch tabs    V: view    B: back",
-  "FooterSearch": "D-Pad: move    A: type    Y: search    B: cancel    (or just type)",
+  "FooterSearch": "D-Pad: move    A: type    X: clear    Y: search    B: cancel",
   "FooterHomeMin": "Y: search    Start: menu    V: grid/carousel",
   "FooterResume": "Up/Down: choose    A: confirm    B: cancel",
   "FooterDesc": "Left/Right: change    B: back",
@@ -155,5 +155,6 @@
   "DownloadDone": "Downloaded",
   "DownloadFailed": "Download failed",
   "DownloadBusy": "A download is in progress",
-  "DownloadRemoved": "Download removed"
+  "DownloadRemoved": "Download removed",
+  "TileLive": "Live"
 }
