@@ -111,6 +111,20 @@ When we DO bundle for RK3588 (the portable path):
 3. Link ytc against the custom mpv headers/pc (already in prefix), set
    YTC_HWDEC=rkmpp (or auto) in the RK3588 launcher variant, drop the 480p cap.
 
+## License
+
+YTC's own code is licensed under the **PolyForm Noncommercial License 1.0.0** —
+free to use, modify, and share for any noncommercial purpose; selling it or
+bundling it into a commercial product/service requires a separate license from
+the copyright holder. See [`../LICENSE`](../LICENSE).
+
+Bundled third-party components (libmpv and FFmpeg under LGPL-2.1-or-later,
+DejaVu Sans, SDL_GameControllerDB, nlohmann/json, stb) keep their own licenses
+and are **not** covered by YTC's noncommercial terms. See
+[`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). Both files also ship
+inside the port (`port/LICENSE`, `port/THIRD_PARTY_NOTICES.md`) so they travel
+with the distributed zip, as the LGPL and PolyForm notice terms require.
+
 ## Still to do for a real PortMaster submission
 
 - port.json, screenshot, licenses folder, README for the store.
