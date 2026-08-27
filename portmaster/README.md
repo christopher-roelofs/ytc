@@ -13,12 +13,14 @@ hold-to-seek, restricted/Shorts filters, paced-stream seek fixes.
 
 - `ytc.sh` — the launch script (portmaster.games/packaging.html layout).
   Installs to the CFW's ports scripts folder (muOS: `roms/Ports/`).
-- `port/` — the assembled game directory, installed as `ports/ytc/`:
+- `ytc/` — the assembled game directory, installed as `ports/ytc/`:
   - `ytc.aarch64` — stripped `yt_ui`
   - `config/clients.json` — Innertube client fingerprints
   - `data/` — gamecontrollerdb + bundled DejaVuSans.ttf (handhelds don't
     ship the Debian font path; `ui.cpp` falls back to `data/`)
-  - `libs.aarch64/` — empty; kept as the standard LD_LIBRARY_PATH hook
+  - `libs.aarch64/` — bundled render-only libmpv + FFmpeg (LD_LIBRARY_PATH)
+  - `port.json`, `gameinfo.xml`, `screenshot.jpg` — PortMaster store metadata
+  - `LICENSE`, `THIRD_PARTY_NOTICES.md` — shipped with the port
 
 ## Build recipe (Orange Pi 5 build host, 192.168.86.243)
 
@@ -99,7 +101,7 @@ When we DO bundle for RK3588 (the portable path):
    only needs the ffmpeg chain + libass. `meson ... -Dgpl=true -Dlibmpv=true
    -Dvideo-output-drivers=[] ` (keep only what render API needs) — verify with
    `readelf -d libmpv.so.2 | grep NEEDED` afterward (should be just av*/ass/sys).
-2. Bundle into port/libs.aarch64: libmpv.so.2 + ffmpeg 6.1 set (libavcodec.so.60,
+2. Bundle into ytc/libs.aarch64: libmpv.so.2 + ffmpeg 6.1 set (libavcodec.so.60,
    libavformat.so.60, libavutil.so.58, libswscale.so.7, libswresample.so.4,
    libavfilter.so.9, libavdevice.so.60) + librockchip_mpp.so.1 (HARD NEEDED of our
    libavcodec; loads + sw-falls-back on non-Rockchip) + libass.so.9 + libjpeg.so.62
@@ -122,12 +124,14 @@ Bundled third-party components (libmpv and FFmpeg under LGPL-2.1-or-later,
 DejaVu Sans, SDL_GameControllerDB, nlohmann/json, stb) keep their own licenses
 and are **not** covered by YTC's noncommercial terms. See
 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). Both files also ship
-inside the port (`port/LICENSE`, `port/THIRD_PARTY_NOTICES.md`) so they travel
+inside the port (`ytc/LICENSE`, `ytc/THIRD_PARTY_NOTICES.md`) so they travel
 with the distributed zip, as the LGPL and PolyForm notice terms require.
 
 ## Still to do for a real PortMaster submission
 
-- port.json, screenshot, licenses folder, README for the store.
+- ~~port.json, screenshot, licenses folder, README for the store.~~ Done:
+  `ytc/port.json`, `ytc/gameinfo.xml`, `ytc/screenshot.jpg`, and shipped
+  `LICENSE`/`THIRD_PARTY_NOTICES.md`.
 - Test matrix beyond muOS (ArkOS, ROCKNIX, AmberELEC — libmpv presence/SONAME
   needs checking per CFW; the render-only custom mpv above is the fallback for
   CFWs that ship no libmpv).

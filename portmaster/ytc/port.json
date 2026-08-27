@@ -1,0 +1,37 @@
+{
+    "version": 4,
+    "name": "YTC.zip",
+    "items": [
+        "YTC.sh",
+        "ytc"
+    ],
+    "items_opt": null,
+    "attr": {
+        "title": "YTC",
+        "porter": [
+            "Christopher Roelofs"
+        ],
+        "desc": "A native, controller-driven YouTube client for handhelds. Browse, search, and watch YouTube with its own anonymous client - no login, no yt-dlp, no browser.",
+        "desc_md": "**YTC (Your Tube Client)** is a native, controller-driven YouTube client built for Linux handhelds. It talks to YouTube through its own anonymous Innertube client (no login, no yt-dlp, no Python, no browser) and plays video through a bundled render-only libmpv + FFmpeg, so it runs even on CFWs that ship no libmpv.\n\nFeatures: search, Home/channel feeds, Community posts, playlists, Shorts, comments with replies, favorites, watch-later, history, SponsorBlock, quality/speed/volume controls, offline downloads, and casting to a linked device or Chromecast.\n\nRequires a network connection.",
+        "inst": "Ready to run - no game files needed. Requires a Wi-Fi / network connection. All access is anonymous; no YouTube account or login is used.",
+        "inst_md": "Ready to run - no game files needed. Requires a **network connection**. All access is anonymous; no YouTube account or login is used.",
+        "genres": [
+            "utility"
+        ],
+        "image": {
+            "screenshot": "screenshot.jpg"
+        },
+        "rtr": true,
+        "exp": false,
+        "runtime": [],
+        "store": [],
+        "availability": "free",
+        "reqs": [
+            "network"
+        ],
+        "arch": [
+            "aarch64"
+        ],
+        "min_glibc": ""
+    }
+}
