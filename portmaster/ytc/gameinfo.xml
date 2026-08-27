@@ -3,7 +3,7 @@
   <game>
     <path>./YTC.sh</path>
     <name>YTC</name>
-    <desc>A native, controller-driven YouTube client for handhelds. Browse, search, and watch YouTube with its own anonymous client - no login, no yt-dlp, no browser. Requires a network connection.</desc>
+    <desc>A native, controller-driven YouTube client for handhelds. Browse, search, and watch YouTube with its own anonymous client. Requires a network connection.</desc>
     <developer>Christopher Roelofs</developer>
     <publisher>Christopher Roelofs</publisher>
     <genre>Application</genre>
