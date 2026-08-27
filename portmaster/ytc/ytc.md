@@ -1,19 +1,12 @@
 ## Notes
 
 **YTC (Your Tube Client)** is a native, controller-driven YouTube client for
-Linux handhelds. It talks to YouTube through its own anonymous Innertube client
-(no login, no yt-dlp, no Python, no browser) and plays video through a bundled
-render-only libmpv + FFmpeg, so it works even on CFWs that ship no libmpv.
+Linux handhelds. It talks to YouTube through its own anonymous Innertube client.
 
 Features: search, Home / channel feeds, Community posts, playlists, Shorts,
 comments with replies, favorites, watch-later, history, SponsorBlock,
 quality / speed / volume controls, offline downloads, and casting to a linked
 device or Chromecast.
-
-## Requirements
-
-- A **network connection** (Wi-Fi). YTC streams over HTTPS.
-- No YouTube account or login — all access is anonymous.
 
 Ready to run: no game files or extra data need to be copied in.
 
@@ -43,20 +36,7 @@ Ready to run: no game files or extra data need to be copied in.
 | Start | Menu |
 | B | Stop / back |
 
-## Licenses
-
-YTC's own code is under the PolyForm Noncommercial License 1.0.0 (`LICENSE`).
-Bundled components — libmpv and FFmpeg (LGPL-2.1-or-later), DejaVu Sans,
-SDL_GameControllerDB, nlohmann/json, and stb — keep their own licenses; see
-`THIRD_PARTY_NOTICES.md`.
-
 ## Compile
-
-Built for aarch64 on an Orange Pi 5. The goal is a binary whose only external
-dynamic deps are on-device (`libSDL2`, `libGLESv2`, `libpthread/m/c`); curl +
-mbedTLS and zlib are linked statically, and a **render-only** libmpv + FFmpeg
-(software decode, GPU-agnostic) are bundled in `libs.aarch64/` so playback works
-on CFWs that ship no libmpv.
 
 ```sh
 # libmpv built render-API-only (no drm/wayland/x11/gbm/egl VO backends) so it
@@ -70,8 +50,3 @@ cmake -S . -B build-port -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_PLAYER=OFF
 cmake --build build-port -j"$(nproc)"
 ```
-
-The stripped binary is installed here as `ytc.aarch64`; the matched
-`libmpv.so.2` + FFmpeg 6.x set (`libavcodec.so.60`, `libavformat.so.60`,
-`libavutil.so.58`, `libswscale.so.7`, `libswresample.so.4`, `libavfilter.so.9`)
-ship in `libs.aarch64/`.
