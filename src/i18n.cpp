@@ -50,6 +50,12 @@ const char* kKeys[(int)Str::COUNT] = {
     "CommentSortTop","CommentSortNewest",
     "MenuDownload","MenuRemoveDownload","Downloads",
     "Downloading","DownloadDone","DownloadFailed","DownloadBusy","DownloadRemoved",
+    "FooterSearchResults","SortedByRelevance","SortedByDate","SortedByViews",
+    "SortRelevance","SortDate","SortPopular",
+    "MenuSearchFilters","FilterType","FilterDuration","FilterUploadDate","FilterPrioritize",
+    "FilterChannels","DurShort","DurMedium","DurLong",
+    "DateToday","DateWeek","DateMonth","DateYear",
+    "FilterRelevance","FilterPopularity","FooterSearchEmpty",
 };
 
 // English is baked in — the source strings AND the ultimate fallback, so the UI is
@@ -69,7 +75,7 @@ const char* kEnglish[(int)Str::COUNT] = {
     "D-Pad: move    A: play/open    Select: options    Start: menu    Y: search    B: back",
     "Left/Right: browse    A: open    L/R: switch tabs    V: view    B: back",
     "D-Pad: move    A: type    X: clear    Y: search    B: cancel",
-    "Y: search    Start: menu    V: grid/carousel",
+    "Y: search    Start: menu",
     "Up/Down: choose    A: confirm    B: cancel",
     "Left/Right: change    B: back",
     "[A] pause    [Select] options    [<>] seek 10s    [Start] menu    [B] back",
@@ -81,7 +87,7 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Quality","Speed","Captions","none","Stats for Nerds","Enabled","Disabled",
     "A: select    Left/Right: change    B: close","A: select    B: close",
     "A: play video    Up/Down: move    B: close","Up/Down: scroll    B: close",
-    "Press Y  (or / )  to search","Waiting for network...","Reconnecting automatically",
+    "Press Y to search","Waiting for network...","Reconnecting automatically",
     "L/R shoulders: switch tabs",
     "Open a channel, press Select, and Add to Favorites","Your favorites show up here for quick access",
     "Press Select on a video and Add to Watch Later","Saved videos show up here",
@@ -112,6 +118,14 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Top","Newest",
     "Download","Remove Download","Downloads",
     "Downloading","Downloaded","Download failed","A download is in progress","Download removed",
+    "D-Pad: move    A: play/open    X: sort    Select: options    Start: menu    Y: search    B: back",
+    "Sorted by relevance","Sorted by date","Sorted by views",
+    "Relevance","Newest","Popular",
+    "Search Filters","Type","Duration","Upload date","Prioritize",
+    "Channels","Under 3 min","3 - 20 min","Over 20 min",
+    "Today","This week","This month","This year",
+    "Relevance","Popularity",
+    "Select: filters    Y: search    Start: menu    B: back",
 };
 
 struct Lang {

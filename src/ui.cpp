@@ -168,6 +168,11 @@ std::string ChannelMetaCache::avatar(const std::string& id) {
     auto it = avatar_.find(id);
     return it == avatar_.end() ? std::string() : it->second;
 }
+std::string ChannelMetaCache::name(const std::string& id) {
+    std::lock_guard<std::mutex> lk(m_);
+    auto it = name_.find(id);
+    return it == name_.end() ? std::string() : it->second;
+}
 void ChannelMetaCache::worker() {
     while (!stop_) {
         std::string id;
@@ -178,6 +183,7 @@ void ChannelMetaCache::worker() {
         std::lock_guard<std::mutex> lk(m_);
         vcount_[id] = info.video_count_text;            // "" if not found
         avatar_[id] = info.avatar_url;                  // "" if not found
+        name_[id]   = info.name;                        // "" if not found
     }
 }
 
@@ -272,7 +278,7 @@ App::GridMetrics App::grid_metrics() const {
     m.rowstep = m.cardh + m.gutter;
     // Channel views carry a tab strip between the header and the grid; its height
     // scales with the window (recomputed every frame -> resize-safe).
-    m.tabs_h = (channel_tabs_active() || home_tabs_active()) ? 52 * m.s : 0;
+    m.tabs_h = (channel_tabs_active() || home_tabs_active() || search_tabs_active()) ? 52 * m.s : 0;
     m.top = m.hbar + m.tabs_h + m.pad;
     m.fh = 44 * m.s;
     return m;
@@ -362,8 +368,12 @@ void App::set_results(std::vector<yt::SearchResult> r) {
     build_tile_lines();          // precompute metadata lines once (not per frame)
     // Thumbnails are requested lazily per-viewport by the renderers (bounded memory);
     // channel metadata is small, so fetch it up front.
-    for (const auto& v : results_)
+    for (const auto& v : results_) {
         if (v.is_channel()) chan_meta_.request(v.channel_id);   // async video count
+        // Search shorts carry no uploader name; resolve it from their channel id.
+        else if (v.is_short && v.author.empty() && !v.channel_id.empty())
+            chan_meta_.request(v.channel_id);
+    }
     queue_restricted_checks();   // judge unknown channels in the background
 }
 void App::search(const std::string& query) {
@@ -371,13 +381,132 @@ void App::search(const std::string& query) {
     view_label_.clear();
     in_channel_view_ = false;
     subview_playlist_.clear(); tab_focus_ = false; view_stack_.clear();
-    auto f = it_.search_feed(query);      // never throws (guarded in Innertube)
+    filt_type_ = filt_duration_ = filt_date_ = filt_sort_ = 0;   // fresh search resets filters
+    run_search();
+}
+
+// (Re-)issue the current query_ with the active server-side filters. Called by a
+// fresh search() and again whenever the Search Filters modal changes something.
+void App::run_search() {
+    static const int kTypePb[] = {0, 1, 2, 3};        // Off/Videos/Channels/Playlists
+    static const int kDurPb[]  = {0, 4, 5, 2};        // Off/Under3/3-20/Over20
+    static const int kDatePb[] = {0, 2, 3, 4, 5};     // Off/Today/Week/Month/Year
+    static const int kSortPb[] = {0, 0, 3};           // Off/Relevance/Popularity (view count)
+    std::string params = yt::build_search_params(kTypePb[filt_type_], kDurPb[filt_duration_],
+                                                 kDatePb[filt_date_], kSortPb[filt_sort_]);
+    auto f = it_.search_feed(query_, params);   // never throws (guarded in Innertube)
     cont_token_ = f.continuation; cont_endpoint_ = f.endpoint; cont_channel_id_ = f.channel_id;
     set_results(std::move(f.items));
+    search_tab_ = 0; search_sort_ = 0;  // client-side tab/sort reset to All / Relevance
+    search_base_ = results_;            // canonical relevance order of all types (tab/sort source)
     if (results_.empty()) {
         status_msg_ = i18n::tr(i18n::Str::NoResultsConn);
         status_until_ = SDL_GetTicks() + 8000;
     }
+}
+
+// The "Search Filters" modal: four cyclable rows, each defaulting to Off. `snapshot`
+// records the entry-state for change detection; false on in-place rebuilds (cycling),
+// so it isn't overwritten between opening the modal and closing it.
+void App::open_search_filters(bool snapshot) {
+    using i18n::tr; using S = i18n::Str;
+    auto row = [&](S label, const S* vals, int n, int cur, MenuAction act) {
+        (void)n;
+        menu_items_.push_back({tr(label) + std::string(":  ") + tr(vals[cur]), act});
+    };
+    static const S kType[] = {S::Off, S::TabVideos, S::FilterChannels, S::TabPlaylists};
+    static const S kDur[]  = {S::Off, S::DurShort, S::DurMedium, S::DurLong};
+    static const S kDate[] = {S::Off, S::DateToday, S::DateWeek, S::DateMonth, S::DateYear};
+    static const S kSort[] = {S::Off, S::FilterRelevance, S::FilterPopularity};
+    menu_kind_ = MenuKind::SearchFilters;
+    menu_items_.clear();
+    row(S::FilterType,       kType, 4, filt_type_,     MenuAction::CycleFilterType);
+    row(S::FilterDuration,   kDur,  4, filt_duration_, MenuAction::CycleFilterDuration);
+    row(S::FilterUploadDate, kDate, 5, filt_date_,     MenuAction::CycleFilterDate);
+    row(S::FilterPrioritize, kSort, 3, filt_sort_,     MenuAction::CycleFilterSort);
+    menu_sel_ = 0;
+    if (snapshot) {
+        filt_snapshot_[0] = filt_type_; filt_snapshot_[1] = filt_duration_;
+        filt_snapshot_[2] = filt_date_; filt_snapshot_[3] = filt_sort_;
+    }
+    menu_open_ = true;
+}
+
+// Parse a view-count string ("1,605,755 views" or "1.6M views") into a number for
+// the Popular sort. Empty/unknown (playlists, channels) sort last (returns -1).
+static long long parse_view_count(const std::string& s) {
+    if (s.empty()) return -1;
+    double n = 0; size_t i = 0; bool any = false;
+    while (i < s.size() && !isdigit((unsigned char)s[i])) ++i;
+    for (; i < s.size() && (isdigit((unsigned char)s[i]) || s[i] == ',' || s[i] == '.'); ++i) {
+        if (s[i] == ',') continue;
+        if (s[i] == '.') { double frac = 0, scale = 0.1;
+            for (++i; i < s.size() && isdigit((unsigned char)s[i]); ++i) { frac += (s[i]-'0')*scale; scale *= 0.1; }
+            n += frac; break; }
+        n = n * 10 + (s[i]-'0'); any = true;
+    }
+    if (!any) return -1;
+    while (i < s.size() && s[i] == ' ') ++i;
+    if (i < s.size()) { char u = toupper((unsigned char)s[i]);
+        if (u == 'K') n *= 1e3; else if (u == 'M') n *= 1e6; else if (u == 'B') n *= 1e9; }
+    return (long long)(n + 0.5);
+}
+
+// Cycle the search-results sort (Relevance -> Newest -> Popular) and pop a toast.
+void App::toggle_search_sort() {
+    if (query_.empty() || search_base_.empty()) return;
+    search_sort_ = (search_sort_ + 1) % 3;
+    apply_search_view(/*keep_selection=*/false);
+    i18n::Str toast = search_sort_ == 1 ? i18n::Str::SortedByDate
+                    : search_sort_ == 2 ? i18n::Str::SortedByViews
+                                        : i18n::Str::SortedByRelevance;
+    status_msg_ = i18n::tr(toast);
+    status_until_ = SDL_GetTicks() + 2500;
+}
+
+// Switch the active search tab (All/Videos/Shorts/Playlists) and rebuild the view.
+void App::load_search_tab(int tab) {
+    if (tab < 0 || tab > 4 || tab == search_tab_) return;
+    search_tab_ = tab;
+    apply_search_view(/*keep_selection=*/false);
+}
+
+// Rebuild results_ from the canonical list: filter by the active tab, then sort.
+// keep_selection preserves the highlighted item by id (used after pagination).
+void App::apply_search_view(bool keep_selection) {
+    std::string cur_id;
+    if (keep_selection && sel_ >= 0 && sel_ < (int)results_.size())
+        cur_id = results_[sel_].video_id;
+    results_.clear();
+    for (const auto& r : search_base_) {
+        switch (search_tab_) {
+            case 1: if (r.is_short || !(r.kind == yt::SearchResult::Kind::Video)) continue; break;  // Videos
+            case 2: if (!r.is_short) continue; break;                                                // Shorts
+            case 3: if (!r.is_channel()) continue; break;                                            // Channels
+            case 4: if (!r.is_playlist()) continue; break;                                           // Playlists
+            default: break;                                                                          // All
+        }
+        results_.push_back(r);
+    }
+    if (search_sort_ == 1)
+        std::stable_sort(results_.begin(), results_.end(),
+            [](const yt::SearchResult& a, const yt::SearchResult& b) {
+                return yt::approx_age_secs(a.published_text) <
+                       yt::approx_age_secs(b.published_text);   // newest (smallest age) first
+            });
+    else if (search_sort_ == 2)
+        std::stable_sort(results_.begin(), results_.end(),
+            [](const yt::SearchResult& a, const yt::SearchResult& b) {
+                return parse_view_count(a.view_count_text) >
+                       parse_view_count(b.view_count_text);     // most views first
+            });
+    build_tile_lines();
+    sel_ = 0;
+    if (keep_selection && !cur_id.empty())
+        for (int i = 0; i < (int)results_.size(); ++i)
+            if (results_[i].video_id == cur_id) { sel_ = i; break; }
+    if (sel_ == 0) { scroll_ = 0; carousel_pos_ = 0; }
+    ensure_visible();
 }
 void App::load_home() {
     query_.clear();                       // empty query + empty view_label_ => "Home"
@@ -806,6 +935,13 @@ void App::open_settings() {
 
 // Change a setting's value by dir (-1 = Left, +1 = Right) and persist it.
 void App::adjust_setting(MenuAction a, int dir) {
+    // Search-filter rows cycle Off..N-1 (wrap) and rebuild the modal in place.
+    auto cycle = [&](int& v, int n) { v = (v + dir % n + n) % n;
+        int keep = menu_sel_; open_search_filters(/*snapshot=*/false); menu_sel_ = keep; };
+    if (a == MenuAction::CycleFilterType)     { cycle(filt_type_, 4);     return; }
+    if (a == MenuAction::CycleFilterDuration) { cycle(filt_duration_, 4); return; }
+    if (a == MenuAction::CycleFilterDate)     { cycle(filt_date_, 5);     return; }
+    if (a == MenuAction::CycleFilterSort)     { cycle(filt_sort_, 3);     return; }
     if (a == MenuAction::ToggleStats) {
         stats_for_nerds_ = !stats_for_nerds_;
         int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label in place
@@ -1607,13 +1743,23 @@ void App::render_comments(gfx::Renderer& rn) {
 // ---------- Context options menu ----------
 void App::open_menu() {
     menu_kind_ = MenuKind::Context;
-    // Target: the playing video (in player) or the highlighted grid item.
+    // Target: the playing video (in player) or the highlighted grid item. On the
+    // search screen with no results we still open the menu (Search Filters only) so a
+    // filter that returns nothing doesn't strand the user with no way back to filters.
+    bool have_item = true;
     if (mode_ == Mode::Playing) menu_target_ = now_playing_item_;
-    else { const yt::SearchResult* v = selected(); if (!v) return; menu_target_ = *v; }
+    else { const yt::SearchResult* v = selected();
+           if (v) menu_target_ = *v;
+           else if (search_tabs_active()) { menu_target_ = yt::SearchResult{}; have_item = false; }
+           else return; }
 
     menu_items_.clear();
     using i18n::tr; using S = i18n::Str;
     const yt::SearchResult& t = menu_target_;
+    // On the search-results screen, the options menu leads with Search Filters.
+    if (search_tabs_active() && mode_ != Mode::Playing)
+        menu_items_.push_back({tr(S::MenuSearchFilters), MenuAction::OpenSearchFilters});
+    if (have_item) {
     if (t.is_post()) {
         menu_items_.push_back({tr(S::ReadPost), MenuAction::ShowDescription});
         if (!t.video_id.empty())
@@ -1689,6 +1835,7 @@ void App::open_menu() {
         if (mode_ != Mode::Playing && !t.channel_id.empty())
             menu_items_.push_back({tr(S::GoToChannel), MenuAction::OpenChannel});
     }
+    }  // end have_item
     // Clear the whole watch history — only from a tile in the History view.
     if (mode_ != Mode::Playing && view_label_ == "History")
         menu_items_.push_back({tr(S::ClearHistoryItem), MenuAction::ClearHistory});
@@ -1703,6 +1850,8 @@ void App::menu_activate() {
     if (menu_sel_ < 0 || menu_sel_ >= (int)menu_items_.size()) return;
     const yt::SearchResult t = menu_target_;   // copy (open_channel may replace results)
     switch (menu_items_[menu_sel_].action) {
+        case MenuAction::OpenSearchFilters:
+            menu_open_ = false; open_search_filters(); return;   // swap context menu -> filters modal
         case MenuAction::FavoriteToggle: {
             std::string name = t.is_channel() ? t.title : t.author;
             if (fav_ids_.count(t.channel_id)) { it_.remove_favorite(t.channel_id);
@@ -2017,14 +2166,25 @@ void App::poll_more() {
     for (auto& v : next.items) {
         thumbs_.request(v.thumbnail_url);
         if (v.is_channel()) chan_meta_.request(v.channel_id);
+        else if (v.is_short && v.author.empty() && !v.channel_id.empty())
+            chan_meta_.request(v.channel_id);   // resolve the short's uploader name
     }
     size_t added = next.items.size();
-    results_.insert(results_.end(), std::make_move_iterator(next.items.begin()),
-                    std::make_move_iterator(next.items.end()));
-    if (channel_tabs_active())         // channel-tab rows omit the uploader
-        for (auto& r : results_)
-            if (r.author.empty()) r.author = query_;
-    build_tile_lines();                // refresh metadata-line cache for the grown list
+    bool search_ctx = !query_.empty() && !in_channel_view_ && !search_base_.empty();
+    if (search_ctx) {
+        // Search results: new page joins the canonical relevance list, then we rebuild
+        // results_ in the active sort order (keeping the current selection by id).
+        search_base_.insert(search_base_.end(), std::make_move_iterator(next.items.begin()),
+                            std::make_move_iterator(next.items.end()));
+        apply_search_view(/*keep_selection=*/true);
+    } else {
+        results_.insert(results_.end(), std::make_move_iterator(next.items.begin()),
+                        std::make_move_iterator(next.items.end()));
+        if (channel_tabs_active())         // channel-tab rows omit the uploader
+            for (auto& r : results_)
+                if (r.author.empty()) r.author = query_;
+        build_tile_lines();                // refresh metadata-line cache for the grown list
+    }
     cont_token_ = next.continuation;   // new token, or "" at the end of the feed
     queue_restricted_checks();
     if (getenv("YTC_DEBUG"))
@@ -2546,15 +2706,28 @@ void App::input(Action a) {
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
                     act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
-                    act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage)
+                    act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage ||
+                    act == MenuAction::CycleFilterType || act == MenuAction::CycleFilterDuration ||
+                    act == MenuAction::CycleFilterDate || act == MenuAction::CycleFilterSort)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
-            case Action::Select: menu_activate(); break;
+            case Action::Select:
+                // The Search Filters rows are cycled with Left/Right; A does nothing
+                // (without this it would fall through and close the modal).
+                if (menu_kind_ != MenuKind::SearchFilters) menu_activate();
+                break;
             case Action::Back:
             case Action::Menu:
                 if (menu_kind_ == MenuKind::Settings) {   // Settings -> back to main menu
                     menu_open_ = false; open_main_menu();
+                    break;
+                }
+                if (menu_kind_ == MenuKind::SearchFilters) {   // close filters; re-search if changed
+                    menu_open_ = false;
+                    bool changed = filt_type_ != filt_snapshot_[0] || filt_duration_ != filt_snapshot_[1]
+                                || filt_date_ != filt_snapshot_[2] || filt_sort_ != filt_snapshot_[3];
+                    if (changed) run_search();
                     break;
                 }
                 // Close the options menu. If the quality changed while playing, re-resolve
@@ -2633,6 +2806,7 @@ void App::input(Action a) {
     // Grid / carousel browse. Any user input here cancels a pending autoplay countdown.
     cancel_autoplay();
     if (a == Action::Search) { open_search(); return; }
+    if (a == Action::Sort && !query_.empty()) { toggle_search_sort(); return; }  // X: sort search
     if (a == Action::Menu) { open_menu(); return; }   // options for the highlighted item
     if (a == Action::Back) {
         // Stage 1: B jumps to the top of the list (first tile selected).
@@ -2644,6 +2818,7 @@ void App::input(Action a) {
         // (Home and channel pages both). The All tab then does the view's normal back.
         if (home_tabs_active() && home_tab_ != 0) { load_home_tab(0); return; }
         if (channel_tabs_active() && chan_tab_ != 0) { load_channel_tab(0); return; }
+        if (search_tabs_active() && search_tab_ != 0) { load_search_tab(0); return; }
         // Stage 3: normal back — unwind a subview (channel/playlist -> where it was
         // opened from), else a top-level view that isn't Home falls back to Home.
         // On Home itself, Back does nothing (never quits).
@@ -2838,6 +3013,9 @@ void App::cycle_tab(int dir) {
     } else if (home_tabs_active()) {
         int t = home_tab_ + dir; if (t < 0 || t > 4) return;
         load_home_tab(t);
+    } else if (search_tabs_active()) {
+        int t = search_tab_ + dir; if (t < 0 || t > 4) return;   // All/Videos/Shorts/Channels/Playlists
+        load_search_tab(t);
     } else return;
     tab_focus_ = false;   // shoulder-switch keeps focus on content, not the strip
 }
@@ -2871,7 +3049,8 @@ void App::render_menu(gfx::Renderer& rn) {
     int n = (int)menu_items_.size();
     // Settings rows carry a "Label:  Value" so they need more room than the
     // context menu; widen that panel to keep values from crowding the edge.
-    float iw = std::min((menu_kind_ == MenuKind::Settings ? 620.f : 560.f)*s, W*0.86f);
+    float iw = std::min((menu_kind_ == MenuKind::Settings ||
+                         menu_kind_ == MenuKind::SearchFilters ? 620.f : 560.f)*s, W*0.86f);
     float ih = 58*s, gap = 8*s;
     float title_h = 56*s, foot_h = 34*s;                 // reserve the footer inside the panel
     // Clamp to the screen and scroll the item list when it's too tall to fit.
@@ -2891,6 +3070,7 @@ void App::render_menu(gfx::Renderer& rn) {
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
     std::string heading = (menu_kind_ == MenuKind::Main) ? "Menu"
                         : (menu_kind_ == MenuKind::Settings) ? "Settings"
+                        : (menu_kind_ == MenuKind::SearchFilters) ? i18n::tr(i18n::Str::MenuSearchFilters)
                           : font_body_->ellipsize(menu_target_.title, iw - 4*s);
     rn.text(*font_body_, heading, px, py, theme_.text_dim);
     // Scroll hints (more items above/below the window).
@@ -2915,7 +3095,7 @@ void App::render_menu(gfx::Renderer& rn) {
             it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
             it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec)
             has_value = true;
-    const char* foot = (menu_kind_ == MenuKind::Settings)
+    const char* foot = (menu_kind_ == MenuKind::Settings || menu_kind_ == MenuKind::SearchFilters)
                      ? i18n::tr(i18n::Str::FooterDesc)
                      : has_value ? i18n::tr(i18n::Str::FooterMenuValue)
                      : i18n::tr(i18n::Str::FooterMenuPlain);
@@ -3177,8 +3357,12 @@ void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
     std::string chan_l3;
     if (v.is_channel()) { chan_l3 = chan_meta_.video_count(v.channel_id);
         if (chan_l3.empty()) chan_l3 = t->l3; }
+    // Search shorts have no uploader name in the response; fill l2 once resolved.
+    std::string short_l2;
+    if (v.is_short && t->l2.empty() && !v.channel_id.empty())
+        short_l2 = chan_meta_.name(v.channel_id);
     const std::string& l1 = t->l1;
-    const std::string& l2 = t->l2;
+    const std::string& l2 = short_l2.empty() ? t->l2 : short_l2;
     const std::string& l3 = v.is_channel() ? chan_l3 : t->l3;
     float lh1 = font_body_->line_height(), lh2 = font_small_->line_height();
     float y2 = y + lh1 + 4*s, y3 = y2 + lh2 + 3*s;
@@ -3226,6 +3410,10 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
     // Right-aligned count/status; measure it first so the subtitle can be ellipsized
     // to the exact gap and never slides under it (the count grows with "loading more...").
     std::string count = std::to_string(results_.size()) + " " + i18n::tr(i18n::Str::Results);
+    if (!query_.empty() && !in_channel_view_ && !results_.empty())   // search sort mode
+        count += std::string("  -  ") +
+                 i18n::tr(search_sort_ == 1 ? i18n::Str::SortDate
+                        : search_sort_ == 2 ? i18n::Str::SortPopular : i18n::Str::SortRelevance);
     if (more_running_ || home_more_running_) count += std::string("  -  ") + i18n::tr(i18n::Str::Loading);
     if (refresh_running_) count = i18n::tr(i18n::Str::Loading);
     float count_w = font_small_->text_width(count);
@@ -3236,17 +3424,21 @@ void App::render_browse_chrome(gfx::Renderer& rn, float hy) {
     if (sub_w > 40*s)
         rn.text(*font_body_, font_body_->ellipsize(sub, sub_w), sub_x, hy+32*s, theme_.text_dim);
 
-    if (channel_tabs_active() || home_tabs_active()) {
-        int active_tab = channel_tabs_active() ? chan_tab_ : home_tab_;
+    if (channel_tabs_active() || home_tabs_active() || search_tabs_active()) {
+        int active_tab = channel_tabs_active() ? chan_tab_
+                       : search_tabs_active()  ? search_tab_ : home_tab_;
         GridMetrics tm = grid_metrics();
         float ty0 = hy + hbar;
         rn.quad({0, ty0, (float)W, tm.tabs_h}, theme_.panel.with_a(0.6f));
         using S = i18n::Str;
-        const S kTabs[] = {S::TabAll, S::TabVideos, S::TabShorts, S::TabPosts, S::TabPlaylists};
-        int ntabs = 5;   // channel: All/Videos/Shorts/Playlists/Posts; home mirrors it
+        // Search omits the Posts tab (YouTube search returns no posts) but adds Channels.
+        const S kTabs[]       = {S::TabAll, S::TabVideos, S::TabShorts, S::TabPosts, S::TabPlaylists};
+        const S kSearchTabs[] = {S::TabAll, S::TabVideos, S::TabShorts, S::FilterChannels, S::TabPlaylists};
+        const S* tabs = search_tabs_active() ? kSearchTabs : kTabs;
+        int ntabs = 5;
         float tx = 32 * s;
         for (int i = 0; i < ntabs; ++i) {
-            const char* label = i18n::tr(kTabs[i]);
+            const char* label = i18n::tr(tabs[i]);
             float tw = font_body_->text_width(label);
             float chip_w = tw + 36 * s, chip_h = tm.tabs_h - 12 * s;
             gfx::Rect chip{tx, ty0 + 6 * s, chip_w, chip_h};
@@ -3284,7 +3476,8 @@ void App::render_grid(gfx::Renderer& rn) {
             l3 = "";
         } else if (channel_tabs_active() ||
             (home_tabs_active() && !home_items_.empty()) ||
-            (home_tabs_active() && refresh_running_)) {
+            (home_tabs_active() && refresh_running_) ||
+            (search_tabs_active() && !search_base_.empty())) {   // a search tab with no items of that type
             l1 = refresh_running_ ? i18n::tr(S::Loading) : i18n::tr(S::NothingInTab);
             l2 = refresh_running_ ? "" : i18n::tr(S::SwitchTabsHint);
             l3 = "";
@@ -3307,10 +3500,12 @@ void App::render_grid(gfx::Renderer& rn) {
         rn.text(*font_title_, l1, (W - font_title_->text_width(l1))/2, H*0.40f, theme_.text);
         rn.text(*font_body_,  l2, (W - font_body_->text_width(l2))/2,  H*0.40f + 52*s, theme_.accent);
         rn.text(*font_small_, l3, (W - font_small_->text_width(l3))/2, H*0.40f + 92*s, theme_.text_dim);
-        // Footer hints still useful.
+        // Footer hints still useful. On a search with no results, surface Select:
+        // filters so a too-narrow filter set can still be reached and loosened.
         float fh0 = 44*s;
         rn.quad({0, H-fh0, (float)W, fh0}, theme_.panel);
-        rn.text(*font_small_, i18n::tr(i18n::Str::FooterHomeMin),
+        rn.text(*font_small_, i18n::tr(search_tabs_active() ? i18n::Str::FooterSearchEmpty
+                                                            : i18n::Str::FooterHomeMin),
                 32*s, H - fh0 + 12*s, theme_.text_dim);
         rn.end();
         return;
@@ -3357,7 +3552,7 @@ void App::render_grid(gfx::Renderer& rn) {
     // Footer hint bar.
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, i18n::tr(i18n::Str::FooterBrowse),
+    rn.text(*font_small_, browse_footer(),
             32*s, H - fh + 12*s, theme_.text_dim);
 
     // Transient status banner (e.g. "This live event will begin in 3 days.").
@@ -3395,6 +3590,10 @@ bool App::browse_empty_overlay(gfx::Renderer& rn) {
     else if (view_label_ == "History") l1 = i18n::tr(i18n::Str::NoHistory);
     else if (view_label_ == "Favorite Channels") l1 = i18n::tr(i18n::Str::NoFavorites);
     rn.text(*font_title_, l1, (W - font_title_->text_width(l1))/2, H*0.45f, theme_.text);
+    // Match the grid's empty-state: pinned footer bar with the minimal hints.
+    float fh = 44*s;
+    rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
+    rn.text(*font_small_, i18n::tr(i18n::Str::FooterHomeMin), 32*s, H - fh + 12*s, theme_.text_dim);
     return true;
 }
 
@@ -3411,7 +3610,7 @@ void App::render_carousel(gfx::Renderer& rn) {
 
     update_carousel_anim();
 
-    float top = hbar + (channel_tabs_active() || home_tabs_active() ? 52*s : 0);
+    float top = hbar + (channel_tabs_active() || home_tabs_active() || search_tabs_active() ? 52*s : 0);
     float cx = W / 2.f, cy = top + (H - top) * 0.40f;
     float big_w = std::min(W * 0.46f, (H - top) * 0.60f * 16.f/9.f);
     float big_h = big_w * 9.f / 16.f;
@@ -3447,7 +3646,7 @@ void App::render_carousel(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, i18n::tr(i18n::Str::FooterSubview),
+    rn.text(*font_small_, browse_footer(),
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
@@ -3468,7 +3667,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
 
     update_carousel_anim();
 
-    float top = hbar + (channel_tabs_active() || home_tabs_active() ? 52*s : 0);
+    float top = hbar + (channel_tabs_active() || home_tabs_active() || search_tabs_active() ? 52*s : 0);
     float cx = W / 2.f, cy = top + (H - top) * 0.42f;
     float cardW = std::min(W * 0.40f, (H - top) * 0.58f * 16.f/9.f);
     float cardH = cardW * 9.f / 16.f;
@@ -3523,7 +3722,7 @@ void App::render_carousel3d(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, i18n::tr(i18n::Str::FooterSubview),
+    rn.text(*font_small_, browse_footer(),
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();
@@ -3544,7 +3743,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
     if (n == 0) { browse_empty_overlay(rn); rn.end(); return; }
     update_carousel_anim();
 
-    float top = hbar + (channel_tabs_active() || home_tabs_active() ? 52*s : 0);
+    float top = hbar + (channel_tabs_active() || home_tabs_active() || search_tabs_active() ? 52*s : 0);
     float cx = W / 2.f, cy = top + (H - top) * 0.44f;
     float cardW = std::min(W * 0.42f, (H - top) * 0.60f * 16.f/9.f);
     float cardH = cardW * 9.f / 16.f;
@@ -3607,7 +3806,7 @@ void App::render_coverflow(gfx::Renderer& rn) {
 
     float fh = 44*s;
     rn.quad({0, H-fh, (float)W, fh}, theme_.panel);
-    rn.text(*font_small_, i18n::tr(i18n::Str::FooterSubview),
+    rn.text(*font_small_, browse_footer(),
             32*s, H - fh + 12*s, theme_.text_dim);
     draw_status_banner(rn, hbar + 16*s, s);
     rn.end();

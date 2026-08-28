@@ -4,6 +4,7 @@
 #pragma once
 #include "gfx.h"
 #include "innertube.h"
+#include "i18n.h"
 #include "cast.h"
 #include "http.h"
 #include "player.h"
@@ -64,6 +65,7 @@ public:
     void request(const std::string& channel_id);          // idempotent
     std::string video_count(const std::string& channel_id); // "" until ready
     std::string avatar(const std::string& channel_id);      // avatar URL, "" until ready
+    std::string name(const std::string& channel_id);        // channel name, "" until ready
 private:
     void worker();
     yt::Innertube* it_;
@@ -73,6 +75,7 @@ private:
     std::deque<std::string> queue_;
     std::unordered_map<std::string, std::string> vcount_;   // id -> "528 videos"
     std::unordered_map<std::string, std::string> avatar_;   // id -> avatar URL
+    std::unordered_map<std::string, std::string> name_;     // id -> channel name
     std::unordered_map<std::string, bool> requested_;
 };
 
@@ -262,8 +265,10 @@ private:
                             CycleView, CycleVolume, CycleHwdec, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
-                            GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads, Quit };
-    enum class MenuKind { Context, Main, Settings };
+                            GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
+                            OpenSearchFilters, CycleFilterType, CycleFilterDuration,
+                            CycleFilterDate, CycleFilterSort, Quit };
+    enum class MenuKind { Context, Main, Settings, SearchFilters };
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
     void adjust_volume(int delta);               // Up/Down in the player: app-local volume
@@ -347,6 +352,17 @@ private:
     void pump_reply_loads();                // background reply loader (1 at a time)
     void toggle_comment_replies();          // expand/collapse the selected comment
     void toggle_comment_sort();             // switch Top <-> Newest (X)
+    void toggle_search_sort();              // search results: cycle Relevance/Newest/Popular (X)
+    void load_search_tab(int tab);          // search results: switch All/Videos/Shorts/Playlists
+    void apply_search_view(bool keep_selection);   // rebuild results_ (tab filter + sort)
+    bool search_tabs_active() const {       // tabs on the search-results screen
+        return !query_.empty() && !in_channel_view_ && view_label_.empty();
+    }
+    // Footer hint for the browse views: search results get an extra "X: sort".
+    const char* browse_footer() const {
+        return i18n::tr(query_.empty() ? i18n::Str::FooterBrowse
+                                       : i18n::Str::FooterSearchResults);
+    }
     void render_comments(gfx::Renderer& rn);
     void close_comments();
 
@@ -476,6 +492,21 @@ private:
     ThumbCache thumbs_;
     ChannelMetaCache chan_meta_{&it_};   // async video-count for channel tiles
     std::vector<yt::SearchResult> results_;
+    // Search-results tabs + sort: results_ is the display list; search_base_ keeps the
+    // canonical relevance order of ALL result types (grows with pagination) so we can
+    // filter (tab) and re-sort without another network call.
+    std::vector<yt::SearchResult> search_base_;
+    int  search_tab_ = 0;                   // 0=All 1=Videos 2=Shorts 3=Playlists
+    int  search_sort_ = 0;                  // 0=Relevance 1=Newest 2=Popular (by views)
+    // Server-side search filters (a "Search Filters" options menu). 0 = Off for each;
+    // reset on every fresh search. Sent as an Innertube `params` protobuf.
+    int  filt_type_ = 0;      // 0 Off 1 Videos 2 Channels 3 Playlists
+    int  filt_duration_ = 0;  // 0 Off 1 Under 3min 2 3-20min 3 Over 20min
+    int  filt_date_ = 0;      // 0 Off 1 Today 2 This week 3 This month 4 This year
+    int  filt_sort_ = 0;      // 0 Off 1 Relevance 2 Popularity
+    int  filt_snapshot_[4] = {0,0,0,0};     // filter state when the modal opened (change detect)
+    void run_search();                      // (re-)issue query_ with the current filters
+    void open_search_filters(bool snapshot = true);   // the "Search Filters" modal
     std::string query_;
     std::string view_label_;   // header label for menu views ("Watch Later" etc.); "" = Latest/search
     int sel_ = 0;       // selected card index

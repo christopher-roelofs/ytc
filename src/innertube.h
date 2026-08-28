@@ -58,6 +58,19 @@ struct AudioPrefs {
 };
 
 // One result row — a video, a channel, a playlist, or a community post.
+// Approximate age in seconds parsed from a "3 years ago" / ISO published string
+// (larger = older; empty/undated sorts last). Used for date-sorting feeds and search.
+long long approx_age_secs(const std::string& s);
+
+// Build the base64 protobuf `params` value for a filtered search (0 = omit that
+// filter). Protobuf field values as YouTube encodes them:
+//   type:        1 video, 2 channel, 3 playlist, 4 movie, 9 short
+//   duration:    2 over-20-min, 4 under-3-min, 5 between-3-and-20-min
+//   upload_date: 1 hour, 2 today, 3 this-week, 4 this-month, 5 this-year
+//   sort_by:     0 relevance, 1 rating, 2 upload-date, 3 view-count (popularity)
+// Returns "" when every argument is 0 (an unfiltered, default search).
+std::string build_search_params(int type, int duration, int upload_date, int sort_by);
+
 struct SearchResult {
     enum class Kind { Video, Channel, Playlist, Post };
     Kind kind = Kind::Video;
@@ -197,7 +210,7 @@ public:
     std::vector<SearchResult> search(const std::string& query, int max_results = 20);
 
     // Paginated variants: initial page + continuation token, then continue_feed().
-    Feed search_feed(const std::string& query);
+    Feed search_feed(const std::string& query, const std::string& params = "");
     Feed channel_feed(const std::string& channel_id);          // channel's Videos tab
     Feed channel_shorts_feed(const std::string& channel_id);   // channel's Shorts tab
     Feed channel_playlists_feed(const std::string& channel_id);// channel's Playlists tab

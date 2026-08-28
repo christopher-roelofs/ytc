@@ -301,11 +301,51 @@ static std::string run_text(const json& node) {
 }
 
 static const json* find_key(const json& node, const char* key);   // defined below
-static long long approx_age_secs(const std::string& s);            // defined below
+// approx_age_secs is exposed (declared in innertube.h) so the UI can date-sort too.
 
 // Parse a lockupViewModel (YouTube's newer video item, used on channel/home tabs
 // and continuations) into a video SearchResult. chan_hint = the channel we're
 // viewing (lockups don't carry the uploader id on a channel page).
+// Standard/URL-safe base64 decode (accepts both alphabets; ignores padding).
+static std::string base64_decode(const std::string& in) {
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+' || c == '-') return 62;
+        if (c == '/' || c == '_') return 63;
+        return -1;
+    };
+    std::string out; int buf = 0, bits = 0;
+    for (char c : in) { int v = val(c); if (v < 0) continue;
+        buf = (buf << 6) | v; bits += 6;
+        if (bits >= 8) { bits -= 8; out += (char)((buf >> bits) & 0xff); } }
+    return out;
+}
+// A reel's reelWatchEndpoint.params protobuf carries the uploader's channel id in
+// field 23 (a 24-char "UC..." string). Returns "" if absent/malformed.
+static std::string reel_params_channel_id(const std::string& params_b64) {
+    if (params_b64.empty()) return "";
+    std::string b = base64_decode(params_b64);
+    size_t i = 0;
+    auto varint = [&](uint64_t& v) -> bool {
+        v = 0; int s = 0;
+        while (i < b.size()) { uint8_t x = (uint8_t)b[i++]; v |= (uint64_t)(x & 0x7f) << s; s += 7;
+            if (!(x & 0x80)) return true; }
+        return false;
+    };
+    while (i < b.size()) {
+        uint64_t tag; if (!varint(tag)) break;
+        int field = (int)(tag >> 3), wire = (int)(tag & 7);
+        if (wire == 0) { uint64_t v; if (!varint(v)) break; }
+        else if (wire == 2) { uint64_t len; if (!varint(len)) break;
+            if (i + len > b.size()) break;
+            if (field == 23) return b.substr(i, len);   // the channel id
+            i += len;
+        } else break;   // groups/fixed widths don't appear here
+    }
+    return "";
+}
 static SearchResult parse_lockup(const json& lv, const std::string& chan_hint) {
     SearchResult sr;
     std::string ctype = lv.value("contentType", "");
@@ -332,7 +372,9 @@ static SearchResult parse_lockup(const json& lv, const std::string& chan_hint) {
                             "/text/commandRuns/0/onTap/innertubeCommand/browseEndpoint/browseId"),
                             std::string());
                         if (bid.rfind("UC", 0) == 0) {          // linked channel = the owner
-                            sr.author = txt; sr.channel_id = bid;
+                            // The owner name is the FIRST channel-linked part; later parts
+                            // (e.g. "Course") link to the same channel but are just labels.
+                            if (sr.author.empty()) { sr.author = txt; sr.channel_id = bid; }
                         } else if (fallback.empty() && txt != "Playlist" &&
                                    txt.find("View full") == std::string::npos &&
                                    txt.find("Updated") == std::string::npos &&
@@ -536,7 +578,9 @@ static void collect_results(const json& node, const std::string& chan_hint,
                 out.push_back(std::move(sr));
         }
         // Shorts (reels): the API types them explicitly with their own renderer
-        // (search Shorts shelves + channel Shorts tab). No duration/date here.
+        // (search Shorts shelves + channel Shorts tab). No duration/date here, and no
+        // uploader name — but the reel params protobuf carries the channel id (field 23),
+        // so the UI can resolve the name from it (like channel-tile metadata).
         if (auto it = node.find("shortsLockupViewModel"); it != node.end() && it->is_object()) {
             const json& n = *it;
             SearchResult sr;
@@ -548,6 +592,9 @@ static void collect_results(const json& node, const std::string& chan_hint,
             sr.view_count_text = n.value(json::json_pointer(
                 "/overlayMetadata/secondaryText/content"), std::string());
             sr.channel_id = chan_hint;
+            if (sr.channel_id.empty())
+                sr.channel_id = reel_params_channel_id(n.value(json::json_pointer(
+                    "/onTap/innertubeCommand/reelWatchEndpoint/params"), std::string()));
             sr.thumbnail_url = "https://i.ytimg.com/vi/" + sr.video_id + "/mqdefault.jpg";
             if (!sr.video_id.empty() && !sr.title.empty()) out.push_back(std::move(sr));
         }
@@ -568,7 +615,7 @@ std::vector<SearchResult> Innertube::search(const std::string& query, int max_re
     return f.items;
 }
 
-Innertube::Feed Innertube::search_feed(const std::string& query) {
+Innertube::Feed Innertube::search_feed(const std::string& query, const std::string& params) {
     Feed feed; feed.endpoint = "search";
     try {
         const ClientFingerprint& fp = has_search_client_ ? search_client_ : clients_.front();
@@ -576,6 +623,7 @@ Innertube::Feed Innertube::search_feed(const std::string& query) {
         client["visitorData"] = ensure_visitor_data();
         apply_ctx_locale(client, locale());
         json body = {{"query", query}, {"context", {{"client", client}}}};
+        if (!params.empty()) body["params"] = params;   // filters (type/duration/date/sort)
         std::string url = std::string(kInnertubeBase) + "/search";
         if (!api_key_.empty()) url += "?key=" + api_key_;
         HttpClient http;   // LOCAL: search_feed may run on a refresh worker thread
@@ -778,7 +826,7 @@ std::vector<SearchResult> Innertube::latest(std::vector<std::string> channel_ids
 // Approximate age in seconds for ordering, from either an ISO-8601 timestamp
 // ("2026-08-20T12:34:56+00:00", RSS) or YouTube's relative text ("3 weeks ago",
 // "Streamed 2 days ago"). Unknown -> very old (sorts last).
-static long long approx_age_secs(const std::string& s) {
+long long approx_age_secs(const std::string& s) {
     if (s.empty()) return (long long)1e12;
     // ISO form?
     if (s.size() >= 19 && s[4] == '-' && s[10] == 'T') {
@@ -1675,6 +1723,35 @@ static void pb_string(std::string& out, int field, const std::string& val) {
     pb_varint(out, (uint64_t)field << 3 | 2);
     pb_varint(out, val.size());
     out += val;
+}
+static void pb_int(std::string& out, int field, uint64_t v) {
+    pb_varint(out, (uint64_t)field << 3 | 0);   // wire type 0 (varint)
+    pb_varint(out, v);
+}
+static std::string base64_std(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out; size_t i = 0;
+    while (i + 3 <= in.size()) {
+        uint32_t n = (uint8_t)in[i]<<16 | (uint8_t)in[i+1]<<8 | (uint8_t)in[i+2];
+        out += T[n>>18&63]; out += T[n>>12&63]; out += T[n>>6&63]; out += T[n&63]; i += 3;
+    }
+    if (size_t rem = in.size() - i) {
+        uint32_t n = (uint8_t)in[i]<<16 | (rem>1 ? (uint8_t)in[i+1]<<8 : 0);
+        out += T[n>>18&63]; out += T[n>>12&63];
+        out += rem>1 ? T[n>>6&63] : '='; out += '=';
+    }
+    return out;
+}
+// SearchParams = { sort_by=1 varint, filters=2 { upload_date=1, type=2, duration=3 } }.
+std::string build_search_params(int type, int duration, int upload_date, int sort_by) {
+    std::string inner;
+    if (upload_date) pb_int(inner, 1, upload_date);
+    if (type)        pb_int(inner, 2, type);
+    if (duration)    pb_int(inner, 3, duration);
+    std::string outer;
+    if (sort_by)         pb_int(outer, 1, sort_by);
+    if (!inner.empty())  pb_string(outer, 2, inner);
+    return outer.empty() ? std::string() : base64_std(outer);
 }
 static std::string base64url_nopad(const std::string& in) {
     static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

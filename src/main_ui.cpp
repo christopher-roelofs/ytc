@@ -115,6 +115,54 @@ int main(int argc, char** argv) {
         app.load_home();          // always start on Home (favorite-channel RSS; may be empty)
     }
 
+    if (headless && std::getenv("YTC_EMPTYSHOT")) {
+        using AA = ui::App::Action;
+        auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+            win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+        settle(2000);
+        app.input(AA::Menu); settle(100); app.input(AA::Select); settle(100);   // filters modal
+        app.input(AA::Right); app.input(AA::Right); app.input(AA::Right);        // Type -> Playlists
+        app.input(AA::Down); app.input(AA::Right);                               // Duration -> Under 3 min
+        app.input(AA::Back); settle(2500);                                       // apply (playlists have no duration -> 0)
+        app.render(rn); win->screenshot(std::string(shot) + "_empty.png");
+        std::fprintf(stderr, "EMPTYSHOT %d results\n", app.results_count());
+        app.input(AA::Menu); settle(100);                                        // Select on empty -> options
+        app.render(rn); win->screenshot(std::string(shot) + "_menu.png");
+        return 0;
+    }
+    if (headless && std::getenv("YTC_FILTERSHOT")) {
+        using AA = ui::App::Action;
+        auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+            win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+        settle(2500);
+        app.input(AA::Menu);   settle(100);                    // options menu
+        app.input(AA::Select); settle(100);                    // -> Search Filters modal
+        app.input(AA::Right);                                  // Type -> Videos
+        app.input(AA::Down); app.input(AA::Right); app.input(AA::Right);  // Duration -> 3-20
+        app.input(AA::Down); app.input(AA::Right);             // Upload -> Today
+        app.input(AA::Down); app.input(AA::Right); app.input(AA::Right);  // Prioritize -> Popularity
+        settle(100); app.render(rn); win->screenshot(std::string(shot) + "_modal.png");
+        app.input(AA::Back);   settle(2500);                   // apply -> re-search
+        app.render(rn); win->screenshot(std::string(shot) + "_filtered.png");
+        std::fprintf(stderr, "FILTERSHOT done, %d results\n", app.results_count());
+        return 0;
+    }
+    if (headless && std::getenv("YTC_SORTSHOT")) {
+        // Verify the search tabs + sort cycle.
+        auto settle = [&](int ms){ int w=0; do { app.pump_async(); app.render(rn);
+            win->swap(); SDL_Delay(50); w+=50; } while (w<ms); };
+        settle(2500); app.render(rn); win->screenshot(std::string(shot) + "_all_relevance.png");
+        app.input(ui::App::Action::Sort);
+        settle(300); app.render(rn); win->screenshot(std::string(shot) + "_all_newest.png");
+        app.input(ui::App::Action::Sort);
+        settle(300); app.render(rn); win->screenshot(std::string(shot) + "_all_popular.png");
+        app.cycle_tab(+1);   // -> Videos
+        settle(300); app.render(rn); win->screenshot(std::string(shot) + "_videos.png");
+        app.cycle_tab(+1); app.cycle_tab(+1);   // -> Playlists
+        settle(300); app.render(rn); win->screenshot(std::string(shot) + "_playlists.png");
+        std::fprintf(stderr, "SORTSHOT done\n");
+        return 0;
+    }
     if (headless) {
         // Render a short navigation sequence, waiting for thumbnails between shots.
         struct Step { const char* label; ui::App::Action act; int settle_ms; };
@@ -1067,7 +1115,9 @@ int main(int argc, char** argv) {
             seek_dir = (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) ? -1 : +1;
             seek_hold_start = seek_last_rep = SDL_GetTicks();
         }
-        if (app.mode() == M::Grid && !app.menu_open()) {
+        // Hold-to-navigate applies to the browse grid/carousel AND the search
+        // on-screen keyboard (both move a cursor with the d-pad / left stick).
+        if ((app.mode() == M::Grid || app.mode() == M::Search) && !app.menu_open()) {
             A na = map_button(b);
             if (na == A::Up || na == A::Down || na == A::Left || na == A::Right) {
                 nav_action = na; nav_btn = b;
@@ -1196,7 +1246,7 @@ int main(int argc, char** argv) {
         // Hold-to-navigate repeats with ACCELERATION: after a ~300ms hold the cursor
         // starts stepping ~150ms apart and speeds up to ~40ms the longer it's held.
         if (nav_action != A::None) {
-            if (app.mode() != M::Grid || app.menu_open()) {
+            if ((app.mode() != M::Grid && app.mode() != M::Search) || app.menu_open()) {
                 nav_action = A::None; nav_btn = 255;   // context changed; stop
             } else {
                 Uint32 now = SDL_GetTicks();

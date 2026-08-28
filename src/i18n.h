@@ -62,6 +62,12 @@ enum class Str {
     CommentSortTop, CommentSortNewest,
     MenuDownload, MenuRemoveDownload, Downloads,
     Downloading, DownloadDone, DownloadFailed, DownloadBusy, DownloadRemoved,
+    FooterSearchResults, SortedByRelevance, SortedByDate, SortedByViews,
+    SortRelevance, SortDate, SortPopular,
+    MenuSearchFilters, FilterType, FilterDuration, FilterUploadDate, FilterPrioritize,
+    FilterChannels, DurShort, DurMedium, DurLong,
+    DateToday, DateWeek, DateMonth, DateYear,
+    FilterRelevance, FilterPopularity, FooterSearchEmpty,
     COUNT
 };
 
