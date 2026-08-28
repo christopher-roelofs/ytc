@@ -1119,8 +1119,11 @@ void App::open_description(const yt::SearchResult& v) {
         desc_loading_ = false;
         return;
     }
-    // Downloaded video: read the description saved in its .info (offline, instant).
-    if (!v.is_playlist() && !v.video_id.empty() && it_.is_downloaded(v.video_id)) {
+    // Downloaded video in the Downloads view: read the description saved in its .info
+    // (offline, instant). From other views a downloaded video is treated as normal and
+    // its description is fetched live below.
+    if (!v.is_playlist() && !v.video_id.empty() && it_.is_downloaded(v.video_id) &&
+        view_label_ == "Downloads") {
         std::string d = it_.download_description(v.video_id);
         desc_text_ = d.empty() ? "(no description)" : d;
         desc_loading_ = false;
@@ -1779,9 +1782,11 @@ void App::open_menu() {
         menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
                                MenuAction::FavoriteToggle});
         menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowChannelDescription});
-    } else if (!t.video_id.empty() && dl_ids_.count(t.video_id)) {
-        // Downloaded (offline) video: only options that work without the network —
-        // no comments, channel info, casting, quality, or captions.
+    } else if (!t.video_id.empty() && dl_ids_.count(t.video_id) && view_label_ == "Downloads") {
+        // Offline mode — but only in the Downloads view. Here the video plays from the
+        // local file, so only options that work without the network make sense (no
+        // comments, channel info, casting, quality, or captions). From other pages a
+        // downloaded video streams, so it falls through to the full menu below.
         menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         if (mode_ == Mode::Playing) {   // playback speed is a local mpv setting
             char sb[24]; std::snprintf(sb, sizeof sb, ":  %gx", playback_speed_);
@@ -4284,13 +4289,16 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
     yt::VideoPrefs prefs = play_prefs_;
     resolve_running_ = true;
     resolve_done_ = false;
+    // "Offline mode" is scoped to the Downloads view: only there do we play the local
+    // file. From any other page a downloaded video streams normally (full options).
+    bool play_local = it_.is_downloaded(video_id) && view_label_ == "Downloads";
     if (resolve_thread_.joinable()) resolve_thread_.join();
-    resolve_thread_ = std::thread([this, video_id, fallback_title, prefs]() {
+    resolve_thread_ = std::thread([this, video_id, fallback_title, prefs, play_local]() {
         bool dbg = getenv("YTC_DEBUG");
         ResolveResult r;
         r.title = fallback_title;
         // Offline download: skip the network resolve and play the local file directly.
-        if (it_.is_downloaded(video_id)) {
+        if (play_local) {
             r.ok = true; r.video_url = it_.download_path(video_id);
             r.audio_url.clear(); r.user_agent.clear();
             r.description = it_.download_description(video_id);   // from the .info sidecar
