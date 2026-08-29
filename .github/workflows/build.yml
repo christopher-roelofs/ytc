@@ -40,7 +40,8 @@ jobs:
           cd mp
           export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
           meson setup build -Dlibmpv=true -Dcplayer=false -Dlua=disabled \
-            -Djavascript=disabled -Dlibplacebo=disabled -Dprefix="$GITHUB_WORKSPACE/mpvout"
+            -Djavascript=disabled -Dlibplacebo=disabled \
+            --libdir=lib --prefix="$GITHUB_WORKSPACE/mpvout"
           ninja -C build
           ninja -C build install
       - name: Build YTC (desktop OpenGL + GLEW; GLES2 fails over GLX on X11)
