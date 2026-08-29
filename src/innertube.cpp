@@ -17,6 +17,15 @@
 #include <unordered_map>
 #include <functional>
 
+// Windows (mingw) lacks POSIX timegm / mkdir(path,mode); map to the Win equivalents.
+#if defined(_WIN32)
+  #include <direct.h>
+  #define timegm _mkgmtime
+  static int os_mkdir(const char* p) { return _mkdir(p); }
+#else
+  static int os_mkdir(const char* p) { return ::mkdir(p, 0755); }
+#endif
+
 using json = nlohmann::json;
 
 namespace yt {
@@ -2196,7 +2205,7 @@ std::string Innertube::downloads_dir() {
     auto slash = config_dir_.find_last_of('/');
     std::string root = slash == std::string::npos ? "." : config_dir_.substr(0, slash);
     std::string d = root + "/downloads";
-    ::mkdir(d.c_str(), 0755);   // no-op if it already exists
+    os_mkdir(d.c_str());   // no-op if it already exists
     return d;
 }
 std::string Innertube::download_path(const std::string& id) {

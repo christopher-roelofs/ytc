@@ -23,7 +23,7 @@ jobs:
             libmpv-dev libavformat-dev libavcodec-dev libavutil-dev
       - name: Configure & build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
           cmake --build build -j"$(nproc)"
       - name: Package
         run: |
@@ -48,7 +48,7 @@ jobs:
       - name: Configure & build
         run: |
           export PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
           cmake --build build -j"$(sysctl -n hw.ncpu)"
       - name: Package
         run: |
@@ -87,7 +87,7 @@ jobs:
             mingw-w64-x86_64-mesa
       - name: Configure & build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
           cmake --build build -j"$(nproc)"
       - name: Package (exe + dependent DLLs)
         run: |
