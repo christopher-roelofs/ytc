@@ -163,3 +163,72 @@ jobs:
         with:
           name: ytc-windows-x86_64
           path: dist/ytc
+
+  # Experimental slim Windows build: same idea as macos-slim — ffmpeg + libmpv from
+  # source without the external encoders / mpv extras. Uploaded separately.
+  windows-slim:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git make diffutils
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-glew
+            mingw-w64-x86_64-libplacebo
+            mingw-w64-x86_64-libass
+            mingw-w64-x86_64-dav1d
+      - name: Build minimal FFmpeg (no external encoders)
+        run: |
+          git clone --depth 1 -b n7.1 https://github.com/FFmpeg/FFmpeg ff
+          cd ff
+          ./configure --prefix="$(pwd)/../ffout" \
+            --disable-programs --disable-doc --disable-debug --disable-devices \
+            --disable-encoders --disable-muxers --enable-muxer=mp4,mov,ipod \
+            --enable-libdav1d --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+      - name: Build minimal libmpv (render API)
+        run: |
+          git clone --depth 1 -b v0.39.0 https://github.com/mpv-player/mpv mp
+          cd mp
+          export PKG_CONFIG_PATH="$(pwd)/../ffout/lib/pkgconfig:/mingw64/lib/pkgconfig"
+          meson setup build -Dlibmpv=true -Dcplayer=false -Dlua=disabled \
+            -Djavascript=disabled -Dprefix="$(pwd)/../mpvout"
+          ninja -C build
+          ninja -C build install
+      - name: Build YTC against the slim ffmpeg + mpv
+        run: |
+          export PKG_CONFIG_PATH="$(pwd)/ffout/lib/pkgconfig:$(pwd)/mpvout/lib/pkgconfig:/mingw64/lib/pkgconfig"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
+          cmake --build build -j"$(nproc)"
+      - name: Package + measure
+        run: |
+          mkdir -p dist/ytc
+          cp build/yt_ui.exe dist/ytc/ || true
+          export PATH="$(pwd)/ffout/bin:$(pwd)/mpvout/bin:$PATH"
+          ldd dist/ytc/yt_ui.exe 2>/dev/null | awk '/mingw64|ffout|mpvout/ {print $3}' | while read -r dll; do
+            [ -f "$dll" ] && cp -n "$dll" dist/ytc/ || true
+          done
+          strip dist/ytc/*.exe dist/ytc/*.dll 2>/dev/null || true
+          cp -r config data dist/ytc/
+          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          echo "=== slim bundle size ==="; du -sh dist/ytc
+          echo "=== biggest DLLs ==="; ls -S dist/ytc/*.dll | head -15
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytc-windows-slim
+          path: dist/ytc
