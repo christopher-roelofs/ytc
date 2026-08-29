@@ -198,6 +198,12 @@ std::unique_ptr<Window> Window::create(int w, int h, const std::string& title,
     // Set the video driver via env var (portable across SDL versions; the
     // SDL_HINT_VIDEODRIVER macro only exists in SDL >= 2.0.22).
     if (!driver.empty()) SDL_setenv("SDL_VIDEODRIVER", driver.c_str(), 1);   // SDL_setenv: portable
+#ifdef YTC_GL_DESKTOP
+    // Desktop controllers: map face buttons by POSITION (south = A), not by the printed
+    // label. Without this, SDL reports a Nintendo-layout pad with A/B and X/Y swapped,
+    // which doesn't match our A=confirm/B=back layout. (Handhelds keep their behavior.)
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return nullptr;
