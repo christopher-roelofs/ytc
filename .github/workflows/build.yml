@@ -12,7 +12,16 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-22.04   # older glibc/libstdc++ -> runs on newer hosts (Steam Deck, etc.)
+    # Native x86_64 and arm64 (Raspberry Pi / Orange Pi) on 22.04 for glibc compat.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Install build deps (NOT ffmpeg/mpv/libplacebo — built/omitted below)
@@ -78,7 +87,7 @@ jobs:
           echo "=== linux bundle ==="; du -sh dist/ytc; echo "external deps:"; ldd dist/ytc/ytc | grep '=>' | grep -v "$PWD" | head
       - uses: actions/upload-artifact@v4
         with:
-          name: ytc-linux-x86_64
+          name: ytc-linux-${{ matrix.arch }}
           path: dist/ytc
 
   macos:
