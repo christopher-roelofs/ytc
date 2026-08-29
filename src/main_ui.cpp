@@ -17,9 +17,12 @@
 #include <fstream>
 #include "platform.h"   // platform::exe_dir (Linux/Windows/macOS)
 
-static const char* config_path() {
-    const char* e = std::getenv("YTC_CONFIG");
-    return e ? e : "config/clients.json";
+static std::string config_path() {
+    if (const char* e = std::getenv("YTC_CONFIG")) return e;
+    // Prefer config next to the executable (portable desktop app), else CWD-relative.
+    std::string byexe = platform::exe_dir() + "/config/clients.json";
+    if (std::ifstream(byexe).good()) return byexe;
+    return "config/clients.json";
 }
 
 // Directory containing the running executable, for locating bundled data files

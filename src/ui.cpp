@@ -244,14 +244,21 @@ void App::load_fonts() {
     // ship DejaVu — the port bundles it in data/.
     auto pick_font = []() -> std::string {
         const char* env = std::getenv("YTC_FONT");
-        std::string cands[] = { env ? std::string(env) : std::string(),
-                                "data/DejaVuSans.ttf",
-                                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" };
+        std::string base = platform::exe_dir();
+        std::string cands[] = {
+            env ? std::string(env) : std::string(),
+            base + "/data/DejaVuSans.ttf",     // bundled next to the executable (desktop/port)
+            "data/DejaVuSans.ttf",             // or relative to the working directory
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  // Debian/Ubuntu system
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",           // Fedora/Arch system
+            "/Library/Fonts/Arial Unicode.ttf",                 // macOS fallback
+            "C:/Windows/Fonts/segoeui.ttf",                     // Windows fallback
+        };
         for (const auto& c : cands) {
             if (c.empty()) continue;
             if (std::ifstream(c).good()) return c;
         }
-        return cands[2];
+        return base + "/data/DejaVuSans.ttf";
     };
     const std::string ttf_path = pick_font();
     const char* ttf = ttf_path.c_str();
