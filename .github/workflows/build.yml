@@ -53,6 +53,9 @@ jobs:
         run: |
           mkdir -p dist/ytc/lib
           cp build/yt_ui dist/ytc/ytc
+          # Resolve the FULL dependency closure incl. libmpv's own deps (libswresample/
+          # libswscale live in our build prefixes, not on the default path).
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/ffout/lib:$GITHUB_WORKSPACE/mpvout/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           # Bundle the app libraries; keep glibc / C++ runtime / GL / X11 / Wayland /
           # driver libs from the host (bundling those breaks GL or clashes with drivers).
           ldd dist/ytc/ytc | awk '/=> \//{print $3}' | while read -r so; do
