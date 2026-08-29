@@ -22,9 +22,9 @@ jobs:
             cmake meson ninja-build nasm pkg-config build-essential patchelf git \
             libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
             libass-dev libfribidi-dev libharfbuzz-dev libfreetype-dev libdav1d-dev
-      - name: Build minimal FFmpeg (decoders + mp4 mux; no external encoders)
+      - name: Build minimal FFmpeg 6.1 (matches mpv 0.36; decoders + mp4 mux, no encoders)
         run: |
-          git clone --depth 1 -b n7.1 https://github.com/FFmpeg/FFmpeg ff
+          git clone --depth 1 -b n6.1 https://github.com/FFmpeg/FFmpeg ff
           cd ff
           ./configure --prefix="$GITHUB_WORKSPACE/ffout" \
             --disable-programs --disable-doc --disable-debug --disable-devices \
