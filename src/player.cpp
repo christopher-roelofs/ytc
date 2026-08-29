@@ -38,6 +38,12 @@ struct Player::Impl {
         // to youtube-dl/yt-dlp on its own (unwanted dependency; 403s + latency;
         // fails outright on the handheld where yt-dlp isn't installed).
         mpv_set_option_string(mpv, "ytdl", "no");
+        // The render API (below) IS our video output: force vo=libmpv so mpv renders
+        // into our GL context instead of spawning its own window (newer mpv on desktop
+        // otherwise opens a separate player window), and config=no so a machine that
+        // has mpv installed can't hijack us via a system/user mpv.conf (e.g. vo=gpu).
+        mpv_set_option_string(mpv, "vo", "libmpv");
+        mpv_set_option_string(mpv, "config", "no");
         // Reasonable defaults for streaming on ARM handhelds.
         mpv_set_option_string(mpv, "vd-lavc-threads", "4");
         // hwdec: default to *-copy so decoded frames are copied to normal

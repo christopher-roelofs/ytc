@@ -60,6 +60,10 @@ jobs:
             dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs || true
           fi
           strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
+          # strip + install_name_tool invalidate signatures; Apple Silicon kills
+          # invalidly-signed Mach-Os, so ad-hoc re-sign everything (sign libs first).
+          codesign --force --sign - dist/ytc/libs/*.dylib 2>/dev/null || true
+          codesign --force --sign - dist/ytc/yt_ui 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
       - uses: actions/upload-artifact@v4
@@ -110,6 +114,8 @@ jobs:
           dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs \
             -s "$GITHUB_WORKSPACE/ffout/lib" -s "$GITHUB_WORKSPACE/mpvout/lib" || true
           strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
+          codesign --force --sign - dist/ytc/libs/*.dylib 2>/dev/null || true
+          codesign --force --sign - dist/ytc/yt_ui 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
           echo "=== slim bundle size ==="; du -sh dist/ytc
