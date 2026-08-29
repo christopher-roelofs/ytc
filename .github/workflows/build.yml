@@ -44,18 +44,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: brew install cmake ninja pkg-config curl mpv ffmpeg sdl2
+        run: brew install cmake ninja pkg-config curl mpv ffmpeg sdl2 glew dylibbundler
       - name: Configure & build
         run: |
           export PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(sysctl -n hw.ncpu)"
-      - name: Package
+      - name: Package (bundle dylibs so the GUI is self-contained)
         run: |
           mkdir -p dist/ytc
           for b in yt_ui yt_resolve yt_search yt_cast; do
             [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
           done
+          if [ -f dist/ytc/yt_ui ]; then
+            dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs || true
+          fi
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
           tar czf ytc-macos.tar.gz -C dist ytc
@@ -84,10 +87,10 @@ jobs:
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-mpv
             mingw-w64-x86_64-ffmpeg
-            mingw-w64-x86_64-mesa
+            mingw-w64-x86_64-glew
       - name: Configure & build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(nproc)"
       - name: Package (exe + dependent DLLs)
         run: |

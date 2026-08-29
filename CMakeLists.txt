@@ -39,15 +39,40 @@ target_link_libraries(yt_search PRIVATE ytcore)
 add_executable(yt_cast src/main_cast.cpp)
 target_link_libraries(yt_cast PRIVATE ytcore)
 
-# --- GLES2 UI (needs SDL2 + GLES2; no libmpv) ---
-option(BUILD_UI "Build the SDL2 + GLES2 UI" ON)
+# --- SDL2 UI. GL backend: GLES2 on ARM handhelds (default), desktop OpenGL+GLEW
+#     on Windows/macOS/desktop Linux (YTC_GL_DESKTOP=ON). ---
+option(BUILD_UI "Build the SDL2 UI" ON)
+option(YTC_GL_DESKTOP "Use desktop OpenGL + GLEW instead of GLES2 (Windows/macOS/desktop)" OFF)
 if(BUILD_UI)
   pkg_check_modules(SDL2 sdl2)
-  pkg_check_modules(GLES glesv2)
-  if(SDL2_FOUND AND GLES_FOUND)
+  # SDL2main pulls in an alternate entry point we don't use (SDL_MAIN_HANDLED) and
+  # isn't always present (e.g. Homebrew) — drop it so linking doesn't require it.
+  list(FILTER SDL2_LIBRARIES EXCLUDE REGEX "(^|/)SDL2?main")
+
+  set(GL_OK FALSE)
+  if(YTC_GL_DESKTOP)
+    find_package(OpenGL)
+    find_package(GLEW)
+    if(OpenGL_FOUND AND GLEW_FOUND)
+      set(GL_OK TRUE)
+      set(GL_LIBS OpenGL::GL GLEW::GLEW)
+    endif()
+  else()
+    pkg_check_modules(GLES glesv2)
+    if(GLES_FOUND)
+      set(GL_OK TRUE)
+      set(GL_LIBS ${GLES_LIBRARIES})
+      set(GL_INCS ${GLES_INCLUDE_DIRS})
+    endif()
+  endif()
+
+  if(SDL2_FOUND AND GL_OK)
     add_library(ytgfx STATIC src/gfx.cpp src/ui.cpp src/player.cpp src/stream.cpp src/remux.cpp src/i18n.cpp)
-    target_include_directories(ytgfx PUBLIC ${SDL2_INCLUDE_DIRS} ${GLES_INCLUDE_DIRS})
-    target_link_libraries(ytgfx PUBLIC ytcore ${SDL2_LIBRARIES} ${GLES_LIBRARIES} Threads::Threads)
+    target_include_directories(ytgfx PUBLIC ${SDL2_INCLUDE_DIRS} ${GL_INCS})
+    target_link_libraries(ytgfx PUBLIC ytcore ${SDL2_LIBRARIES} ${GL_LIBS} Threads::Threads)
+    if(YTC_GL_DESKTOP)
+      target_compile_definitions(ytgfx PUBLIC YTC_GL_DESKTOP)
+    endif()
 
     # Offline-download muxing: remux adaptive video+audio into one .mp4 via libavformat
     # (stream copy, no re-encode). Optional — without it, downloads fall back to the
@@ -80,7 +105,7 @@ if(BUILD_UI)
     add_executable(yt_ui src/main_ui.cpp)
     target_link_libraries(yt_ui PRIVATE ytgfx)
   else()
-    message(WARNING "SDL2 or GLESv2 not found; skipping yt_ui")
+    message(WARNING "SDL2 or a GL backend not found; skipping yt_ui")
   endif()
 endif()
 

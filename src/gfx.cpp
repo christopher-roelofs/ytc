@@ -1,6 +1,12 @@
 #include "gfx.h"
 #include <SDL.h>
-#include <SDL_opengles2.h>
+// Desktop builds (Windows/macOS/desktop Linux) use real OpenGL via GLEW to load
+// the 2.0 entry points uniformly; the ARM handhelds have only GLES2.
+#ifdef YTC_GL_DESKTOP
+  #include <GL/glew.h>
+#else
+  #include <SDL_opengles2.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -191,13 +197,19 @@ std::unique_ptr<Window> Window::create(int w, int h, const std::string& title,
                                        const std::string& driver) {
     // Set the video driver via env var (portable across SDL versions; the
     // SDL_HINT_VIDEODRIVER macro only exists in SDL >= 2.0.22).
-    if (!driver.empty()) setenv("SDL_VIDEODRIVER", driver.c_str(), 1);
+    if (!driver.empty()) SDL_setenv("SDL_VIDEODRIVER", driver.c_str(), 1);   // SDL_setenv: portable
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return nullptr;
     }
+#ifdef YTC_GL_DESKTOP
+    // Desktop OpenGL 2.1 (compatibility) — same feature set our GLES2 code needs.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     const char* drv = SDL_GetCurrentVideoDriver();
@@ -211,6 +223,11 @@ std::unique_ptr<Window> Window::create(int w, int h, const std::string& title,
     SDL_GLContext gl = SDL_GL_CreateContext(win);
     if (!gl) { std::fprintf(stderr, "GL_CreateContext: %s\n", SDL_GetError()); return nullptr; }
     SDL_GL_MakeCurrent(win, gl);
+#ifdef YTC_GL_DESKTOP
+    glewExperimental = GL_TRUE;
+    glewInit();          // with glewExperimental this returns a benign error yet loads
+    glGetError();        // fully; swallow the spurious GL_INVALID_ENUM it leaves behind.
+#endif
 
     auto out = std::make_unique<Window>();
     out->win_ = win; out->gl_ = gl;
@@ -250,17 +267,25 @@ static unsigned compile(GLenum type, const char* src) {
     return s;
 }
 Renderer::Renderer() {
-    const char* vs =
+    // Desktop GLSL 1.20 needs a #version line and rejects the ES `precision` qualifier;
+    // GLES defaults to #version 100 and requires the precision. `attribute`/`varying`/
+    // `texture2D`/`gl_FragColor` are valid in both, so only the preamble differs.
+#ifdef YTC_GL_DESKTOP
+    const char* VER = "#version 120\n"; const char* PREC = "";
+#else
+    const char* VER = ""; const char* PREC = "precision mediump float;";
+#endif
+    std::string vs = std::string(VER) +
         "attribute vec2 aPos; attribute vec2 aUV; attribute vec4 aCol;"
         "uniform vec2 uProj; varying vec2 vUV; varying vec4 vCol;"
         "void main(){ vUV=aUV; vCol=aCol;"
         " gl_Position=vec4(aPos.x/uProj.x*2.0-1.0, 1.0-aPos.y/uProj.y*2.0, 0.0, 1.0);}";
-    const char* fs =
-        "precision mediump float; varying vec2 vUV; varying vec4 vCol;"
+    std::string fs = std::string(VER) + PREC +
+        " varying vec2 vUV; varying vec4 vCol;"
         "uniform sampler2D uTex;"
         "void main(){ gl_FragColor = texture2D(uTex, vUV) * vCol; }";
     prog_ = glCreateProgram();
-    unsigned v = compile(GL_VERTEX_SHADER, vs), f = compile(GL_FRAGMENT_SHADER, fs);
+    unsigned v = compile(GL_VERTEX_SHADER, vs.c_str()), f = compile(GL_FRAGMENT_SHADER, fs.c_str());
     glAttachShader(prog_, v); glAttachShader(prog_, f);
     glBindAttribLocation(prog_, 0, "aPos");
     glBindAttribLocation(prog_, 1, "aUV");

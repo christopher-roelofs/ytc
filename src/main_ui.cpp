@@ -9,6 +9,7 @@
 #include "i18n.h"
 #include "innertube.h"
 #include "http.h"
+#define SDL_MAIN_HANDLED   // we provide our own main(); don't pull in SDL2main (breaks macOS link)
 #include <SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +52,7 @@ static ui::App::Action map_button(Uint8 b) {
 }
 
 int main(int argc, char** argv) {
+    SDL_SetMainReady();   // pairs with SDL_MAIN_HANDLED
     if (const char* spec = std::getenv("YTC_REMUXTEST")) {   // "video:audio:out" (no SDL)
         std::string s = spec; auto c1 = s.find(':'), c2 = s.rfind(':');
         bool r = ytn::remux_to_mp4(s.substr(0, c1), s.substr(c1 + 1, c2 - c1 - 1), s.substr(c2 + 1));
