@@ -1,0 +1,110 @@
+name: build
+
+# Cross-platform desktop builds. Linux builds the full app; macOS and Windows
+# build the core + CLI tools, and the full SDL2/GLES2 GUI wherever the GL deps
+# resolve (Windows via MSYS2 mesa; macOS GUI still needs an ANGLE/GL step — WIP).
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config build-essential \
+            libsdl2-dev libgles2-mesa-dev libcurl4-openssl-dev \
+            libmpv-dev libavformat-dev libavcodec-dev libavutil-dev
+      - name: Configure & build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: Package
+        run: |
+          mkdir -p dist/ytc
+          for b in yt_ui yt_resolve yt_search yt_cast; do
+            [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
+          done
+          cp -r config data dist/ytc/
+          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          tar czf ytc-linux-x86_64.tar.gz -C dist ytc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytc-linux-x86_64
+          path: ytc-linux-x86_64.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install cmake ninja pkg-config curl mpv ffmpeg sdl2
+      - name: Configure & build
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: Package
+        run: |
+          mkdir -p dist/ytc
+          for b in yt_ui yt_resolve yt_search yt_cast; do
+            [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
+          done
+          cp -r config data dist/ytc/
+          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          tar czf ytc-macos.tar.gz -C dist ytc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytc-macos
+          path: ytc-macos.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-mpv
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-mesa
+      - name: Configure & build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: Package (exe + dependent DLLs)
+        run: |
+          mkdir -p dist/ytc
+          for b in yt_ui yt_resolve yt_search yt_cast; do
+            [ -f "build/$b.exe" ] && cp "build/$b.exe" dist/ytc/ || true
+          done
+          # Copy the mingw DLLs each exe needs (best-effort via ldd).
+          for exe in dist/ytc/*.exe; do
+            ldd "$exe" 2>/dev/null | awk '/mingw64/ {print $3}' | while read -r dll; do
+              [ -f "$dll" ] && cp -n "$dll" dist/ytc/ || true
+            done
+          done
+          cp -r config data dist/ytc/
+          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          tar czf ytc-windows-x86_64.tar.gz -C dist ytc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytc-windows-x86_64
+          path: ytc-windows-x86_64.tar.gz

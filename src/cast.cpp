@@ -1,11 +1,28 @@
 #include "cast.h"
 #include "http.h"
 #include "../third_party/json.hpp"
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+#if defined(_WIN32)
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  typedef SOCKET sock_t;
+  static void closesock(sock_t s) { closesocket(s); }
+  static bool sock_valid(sock_t s) { return s != INVALID_SOCKET; }
+  // Init Winsock once (harmless if called repeatedly across the process).
+  static void winsock_once() { static WSADATA w; static bool d = (WSAStartup(MAKEWORD(2,2), &w) == 0); (void)d; }
+#else
+  #include <sys/socket.h>
+  #include <sys/select.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <unistd.h>
+  typedef int sock_t;
+  static void closesock(sock_t s) { ::close(s); }
+  static bool sock_valid(sock_t s) { return s >= 0; }
+  static void winsock_once() {}
+#endif
+#include <thread>
+#include <chrono>
+static inline void sleep_us(long us) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
 #include <cstring>
 #include <cstdio>
 #include <cctype>
@@ -98,13 +115,13 @@ PMsg pb_parse(const std::string& b){ PMsg p; size_t i=0;
 // Blocking send over a CONNECT_ONLY TLS handle.
 bool cc_send(CURL* c, const std::string& d){ size_t off=0;
     for(int guard=0; off<d.size() && guard<2000; ++guard){ size_t n=0; CURLcode rc=curl_easy_send(c,d.data()+off,d.size()-off,&n);
-        if(rc==CURLE_OK) off+=n; else if(rc==CURLE_AGAIN) usleep(5000); else return false; }
+        if(rc==CURLE_OK) off+=n; else if(rc==CURLE_AGAIN) sleep_us(5000); else return false; }
     return off>=d.size(); }
 // Read one length-prefixed frame (4-byte BE length + payload) with a deadline.
 bool cc_recv_frame(CURL* c, curl_socket_t fd, std::string& out, int timeout_ms){
     auto readn=[&](char* buf, size_t need)->bool{ size_t got=0; int waited=0;
         while(got<need){ size_t n=0; CURLcode rc=curl_easy_recv(c,buf+got,need-got,&n);
-            if(rc==CURLE_OK){ if(n==0){usleep(5000);waited+=5;} else got+=n; }
+            if(rc==CURLE_OK){ if(n==0){sleep_us(5000);waited+=5;} else got+=n; }
             else if(rc==CURLE_AGAIN){ fd_set r; FD_ZERO(&r); FD_SET(fd,&r); timeval tv{0,200000};
                 select((int)fd+1,&r,nullptr,nullptr,&tv); waited+=200; }
             else return false;
@@ -219,12 +236,18 @@ std::vector<Cast::Device> Cast::discover(int timeout_ms) {
     std::vector<Device> devs;
     std::vector<Device> pairs; load_pairings(pairs);
 
-    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) return devs;
+    winsock_once();
+    sock_t sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (!sock_valid(sock)) return devs;
     // Short per-recv timeout so we can re-send M-SEARCH periodically (UDP is lossy).
+#if defined(_WIN32)
+    DWORD rcvto = 400;   // milliseconds (Windows SO_RCVTIMEO is a DWORD, not timeval)
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rcvto, sizeof rcvto);
+#else
     timeval tv{ 0, 400000 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    int ttl = 4; setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof ttl);
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+#endif
+    int ttl = 4; setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof ttl);
     const char* ms =
         "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n"
         "MAN: \"ssdp:discover\"\r\nMX: 2\r\n"
@@ -237,11 +260,11 @@ std::vector<Cast::Device> Cast::discover(int timeout_ms) {
     long waited = 0, resend_at = 0;
     while (waited < timeout_ms) {
         if (waited >= resend_at) {   // (re)broadcast the query a few times over the window
-            sendto(sock, ms, std::strlen(ms), 0, (sockaddr*)&mc, sizeof mc);
+            sendto(sock, ms, (int)std::strlen(ms), 0, (sockaddr*)&mc, sizeof mc);
             resend_at += 900;
         }
         sockaddr_in from{}; socklen_t fl = sizeof from;
-        int n = recvfrom(sock, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
+        int n = recvfrom(sock, buf, (int)sizeof buf - 1, 0, (sockaddr*)&from, &fl);
         if (n <= 0) { waited += 400; continue; }   // timed out this slice
         buf[n] = 0; std::string txt(buf, n);
         std::string ip = inet_ntoa(from.sin_addr);
@@ -250,7 +273,7 @@ std::vector<Cast::Device> Cast::discover(int timeout_ms) {
         bool dup=false; for (auto& f2:found) if (f2.first==ip) dup=true;
         if (!dup) found.push_back({ip, loc});
     }
-    ::close(sock);
+    closesock(sock);
 
     HttpClient http;
     for (auto& [ip, loc] : found) {
@@ -356,7 +379,7 @@ Cast::Session Cast::play(const Device& dev, const std::string& video_id, int sta
         for (int i = 0; i < 10 && screen.empty(); ++i) {   // poll for the screenId
             auto yr = http.get(yt);
             if (yr.status == 200) screen = xml_tag(yr.body, "screenId");
-            if (screen.empty()) usleep(400000);
+            if (screen.empty()) sleep_us(400000);
         }
     }
     // An unpaired Cast device (the "· Chromecast" row): launch its YouTube web

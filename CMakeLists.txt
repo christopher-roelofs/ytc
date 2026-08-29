@@ -16,7 +16,8 @@ pkg_check_modules(CURL REQUIRED libcurl)
 add_library(ytcore STATIC
   src/http.cpp
   src/innertube.cpp
-  src/cast.cpp)
+  src/cast.cpp
+  src/platform.cpp)
 target_include_directories(ytcore PUBLIC ${CURL_INCLUDE_DIRS})
 # Threads is PUBLIC: ytcore itself spawns std::threads (home_feed parallel fetch),
 # so every consumer (incl. the CLI tools on ARM) needs pthread.

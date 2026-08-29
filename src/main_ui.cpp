@@ -14,24 +14,16 @@
 #include <cstdlib>
 #include <string>
 #include <fstream>
-#include <unistd.h>   // readlink (exe_dir)
+#include "platform.h"   // platform::exe_dir (Linux/Windows/macOS)
 
 static const char* config_path() {
     const char* e = std::getenv("YTC_CONFIG");
     return e ? e : "config/clients.json";
 }
 
-// Directory containing the running executable (Linux), for locating bundled
-// data files independent of the current working directory.
-static std::string exe_dir() {
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return ".";
-    buf[n] = '\0';
-    std::string p(buf);
-    auto slash = p.find_last_of('/');
-    return slash == std::string::npos ? "." : p.substr(0, slash);
-}
+// Directory containing the running executable, for locating bundled data files
+// independent of the current working directory.
+static std::string exe_dir() { return platform::exe_dir(); }
 
 static ui::App::Action map_key(SDL_Keycode k) {
     using A = ui::App::Action;

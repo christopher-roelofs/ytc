@@ -1,4 +1,5 @@
 #include "http.h"
+#include "platform.h"
 #include <curl/curl.h>
 #include <stdexcept>
 #include <cstdlib>
@@ -36,6 +37,12 @@ const char* http_ca_bundle() {
     static std::string cached = []() -> std::string {
         if (const char* e = std::getenv("CURL_CA_BUNDLE")) { std::ifstream f(e); if (f) return e; }
         if (const char* e = std::getenv("SSL_CERT_FILE"))   { std::ifstream f(e); if (f) return e; }
+        // A cacert.pem shipped next to the executable (Windows/macOS have no system
+        // /etc/ssl bundle; this makes TLS work regardless of curl's TLS backend).
+        std::string base = platform::exe_dir();
+        for (const std::string& p : { base + "/cacert.pem", base + "/data/cacert.pem" }) {
+            std::ifstream f(p); if (f) return p;
+        }
         const char* cands[] = {
             "/etc/ssl/certs/ca-certificates.crt",          // Debian/Ubuntu/muOS
             "/etc/pki/tls/certs/ca-bundle.crt",            // RockNIX/Fedora/RHEL
