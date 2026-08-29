@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "platform.h"   // Windows timegm shim
 #include "i18n.h"
 #include "remux.h"
 #include <SDL.h>

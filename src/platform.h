@@ -3,6 +3,15 @@
 #pragma once
 #include <string>
 
+// Windows (mingw) has no POSIX timegm; _mkgmtime is the equivalent. Provided here
+// so every translation unit that includes platform.h gets it consistently.
+#if defined(_WIN32)
+  #include <time.h>
+  #ifndef timegm
+    #define timegm _mkgmtime
+  #endif
+#endif
+
 namespace platform {
 
 // Absolute path of the running executable ("" if it can't be determined).
