@@ -19,9 +19,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake meson ninja-build nasm pkg-config build-essential patchelf git \
+            cmake ninja-build nasm pkg-config build-essential patchelf git python3-pip \
             libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
             libass-dev libfribidi-dev libharfbuzz-dev libfreetype-dev libdav1d-dev
+          # Ubuntu 22.04's meson (0.61) is too old for mpv 0.36 (needs >=0.62); use pip's.
+          sudo pip3 install --upgrade meson
       - name: Build minimal FFmpeg 6.1 (matches mpv 0.36; decoders + mp4 mux, no encoders)
         run: |
           git clone --depth 1 -b n6.1 https://github.com/FFmpeg/FFmpeg ff
