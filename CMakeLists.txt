@@ -22,6 +22,10 @@ target_include_directories(ytcore PUBLIC ${CURL_INCLUDE_DIRS})
 # Threads is PUBLIC: ytcore itself spawns std::threads (home_feed parallel fetch),
 # so every consumer (incl. the CLI tools on ARM) needs pthread.
 target_link_libraries(ytcore PUBLIC ${CURL_LIBRARIES} Threads::Threads)
+# Winsock for cast.cpp's SSDP sockets (htonl/socket/select/... live in ws2_32).
+if(WIN32)
+  target_link_libraries(ytcore PUBLIC ws2_32)
+endif()
 
 # --- Milestone 1: resolver CLI (no SDL/mpv needed) ---
 add_executable(yt_resolve src/main_resolve.cpp)
