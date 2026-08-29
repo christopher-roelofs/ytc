@@ -20,11 +20,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config build-essential patchelf \
-            libsdl2-dev libgles2-mesa-dev libcurl4-openssl-dev \
+            libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
             libmpv-dev libavformat-dev libavcodec-dev libavutil-dev
       - name: Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
+          # Desktop OpenGL (GLEW), NOT GLES2: requesting a GLES context over GLX on
+          # desktop X11/Mesa fails with GLXBadProfileARB. Handhelds still use GLES2.
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(nproc)"
       - name: Package (self-contained single binary)
         run: |
