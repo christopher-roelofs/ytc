@@ -31,13 +31,13 @@ jobs:
           for b in yt_ui yt_resolve yt_search yt_cast; do
             [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
           done
+          strip dist/ytc/yt_* 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-          tar czf ytc-linux-x86_64.tar.gz -C dist ytc
       - uses: actions/upload-artifact@v4
         with:
           name: ytc-linux-x86_64
-          path: ytc-linux-x86_64.tar.gz
+          path: dist/ytc
 
   macos:
     runs-on: macos-latest
@@ -59,13 +59,13 @@ jobs:
           if [ -f dist/ytc/yt_ui ]; then
             dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs || true
           fi
+          strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-          tar czf ytc-macos.tar.gz -C dist ytc
       - uses: actions/upload-artifact@v4
         with:
           name: ytc-macos
-          path: ytc-macos.tar.gz
+          path: dist/ytc
 
   windows:
     runs-on: windows-latest
@@ -104,10 +104,10 @@ jobs:
               [ -f "$dll" ] && cp -n "$dll" dist/ytc/ || true
             done
           done
+          strip dist/ytc/*.exe dist/ytc/*.dll 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-          tar czf ytc-windows-x86_64.tar.gz -C dist ytc
       - uses: actions/upload-artifact@v4
         with:
           name: ytc-windows-x86_64
-          path: ytc-windows-x86_64.tar.gz
+          path: dist/ytc
