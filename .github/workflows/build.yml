@@ -1,8 +1,9 @@
 name: build
 
-# Cross-platform desktop builds. Linux builds the full app; macOS and Windows
-# build the core + CLI tools, and the full SDL2/GLES2 GUI wherever the GL deps
-# resolve (Windows via MSYS2 mesa; macOS GUI still needs an ANGLE/GL step — WIP).
+# Self-contained single-binary desktop builds (one `ytc` GUI per OS, like the
+# handheld port). Windows and macOS compile a slim ffmpeg + libmpv from source
+# (no external encoders / mpv extras); Linux bundles its app libraries with an
+# $ORIGIN rpath so it runs on Steam Deck and any distro without system deps.
 on:
   push:
     branches: [ main ]
@@ -11,71 +12,50 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # older glibc/libstdc++ -> runs on newer hosts (Steam Deck, etc.)
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build pkg-config build-essential \
+            cmake ninja-build pkg-config build-essential patchelf \
             libsdl2-dev libgles2-mesa-dev libcurl4-openssl-dev \
             libmpv-dev libavformat-dev libavcodec-dev libavutil-dev
-      - name: Configure & build
+      - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF
           cmake --build build -j"$(nproc)"
-      - name: Package
+      - name: Package (self-contained single binary)
         run: |
-          mkdir -p dist/ytc
-          for b in yt_ui yt_resolve yt_search yt_cast; do
-            [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
+          mkdir -p dist/ytc/lib
+          cp build/yt_ui dist/ytc/ytc
+          # Bundle the app libraries; keep glibc / C++ runtime / GL / X11 / Wayland /
+          # driver libs from the host (bundling those breaks GL or clashes with drivers).
+          ldd dist/ytc/ytc | awk '/=> \//{print $3}' | while read -r so; do
+            b=$(basename "$so")
+            case "$b" in
+              libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|ld-linux*|\
+              libgcc_s.so*|libstdc++.so*|\
+              libGL.so*|libGLX*|libEGL*|libGLdispatch*|libOpenGL*|libglapi*|libgbm*|libdrm*|\
+              libX11*|libxcb*|libXext*|libXau*|libXdmcp*|libXrandr*|libXrender*|libXfixes*|\
+              libXi*|libXcursor*|libXinerama*|libXss*|libXxf86vm*|\
+              libwayland*|libxkbcommon*) : ;;
+              *) cp -n "$so" dist/ytc/lib/ 2>/dev/null || true ;;
+            esac
           done
-          strip dist/ytc/yt_* 2>/dev/null || true
+          patchelf --set-rpath '$ORIGIN/lib' dist/ytc/ytc
+          for so in dist/ytc/lib/*; do patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true; done
+          strip dist/ytc/ytc dist/ytc/lib/* 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          echo "=== linux bundle ==="; du -sh dist/ytc; echo "external deps:"; ldd dist/ytc/ytc | grep '=>' | grep -v "$PWD" | head
       - uses: actions/upload-artifact@v4
         with:
           name: ytc-linux-x86_64
           path: dist/ytc
 
   macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: brew install cmake ninja pkg-config curl mpv ffmpeg sdl2 glew dylibbundler
-      - name: Configure & build
-        run: |
-          export PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
-          cmake --build build -j"$(sysctl -n hw.ncpu)"
-      - name: Package (bundle dylibs so the GUI is self-contained)
-        run: |
-          mkdir -p dist/ytc
-          for b in yt_ui yt_resolve yt_search yt_cast; do
-            [ -f "build/$b" ] && cp "build/$b" dist/ytc/ || true
-          done
-          if [ -f dist/ytc/yt_ui ]; then
-            dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs || true
-          fi
-          strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
-          # strip + install_name_tool invalidate signatures; Apple Silicon kills
-          # invalidly-signed Mach-Os, so ad-hoc re-sign everything (sign libs first).
-          codesign --force --sign - dist/ytc/libs/*.dylib 2>/dev/null || true
-          codesign --force --sign - dist/ytc/yt_ui 2>/dev/null || true
-          cp -r config data dist/ytc/
-          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ytc-macos
-          path: dist/ytc
-
-  # Experimental slim macOS build: ffmpeg + libmpv compiled from source WITHOUT the
-  # external video encoders (x265/aom/SVT-AV1 ≈ 38 MB) and mpv's scripting/extras,
-  # keeping only what a decode-and-render YouTube client needs. Uploaded separately
-  # so the known-good `macos` job keeps producing a working artifact meanwhile.
-  macos-slim:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,72 +87,26 @@ jobs:
           export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:$GITHUB_WORKSPACE/mpvout/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(sysctl -n hw.ncpu)"
-      - name: Package + measure
+      - name: Package (self-contained single binary)
         run: |
           mkdir -p dist/ytc
-          cp build/yt_ui dist/ytc/ || true
-          dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs \
+          cp build/yt_ui dist/ytc/ytc
+          dylibbundler -od -b -x dist/ytc/ytc -d dist/ytc/libs -p @executable_path/libs \
             -s "$GITHUB_WORKSPACE/ffout/lib" -s "$GITHUB_WORKSPACE/mpvout/lib" || true
-          strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
+          strip -x dist/ytc/ytc dist/ytc/libs/*.dylib 2>/dev/null || true
+          # strip + install_name_tool invalidate signatures; Apple Silicon kills
+          # invalidly-signed Mach-Os, so ad-hoc re-sign everything (libs first).
           codesign --force --sign - dist/ytc/libs/*.dylib 2>/dev/null || true
-          codesign --force --sign - dist/ytc/yt_ui 2>/dev/null || true
+          codesign --force --sign - dist/ytc/ytc 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-          echo "=== slim bundle size ==="; du -sh dist/ytc
-          echo "=== biggest dylibs ==="; ls -S dist/ytc/libs | head -15
+          echo "=== macos bundle ==="; du -sh dist/ytc
       - uses: actions/upload-artifact@v4
         with:
-          name: ytc-macos-slim
+          name: ytc-macos
           path: dist/ytc
 
   windows:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-curl
-            mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-mpv
-            mingw-w64-x86_64-ffmpeg
-            mingw-w64-x86_64-glew
-      - name: Configure & build
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
-          cmake --build build -j"$(nproc)"
-      - name: Package (exe + dependent DLLs)
-        run: |
-          mkdir -p dist/ytc
-          for b in yt_ui yt_resolve yt_search yt_cast; do
-            [ -f "build/$b.exe" ] && cp "build/$b.exe" dist/ytc/ || true
-          done
-          # Copy the mingw DLLs each exe needs (best-effort via ldd).
-          for exe in dist/ytc/*.exe; do
-            ldd "$exe" 2>/dev/null | awk '/mingw64/ {print $3}' | while read -r dll; do
-              [ -f "$dll" ] && cp -n "$dll" dist/ytc/ || true
-            done
-          done
-          strip dist/ytc/*.exe dist/ytc/*.dll 2>/dev/null || true
-          cp -r config data dist/ytc/
-          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ytc-windows-x86_64
-          path: dist/ytc
-
-  # Experimental slim Windows build: same idea as macos-slim — ffmpeg + libmpv from
-  # source without the external encoders / mpv extras. Uploaded separately.
-  windows-slim:
     runs-on: windows-latest
     defaults:
       run:
@@ -221,20 +155,19 @@ jobs:
           export PKG_CONFIG_PATH="$(pwd)/ffout/lib/pkgconfig:$(pwd)/mpvout/lib/pkgconfig:/mingw64/lib/pkgconfig"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(nproc)"
-      - name: Package + measure
+      - name: Package (self-contained single binary + DLLs)
         run: |
           mkdir -p dist/ytc
-          cp build/yt_ui.exe dist/ytc/ || true
+          cp build/yt_ui.exe dist/ytc/ytc.exe
           export PATH="$(pwd)/ffout/bin:$(pwd)/mpvout/bin:$PATH"
-          ldd dist/ytc/yt_ui.exe 2>/dev/null | awk '/mingw64|ffout|mpvout/ {print $3}' | while read -r dll; do
+          ldd dist/ytc/ytc.exe 2>/dev/null | awk '/mingw64|ffout|mpvout/ {print $3}' | while read -r dll; do
             [ -f "$dll" ] && cp -n "$dll" dist/ytc/ || true
           done
           strip dist/ytc/*.exe dist/ytc/*.dll 2>/dev/null || true
           cp -r config data dist/ytc/
           curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
-          echo "=== slim bundle size ==="; du -sh dist/ytc
-          echo "=== biggest DLLs ==="; ls -S dist/ytc/*.dll | head -15
+          echo "=== windows bundle ==="; du -sh dist/ytc
       - uses: actions/upload-artifact@v4
         with:
-          name: ytc-windows-slim
+          name: ytc-windows-x86_64
           path: dist/ytc
