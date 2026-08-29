@@ -15,17 +15,35 @@ jobs:
     runs-on: ubuntu-22.04   # older glibc/libstdc++ -> runs on newer hosts (Steam Deck, etc.)
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install build deps (NOT ffmpeg/mpv/libplacebo — built/omitted below)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build pkg-config build-essential patchelf \
+            cmake meson ninja-build nasm pkg-config build-essential patchelf git \
             libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
-            libmpv-dev libavformat-dev libavcodec-dev libavutil-dev
-      - name: Build
+            libass-dev libfribidi-dev libharfbuzz-dev libfreetype-dev libdav1d-dev
+      - name: Build minimal FFmpeg (decoders + mp4 mux; no external encoders)
         run: |
-          # Desktop OpenGL (GLEW), NOT GLES2: requesting a GLES context over GLX on
-          # desktop X11/Mesa fails with GLXBadProfileARB. Handhelds still use GLES2.
+          git clone --depth 1 -b n7.1 https://github.com/FFmpeg/FFmpeg ff
+          cd ff
+          ./configure --prefix="$GITHUB_WORKSPACE/ffout" \
+            --disable-programs --disable-doc --disable-debug --disable-devices \
+            --disable-encoders --disable-muxers --enable-muxer=mp4,mov,ipod \
+            --enable-libdav1d --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+      - name: Build minimal libmpv (0.36, classic vo_gpu -> no libplacebo/shaderc)
+        run: |
+          git clone --depth 1 -b v0.36.0 https://github.com/mpv-player/mpv mp
+          cd mp
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
+          meson setup build -Dlibmpv=true -Dcplayer=false -Dlua=disabled \
+            -Djavascript=disabled -Dlibplacebo=disabled -Dprefix="$GITHUB_WORKSPACE/mpvout"
+          ninja -C build
+          ninja -C build install
+      - name: Build YTC (desktop OpenGL + GLEW; GLES2 fails over GLX on X11)
+        run: |
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:$GITHUB_WORKSPACE/mpvout/lib/pkgconfig"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
           cmake --build build -j"$(nproc)"
       - name: Package (self-contained single binary)
