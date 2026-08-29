@@ -67,6 +67,58 @@ jobs:
           name: ytc-macos
           path: dist/ytc
 
+  # Experimental slim macOS build: ffmpeg + libmpv compiled from source WITHOUT the
+  # external video encoders (x265/aom/SVT-AV1 ≈ 38 MB) and mpv's scripting/extras,
+  # keeping only what a decode-and-render YouTube client needs. Uploaded separately
+  # so the known-good `macos` job keeps producing a working artifact meanwhile.
+  macos-slim:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps (keep libplacebo/libass/dav1d; NOT ffmpeg/mpv)
+        run: |
+          brew install cmake ninja nasm pkg-config curl sdl2 glew dylibbundler \
+            libplacebo libass freetype fribidi harfbuzz little-cms2 dav1d
+      - name: Build minimal FFmpeg (decoders + mp4 mux; no external encoders)
+        run: |
+          git clone --depth 1 -b n7.1 https://github.com/FFmpeg/FFmpeg ff
+          cd ff
+          ./configure --prefix="$GITHUB_WORKSPACE/ffout" \
+            --disable-programs --disable-doc --disable-debug --disable-devices \
+            --disable-encoders --disable-muxers --enable-muxer=mp4,mov,ipod \
+            --enable-libdav1d --enable-shared --disable-static
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+      - name: Build minimal libmpv (render API; no lua/js/extras)
+        run: |
+          git clone --depth 1 -b v0.39.0 https://github.com/mpv-player/mpv mp
+          cd mp
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig"
+          meson setup build -Dlibmpv=true -Dcplayer=false -Dlua=disabled \
+            -Djavascript=disabled -Dprefix="$GITHUB_WORKSPACE/mpvout"
+          ninja -C build
+          ninja -C build install
+      - name: Build YTC against the slim ffmpeg + mpv
+        run: |
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:$GITHUB_WORKSPACE/mpvout/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_PLAYER=OFF -DYTC_GL_DESKTOP=ON
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: Package + measure
+        run: |
+          mkdir -p dist/ytc
+          cp build/yt_ui dist/ytc/ || true
+          dylibbundler -od -b -x dist/ytc/yt_ui -d dist/ytc/libs -p @executable_path/libs \
+            -s "$GITHUB_WORKSPACE/ffout/lib" -s "$GITHUB_WORKSPACE/mpvout/lib" || true
+          strip -x dist/ytc/yt_* dist/ytc/libs/*.dylib 2>/dev/null || true
+          cp -r config data dist/ytc/
+          curl -fsSL https://curl.se/ca/cacert.pem -o dist/ytc/data/cacert.pem || true
+          echo "=== slim bundle size ==="; du -sh dist/ytc
+          echo "=== biggest dylibs ==="; ls -S dist/ytc/libs | head -15
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytc-macos-slim
+          path: dist/ytc
+
   windows:
     runs-on: windows-latest
     defaults:
