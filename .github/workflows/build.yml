@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install build deps (keep libplacebo/libass/dav1d; NOT ffmpeg/mpv)
         run: |
-          brew install cmake ninja nasm pkg-config curl sdl2 glew dylibbundler \
+          brew install cmake meson ninja nasm pkg-config curl sdl2 glew dylibbundler \
             libplacebo libass freetype fribidi harfbuzz little-cms2 dav1d
       - name: Build minimal FFmpeg (decoders + mp4 mux; no external encoders)
         run: |
