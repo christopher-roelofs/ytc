@@ -12,7 +12,9 @@ on:
 
 jobs:
   linux:
-    # Native x86_64 and arm64 (Raspberry Pi / Orange Pi) on 22.04 for glibc compat.
+    # Build inside debian:bullseye (glibc 2.31) so binaries run on older ARM SBCs
+    # (Orange Pi / Raspberry Pi on bullseye) AND newer x86_64 (Steam Deck, modern PCs).
+    # Native x86_64 + arm64 runners (no cross-compile / QEMU).
     strategy:
       fail-fast: false
       matrix:
@@ -22,17 +24,19 @@ jobs:
           - arch: aarch64
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    container: debian:bullseye
     steps:
-      - uses: actions/checkout@v4
-      - name: Install build deps (NOT ffmpeg/mpv/libplacebo — built/omitted below)
+      - name: Install build deps (in-container; NOT ffmpeg/mpv — built below)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build nasm pkg-config build-essential patchelf git python3-pip \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git cmake ninja-build nasm pkg-config build-essential \
+            patchelf python3-pip curl \
             libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
-            libass-dev libfribidi-dev libharfbuzz-dev libfreetype-dev libdav1d-dev
-          # Ubuntu 22.04's meson (0.61) is too old for mpv 0.36 (needs >=0.62); use pip's.
-          sudo pip3 install --upgrade meson
+            libass-dev libfribidi-dev libharfbuzz-dev libfreetype6-dev libdav1d-dev
+          # bullseye's meson (0.56) is too old for mpv 0.36 (needs >=0.62); use pip's.
+          pip3 install --upgrade meson
+      - uses: actions/checkout@v4
       - name: Build minimal FFmpeg 6.1 (matches mpv 0.36; decoders + mp4 mux, no encoders)
         run: |
           git clone --depth 1 -b n6.1 https://github.com/FFmpeg/FFmpeg ff
@@ -47,7 +51,7 @@ jobs:
         run: |
           git clone --depth 1 -b v0.36.0 https://github.com/mpv-player/mpv mp
           cd mp
-          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ffout/lib/pkgconfig"
           meson setup build -Dlibmpv=true -Dcplayer=false -Dlua=disabled \
             -Djavascript=disabled -Dlibplacebo=disabled \
             --libdir=lib --prefix="$GITHUB_WORKSPACE/mpvout"
