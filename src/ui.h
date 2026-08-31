@@ -268,21 +268,23 @@ private:
                             GoSettingsAudio, GoSettingsVideo, GoSettingsCaptions,
                             GoSettingsPlayback, GoSettingsBrowsing,
                             AddSearchToFeed, GoCustomFeed, FeedSourceRow,
-                            FeedRemoveYes, FeedRemoveNo,
+                            FeedRemoveYes, FeedRemoveNo, GoHomeFeedMenu,
+                            ToggleFeedFavorites, ToggleFeedHistory, ToggleFeedCustom,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
-                            CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
+                            CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
                             OpenSearchFilters, CycleFilterType, CycleFilterDuration,
                             CycleFilterDate, CycleFilterSort, Quit };
     enum class MenuKind { Context, Main, Settings, SearchFilters,
                           SettingsAudio, SettingsVideo, SettingsCaptions,
-                          SettingsPlayback, SettingsBrowsing,
+                          SettingsPlayback, SettingsBrowsing, SettingsHomeFeed,
                           FeedManage, FeedRemoveConfirm };
     // Any of the Settings pages (top level or a submenu)?
     bool settings_kind(MenuKind k) const {
         return k == MenuKind::Settings || k == MenuKind::SettingsAudio ||
                k == MenuKind::SettingsVideo || k == MenuKind::SettingsCaptions ||
-               k == MenuKind::SettingsPlayback || k == MenuKind::SettingsBrowsing;
+               k == MenuKind::SettingsPlayback || k == MenuKind::SettingsBrowsing ||
+               k == MenuKind::SettingsHomeFeed;
     }
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
@@ -427,7 +429,9 @@ private:
 
     // Autoplay: when a video ends, play the next one automatically.
     bool autoplay_ = false;                // setting "autoplay" (default off)
-    int  home_source_ = 0;                 // "home_source": 0 Favorites, 1 Favorites+History
+    int  home_sources_ = 1;                // "home_sources" bitmask: 1 Favorites,
+                                           // 2 History, 4 Custom (saved searches);
+                                           // enabled sources interleave into Home
     int  lang_ = 0;                        // "lang": UI/content language index (i18n)
 
     // ---- Casting (Option B: play on a TV's own YouTube app via the Lounge API) ----
@@ -625,7 +629,7 @@ private:
     yt::Innertube::HomeCursor refresh_home_cursor_;   // home-feed cursor from the worker
     std::string refresh_sig_;           // view identity when the refresh was started
     int refresh_kind_ = 0;              // what the worker fetched (see refresh enum in .cpp)
-    int refresh_home_source_ = 0;       // home_source_ a home fetch was built with;
+    int refresh_home_source_ = 0;       // home_sources_ a home fetch was built with;
                                         // a mismatch on completion -> discard + refetch
     // Auto-retry with incremental backoff when a network fetch fails (e.g. app
     // opened before wifi reconnected after wake).
@@ -676,6 +680,7 @@ private:
     void open_settings_playback();  // Settings > Playback submenu
     void open_settings_browsing();  // Settings > Browsing submenu
     void open_feed_manage();        // Browsing > Custom Feed: saved-search list
+    void open_settings_homefeed();  // Browsing > Home Feed: source toggles
     int feed_remove_idx_ = -1;      // source pending removal (FeedRemoveConfirm)
     void reopen_settings_menu();    // rebuild whichever settings page is current
     std::string now_playing_title_;

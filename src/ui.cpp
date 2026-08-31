@@ -343,9 +343,10 @@ App::App(const std::string& config_path, gfx::Window* win)
     player_.set_caption_style(cc_size_, cc_style_);
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
     autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
-    home_source_ = it_.setting_int("home_source", 0); // 0 favorites / 1 +history / 2 custom
-    if (home_source_ < 0 || home_source_ > 2) home_source_ = 0;
-    if (home_source_ == 2 && it_.custom_feed_sources().empty()) home_source_ = 0;
+    // Home sources bitmask (1 fav / 2 history / 4 custom). Default: Favorites
+    // only — History and Custom are opt-in via Browsing > Home Feed.
+    home_sources_ = it_.setting_int("home_sources", 1) & 7;
+    if (!home_sources_) home_sources_ = 1;
 
     // UI language + Innertube locale (0 = English). Drives translated labels and
     // YouTube-localized titles/metadata. Set before any feed fetch is kicked off.
@@ -796,7 +797,7 @@ void App::refresh_current_view(bool is_retry) {
     // Pin the home source for this fetch: if the user flips Home Feed while it's
     // in flight, poll_refresh sees the mismatch and refetches instead of applying
     // a feed built from the old source.
-    int hsrc = home_source_;
+    int hsrc = home_sources_;
     refresh_home_source_ = hsrc;
     refresh_running_ = true; refresh_done_ = false;
     if (refresh_thread_.joinable()) refresh_thread_.join();
@@ -813,14 +814,40 @@ void App::refresh_current_view(bool is_retry) {
             }
             else if (kind == RK_PLAYLIST)        f = it_.playlist_feed(id);
             else if (kind == RK_HOME) {
-                if (hsrc == 2) {                  // Custom feed: the saved searches
-                    f.items = it_.custom_feed();
-                    f.ok = it_.has_visitor_data();
-                } else {
-                    f.items = it_.home_all({}, hsrc == 1, &hc);
-                    // ok unless we have favourites but couldn't reach the network
-                    f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data();
-                } }
+                // Blend the enabled sources (bitmask: 1 fav / 2 history / 4 custom):
+                // channel uploads via home_all (age-sorted), then the custom feed's
+                // saved-search results interleaved in round-robin, deduped by id.
+                bool fav = hsrc & 1, hist = (hsrc & 2) != 0, cust = (hsrc & 4) != 0;
+                if (fav) f.items = it_.home_all({}, hist, &hc);
+                else if (hist) {
+                    std::vector<std::string> ids;
+                    for (auto& [cid, nm] : it_.history_channels()) ids.push_back(cid);
+                    if (!ids.empty()) f.items = it_.home_all(ids, false, &hc);
+                }
+                if (cust) {
+                    std::vector<yt::SearchResult> cf = it_.custom_feed();
+                    std::vector<yt::SearchResult> merged;
+                    std::unordered_map<std::string, bool> seen;
+                    auto key_of = [](const yt::SearchResult& r) {
+                        return !r.video_id.empty() ? r.video_id
+                             : !r.playlist_id.empty() ? r.playlist_id
+                                                      : r.channel_id + r.title;
+                    };
+                    size_t n = std::max(f.items.size(), cf.size());
+                    for (size_t i = 0; i < n; ++i) {
+                        if (i < f.items.size() && seen.emplace(key_of(f.items[i]), true).second)
+                            merged.push_back(std::move(f.items[i]));
+                        if (i < cf.size() && seen.emplace(key_of(cf[i]), true).second)
+                            merged.push_back(std::move(cf[i]));
+                    }
+                    f.items = std::move(merged);
+                }
+                // ok unless a source SHOULD have produced content but the network
+                // was unreachable (drives the auto-retry banner).
+                bool expect = (fav && !it_.favorite_channel_ids().empty()) ||
+                              (hist && !it_.history_channels().empty()) ||
+                              (cust && !it_.custom_feed_sources().empty());
+                f.ok = !expect || it_.has_visitor_data(); }
             else if (kind == RK_HOME_PLAYLISTS){ f.items = it_.home_playlists({}, &hc);
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else if (kind == RK_HOME_POSTS){ f.items = it_.home_posts({}, &hc);
@@ -842,7 +869,7 @@ void App::poll_refresh() {
     { std::lock_guard<std::mutex> lk(refresh_m_);
       f = std::move(refresh_pending_); hc = std::move(refresh_home_cursor_); }
     bool fetch_ok = f.ok;
-    if (refresh_kind_ == RK_HOME && refresh_home_source_ != home_source_) {
+    if (refresh_kind_ == RK_HOME && refresh_home_source_ != home_sources_) {
         // Home Feed source changed while this fetch was in flight (its result is
         // for the old source): discard it and fetch the current source.
         refresh_current_view();
@@ -1015,13 +1042,28 @@ void App::open_settings_browsing() {
     const S vname[] = {S::ViewGrid, S::ViewCarousel, S::View3DCarousel, S::ViewCoverflow};
     menu_items_.push_back({tr(S::SetView) + std::string(":  ") + tr(vname[(int)view_mode_]),
                            MenuAction::CycleView});
-    menu_items_.push_back({tr(S::SetHomeFeed) + std::string(":  ")
-                           + tr(home_source_ == 2 ? S::HomeCustom
-                              : home_source_ == 1 ? S::FavoritesPlusHistory : S::Favorites),
-                           MenuAction::CycleHomeSource});
+    menu_items_.push_back({tr(S::SetHomeFeed), MenuAction::GoHomeFeedMenu});
     menu_items_.push_back({tr(S::SetCustomFeed), MenuAction::GoCustomFeed});
     menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
                            MenuAction::ToggleHideRestricted});
+    menu_sel_ = 0;
+    menu_open_ = true;
+}
+
+// Browsing > Home Feed: what flows into the Home grid — any mix of Favorites
+// (channel uploads), History (channels you've watched), and the Custom feed's
+// saved searches. At least one stays on (the toggle refuses to clear the last).
+void App::open_settings_homefeed() {
+    using i18n::tr; using S = i18n::Str;
+    auto onoff = [&](int bit){ return std::string(tr(home_sources_ & bit ? S::On : S::Off)); };
+    menu_kind_ = MenuKind::SettingsHomeFeed;
+    menu_items_.clear();
+    menu_items_.push_back({tr(S::Favorites) + std::string(":  ") + onoff(1),
+                           MenuAction::ToggleFeedFavorites});
+    menu_items_.push_back({tr(S::History) + std::string(":  ") + onoff(2),
+                           MenuAction::ToggleFeedHistory});
+    menu_items_.push_back({tr(S::HomeCustom) + std::string(":  ") + onoff(4),
+                           MenuAction::ToggleFeedCustom});
     menu_sel_ = 0;
     menu_open_ = true;
 }
@@ -1102,6 +1144,7 @@ void App::reopen_settings_menu() {
         case MenuKind::SettingsCaptions: open_settings_captions(); break;
         case MenuKind::SettingsPlayback: open_settings_playback(); break;
         case MenuKind::SettingsBrowsing: open_settings_browsing(); break;
+        case MenuKind::SettingsHomeFeed: open_settings_homefeed(); break;
         case MenuKind::Settings:         open_settings(); break;
         default:                         open_menu(); break;
     }
@@ -1157,11 +1200,14 @@ void App::adjust_setting(MenuAction a, int dir) {
         int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
-    if (a == MenuAction::CycleHomeSource) {
-        // Favorites -> Favorites + History -> Custom (skipped while no saved searches).
-        do { home_source_ = ((home_source_ + dir) % 3 + 3) % 3; }
-        while (home_source_ == 2 && it_.custom_feed_sources().empty());
-        it_.set_setting_int("home_source", home_source_);
+    if (a == MenuAction::ToggleFeedFavorites || a == MenuAction::ToggleFeedHistory ||
+        a == MenuAction::ToggleFeedCustom) {
+        int bit = a == MenuAction::ToggleFeedFavorites ? 1
+                : a == MenuAction::ToggleFeedHistory   ? 2 : 4;
+        int next = home_sources_ ^ bit;
+        if (!next) return;                       // never all-off: keep the last source
+        home_sources_ = next;
+        it_.set_setting_int("home_sources", home_sources_);
         // If we're viewing Home, re-fetch with the new source.
         if (query_.empty() && view_label_.empty() && !in_channel_view_)
             refresh_current_view();
@@ -2337,6 +2383,7 @@ void App::menu_activate() {
         case MenuAction::GoSettingsCaptions: open_settings_captions(); return;
         case MenuAction::GoSettingsPlayback: open_settings_playback(); return;
         case MenuAction::GoSettingsBrowsing: open_settings_browsing(); return;
+        case MenuAction::GoHomeFeedMenu:     open_settings_homefeed(); return;
         case MenuAction::AddSearchToFeed: {
             yt::FeedSource s;
             s.query = query_;
@@ -2369,9 +2416,10 @@ void App::menu_activate() {
             feed_remove_idx_ = -1;
             if (it_.custom_feed_sources().empty()) {
                 // Feed emptied: fall back off Custom, and land back on Browsing.
-                if (home_source_ == 2) {
-                    home_source_ = 0;
-                    it_.set_setting_int("home_source", home_source_);
+                if (home_sources_ & 4) {
+                    home_sources_ &= ~4;
+                    if (!home_sources_) home_sources_ = 1;
+                    it_.set_setting_int("home_sources", home_sources_);
                 }
                 open_settings_browsing();
             } else open_feed_manage();
@@ -2411,7 +2459,9 @@ void App::menu_activate() {
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
         case MenuAction::ToggleAutoplay:
-        case MenuAction::CycleHomeSource:
+        case MenuAction::ToggleFeedFavorites:
+        case MenuAction::ToggleFeedHistory:
+        case MenuAction::ToggleFeedCustom:
             return;   // value rows change with Left/Right only; A does nothing
         case MenuAction::Quit:
             menu_open_ = false;
@@ -3125,7 +3175,8 @@ void App::input(Action a) {
                     act == MenuAction::CycleCaptionSize || act == MenuAction::CycleCaptionStyle ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
                     act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
-                    act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage ||
+                    act == MenuAction::ToggleFeedFavorites || act == MenuAction::ToggleFeedHistory ||
+                    act == MenuAction::ToggleFeedCustom || act == MenuAction::CycleLanguage ||
                     act == MenuAction::CycleFilterType || act == MenuAction::CycleFilterDuration ||
                     act == MenuAction::CycleFilterDate || act == MenuAction::CycleFilterSort)
                     adjust_setting(act, a == Action::Right ? +1 : -1);
@@ -3143,6 +3194,10 @@ void App::input(Action a) {
                     break;
                 }
                 if (menu_kind_ == MenuKind::FeedManage) {         // list -> Browsing
+                    open_settings_browsing();
+                    break;
+                }
+                if (menu_kind_ == MenuKind::SettingsHomeFeed) {   // nested under Browsing
                     open_settings_browsing();
                     break;
                 }
@@ -3518,6 +3573,8 @@ void App::render_menu(gfx::Renderer& rn) {
                           ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetPlaybackMenu)
                         : (menu_kind_ == MenuKind::SettingsBrowsing)
                           ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetBrowsingMenu)
+                        : (menu_kind_ == MenuKind::SettingsHomeFeed)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetHomeFeed)
                         : (menu_kind_ == MenuKind::FeedManage)
                           ? std::string(i18n::tr(i18n::Str::SetCustomFeed))
                         : (menu_kind_ == MenuKind::FeedRemoveConfirm)
