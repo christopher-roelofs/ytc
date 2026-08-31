@@ -19,11 +19,16 @@ enum class Str {
     TabAll, TabVideos, TabShorts, TabPlaylists, TabPosts,
     // Settings row labels
     SetMaxQuality, SetVolume, SetVideoDecode, SetAspect, SetAudioLang, SetCaptionLang,
+    SetAudioMenu, SetVideoMenu, SetCaptionsMenu, SetPlaybackMenu, SetBrowsingMenu,
+    SetCaptionSize, SetCaptionStyle,
     SetHidePaced,
     SetAskResume, SetHomeFeed, SetAutoplay, SetSponsorBlock, SetView, SetLanguage,
     // Settings values
     On, Off, Hardware, Software, AspectFit, AspectZoom, AspectStretch,
     AppLanguage, OriginalTrack,
+    SizeSmall, SizeMedium, SizeLarge,
+    StyleWhite, StyleYellow, StyleWhiteOnBlack, StyleBlackOnWhite,
+    StyleYellowOnBlack, StyleYellowOnBlue,
     Favorites, FavoritesPlusHistory,
     ViewGrid, ViewCarousel, View3DCarousel, ViewCoverflow, AutoHighest,
     // Status / empty states / hints

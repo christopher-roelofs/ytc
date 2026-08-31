@@ -336,6 +336,11 @@ App::App(const std::string& config_path, gfx::Window* win)
     audio_lang_pref_ = it_.setting_str("audio_lang", "app");  // dub language default
     cc_lang_pref_ = it_.setting_str("cc_lang", "app");        // default caption language
     if (cc_lang_pref_ == "off") cc_lang_pref_ = "app";        // migrate the old value
+    cc_size_ = it_.setting_int("cc_size", 1);                 // caption size (medium)
+    if (cc_size_ < 0 || cc_size_ > 2) cc_size_ = 1;
+    cc_style_ = it_.setting_int("cc_style", 0);               // caption style (white)
+    if (cc_style_ < 0 || cc_style_ > 5) cc_style_ = 0;
+    player_.set_caption_style(cc_size_, cc_style_);
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
     autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
     home_source_ = it_.setting_int("home_source", 0) ? 1 : 0; // 0 favorites / 1 +history
@@ -948,45 +953,114 @@ static std::string cycle_lang_pref(const std::string& cur, int dir,
     return vals[((idx + dir) % n + n) % n];
 }
 
-// ---------- Settings submenu ----------
+// ---------- Settings menu + its Audio / Video / Captions submenus ----------
 void App::open_settings() {
     using i18n::tr; using S = i18n::Str;
-    auto onoff = [&](bool b){ return std::string(tr(b ? S::On : S::Off)); };
     menu_kind_ = MenuKind::Settings;
+    menu_items_.clear();
+    menu_items_.push_back({tr(S::SetAudioMenu),    MenuAction::GoSettingsAudio});
+    menu_items_.push_back({tr(S::SetVideoMenu),    MenuAction::GoSettingsVideo});
+    menu_items_.push_back({tr(S::SetCaptionsMenu), MenuAction::GoSettingsCaptions});
+    menu_items_.push_back({tr(S::SetPlaybackMenu), MenuAction::GoSettingsPlayback});
+    menu_items_.push_back({tr(S::SetBrowsingMenu), MenuAction::GoSettingsBrowsing});
+    // Language stays top-level on purpose: a user stuck in the wrong language
+    // must be able to find it without reading submenu labels.
+    menu_items_.push_back({tr(S::SetLanguage) + std::string(":  ") + i18n::language_name(lang_),
+                           MenuAction::CycleLanguage});
+    menu_items_.push_back({tr(S::SetLinkedDevices), MenuAction::GoLinkedDevices});
+    menu_sel_ = 0;
+    // (Do not re-pause here; if opened from the player the main menu already did.)
+    menu_open_ = true;
+}
+
+void App::open_settings_playback() {
+    using i18n::tr; using S = i18n::Str;
+    auto onoff = [&](bool b){ return std::string(tr(b ? S::On : S::Off)); };
+    menu_kind_ = MenuKind::SettingsPlayback;
+    menu_items_.clear();
+    menu_items_.push_back({tr(S::SetAskResume) + std::string(":  ") + onoff(ask_resume_),
+                           MenuAction::ToggleAskResume});
+    menu_items_.push_back({tr(S::SetAutoplay) + std::string(":  ") + onoff(autoplay_),
+                           MenuAction::ToggleAutoplay});
+    menu_items_.push_back({tr(S::SetSponsorBlock) + std::string(":  ") + onoff(sponsorblock_),
+                           MenuAction::ToggleSponsorBlock});
+    menu_sel_ = 0;
+    menu_open_ = true;
+}
+
+void App::open_settings_browsing() {
+    using i18n::tr; using S = i18n::Str;
+    auto onoff = [&](bool b){ return std::string(tr(b ? S::On : S::Off)); };
+    menu_kind_ = MenuKind::SettingsBrowsing;
+    menu_items_.clear();
+    const S vname[] = {S::ViewGrid, S::ViewCarousel, S::View3DCarousel, S::ViewCoverflow};
+    menu_items_.push_back({tr(S::SetView) + std::string(":  ") + tr(vname[(int)view_mode_]),
+                           MenuAction::CycleView});
+    menu_items_.push_back({tr(S::SetHomeFeed) + std::string(":  ")
+                           + tr(home_source_ == 1 ? S::FavoritesPlusHistory : S::Favorites),
+                           MenuAction::CycleHomeSource});
+    menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
+                           MenuAction::ToggleHideRestricted});
+    menu_sel_ = 0;
+    menu_open_ = true;
+}
+
+void App::open_settings_audio() {
+    using i18n::tr; using S = i18n::Str;
+    menu_kind_ = MenuKind::SettingsAudio;
+    menu_items_.clear();
+    menu_items_.push_back({tr(S::SetVolume) + std::string(":  ") + std::to_string(volume_) + "%",
+                           MenuAction::CycleVolume});
+    menu_items_.push_back({tr(S::SetAudioLang) + std::string(":  ") + lang_pref_label(audio_lang_pref_),
+                           MenuAction::CycleAudioLang});
+    menu_sel_ = 0;
+    menu_open_ = true;
+}
+
+void App::open_settings_video() {
+    using i18n::tr; using S = i18n::Str;
+    menu_kind_ = MenuKind::SettingsVideo;
     menu_items_.clear();
     menu_items_.push_back({tr(S::SetMaxQuality) + std::string(":  ") + quality_label(play_prefs_.max_height),
                            MenuAction::CycleMaxQuality});
-    menu_items_.push_back({tr(S::SetVolume) + std::string(":  ") + std::to_string(volume_) + "%",
-                           MenuAction::CycleVolume});
     // Video Decode (hwdec) hidden for now: the bundled ffmpeg is software-only, so the
     // toggle does nothing. Code kept (CycleHwdec/set_hwdec) for when a hw build lands.
     const S aname[] = {S::AspectFit, S::AspectZoom, S::AspectStretch};
     menu_items_.push_back({tr(S::SetAspect) + std::string(":  ") + tr(aname[aspect_mode_]),
                            MenuAction::CycleAspect});
-    menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
-                           MenuAction::ToggleHideRestricted});
-    menu_items_.push_back({tr(S::SetAskResume) + std::string(":  ") + onoff(ask_resume_),
-                           MenuAction::ToggleAskResume});
-    menu_items_.push_back({tr(S::SetHomeFeed) + std::string(":  ")
-                           + tr(home_source_ == 1 ? S::FavoritesPlusHistory : S::Favorites),
-                           MenuAction::CycleHomeSource});
-    menu_items_.push_back({tr(S::SetAutoplay) + std::string(":  ") + onoff(autoplay_),
-                           MenuAction::ToggleAutoplay});
-    menu_items_.push_back({tr(S::SetSponsorBlock) + std::string(":  ") + onoff(sponsorblock_),
-                           MenuAction::ToggleSponsorBlock});
-    const S vname[] = {S::ViewGrid, S::ViewCarousel, S::View3DCarousel, S::ViewCoverflow};
-    menu_items_.push_back({tr(S::SetView) + std::string(":  ") + tr(vname[(int)view_mode_]),
-                           MenuAction::CycleView});
-    menu_items_.push_back({tr(S::SetLanguage) + std::string(":  ") + i18n::language_name(lang_),
-                           MenuAction::CycleLanguage});
-    menu_items_.push_back({tr(S::SetAudioLang) + std::string(":  ") + lang_pref_label(audio_lang_pref_),
-                           MenuAction::CycleAudioLang});
+    menu_sel_ = 0;
+    menu_open_ = true;
+}
+
+void App::open_settings_captions() {
+    using i18n::tr; using S = i18n::Str;
+    menu_kind_ = MenuKind::SettingsCaptions;
+    menu_items_.clear();
     menu_items_.push_back({tr(S::SetCaptionLang) + std::string(":  ") + lang_pref_label(cc_lang_pref_),
                            MenuAction::CycleCaptionLang});
-    menu_items_.push_back({tr(S::SetLinkedDevices), MenuAction::GoLinkedDevices});
+    const S sname[] = {S::SizeSmall, S::SizeMedium, S::SizeLarge};
+    menu_items_.push_back({tr(S::SetCaptionSize) + std::string(":  ") + tr(sname[cc_size_]),
+                           MenuAction::CycleCaptionSize});
+    const S styname[] = {S::StyleWhite, S::StyleYellow, S::StyleWhiteOnBlack,
+                         S::StyleBlackOnWhite, S::StyleYellowOnBlack, S::StyleYellowOnBlue};
+    menu_items_.push_back({tr(S::SetCaptionStyle) + std::string(":  ") + tr(styname[cc_style_]),
+                           MenuAction::CycleCaptionStyle});
     menu_sel_ = 0;
-    // (Do not re-pause here; if opened from the player the main menu already did.)
     menu_open_ = true;
+}
+
+// Rebuild whichever settings page (or player menu) is current, for in-place
+// label refreshes after a Left/Right value change.
+void App::reopen_settings_menu() {
+    switch (menu_kind_) {
+        case MenuKind::SettingsAudio:    open_settings_audio(); break;
+        case MenuKind::SettingsVideo:    open_settings_video(); break;
+        case MenuKind::SettingsCaptions: open_settings_captions(); break;
+        case MenuKind::SettingsPlayback: open_settings_playback(); break;
+        case MenuKind::SettingsBrowsing: open_settings_browsing(); break;
+        case MenuKind::Settings:         open_settings(); break;
+        default:                         open_menu(); break;
+    }
 }
 
 // Change a setting's value by dir (-1 = Left, +1 = Right) and persist it.
@@ -1014,13 +1088,13 @@ void App::adjust_setting(MenuAction a, int dir) {
         } else if (mode_ != Mode::Playing) {
             refresh_current_view();           // bring the hidden items back
         }
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::ToggleAskResume) {
         ask_resume_ = !ask_resume_;
         it_.set_setting_int("ask_resume", ask_resume_ ? 1 : 0);
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleVolume) {
@@ -1030,13 +1104,13 @@ void App::adjust_setting(MenuAction a, int dir) {
         volume_ = v;
         it_.set_setting_int("volume", volume_);
         if (mode_ == Mode::Playing) player_.set_volume(volume_);   // live if playing
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::ToggleAutoplay) {
         autoplay_ = !autoplay_;
         it_.set_setting_int("autoplay", autoplay_ ? 1 : 0);
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleHomeSource) {
@@ -1045,7 +1119,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         // If we're viewing Home, re-fetch with the new source.
         if (query_.empty() && view_label_.empty() && !in_channel_view_)
             refresh_current_view();
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleLanguage) {
@@ -1058,7 +1132,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         // (No worker is running here — this is a synchronous menu action on the UI thread.)
         if (!in_channel_view_ && view_label_.empty()) { load_home(); }
         else refresh_current_view();
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;   // relabels the menu
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;   // relabels the menu
         return;
     }
     if (a == MenuAction::ToggleSponsorBlock) {
@@ -1068,7 +1142,7 @@ void App::adjust_setting(MenuAction a, int dir) {
             start_sponsorblock(now_playing_item_.video_id);
         else if (!sponsorblock_) { std::lock_guard<std::mutex> lk(sb_m_);
             sb_segments_.clear(); sb_skipped_.clear(); }
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleCaptions) {
@@ -1094,7 +1168,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         hwdec_mode_ = hwdec_mode_ ? 0 : 1;                 // toggle Hardware/Software
         it_.set_setting_int("hwdec", hwdec_mode_);
         player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         // hwdec is fixed at mpv init, so a live change needs a fresh stream: re-resolve
         // the current video at its position (applies the new decoder immediately).
         if (mode_ == Mode::Playing) { menu_open_ = false; menu_paused_ = false;
@@ -1106,13 +1180,27 @@ void App::adjust_setting(MenuAction a, int dir) {
         it_.set_setting_str("audio_lang", audio_lang_pref_);
         // Default for the NEXT videos; the playing one keeps its (possibly
         // overridden) track — the player-menu Audio Track row changes it live.
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleCaptionLang) {
         cc_lang_pref_ = cycle_lang_pref(cc_lang_pref_, dir, {"app"});
         it_.set_setting_str("cc_lang", cc_lang_pref_);
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::CycleCaptionSize) {
+        cc_size_ = ((cc_size_ + dir) % 3 + 3) % 3;
+        it_.set_setting_int("cc_size", cc_size_);
+        player_.set_caption_style(cc_size_, cc_style_);   // live if captions showing
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::CycleCaptionStyle) {
+        cc_style_ = ((cc_style_ + dir) % 6 + 6) % 6;
+        it_.set_setting_int("cc_style", cc_style_);
+        player_.set_caption_style(cc_size_, cc_style_);
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleAudioTrack) {
@@ -1135,7 +1223,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         aspect_mode_ = ((aspect_mode_ + dir) % 3 + 3) % 3;     // Fit -> Zoom -> Stretch, wraps
         it_.set_setting_int("aspect", aspect_mode_);
         player_.set_aspect(aspect_mode_);        // mpv property change: applies live
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleView) {
@@ -1143,7 +1231,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         view_mode_ = (ViewMode)nv;
         it_.set_setting_int("view", nv);
         carousel_pos_ = sel_;
-        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleMaxQuality) {
@@ -1157,8 +1245,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         it_.set_setting_int("max_height", play_prefs_.max_height);
         // Rebuild the current menu so the label updates in place.
         int keep = menu_sel_;
-        if (menu_kind_ == MenuKind::Settings) open_settings();
-        else open_menu();
+        reopen_settings_menu();
         menu_sel_ = keep;
         // In the player options menu, mark the change so we re-resolve the current
         // video (at the new quality, resuming the position) when the menu closes.
@@ -2195,6 +2282,11 @@ void App::menu_activate() {
         case MenuAction::GoSettings:
             open_settings();              // switch this overlay to the settings submenu
             return;
+        case MenuAction::GoSettingsAudio:    open_settings_audio();    return;
+        case MenuAction::GoSettingsVideo:    open_settings_video();    return;
+        case MenuAction::GoSettingsCaptions: open_settings_captions(); return;
+        case MenuAction::GoSettingsPlayback: open_settings_playback(); return;
+        case MenuAction::GoSettingsBrowsing: open_settings_browsing(); return;
         case MenuAction::GoLinkedDevices:
             menu_open_ = false; menu_paused_ = false;
             open_manage_devices();
@@ -2217,6 +2309,8 @@ void App::menu_activate() {
         case MenuAction::CycleAudioLang:
         case MenuAction::CycleCaptionLang:
         case MenuAction::CycleAudioTrack:
+        case MenuAction::CycleCaptionSize:
+        case MenuAction::CycleCaptionStyle:
         case MenuAction::CycleSpeed:
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
@@ -2932,6 +3026,7 @@ void App::input(Action a) {
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
                     act == MenuAction::CycleAspect || act == MenuAction::CycleAudioLang ||
                     act == MenuAction::CycleCaptionLang || act == MenuAction::CycleAudioTrack ||
+                    act == MenuAction::CycleCaptionSize || act == MenuAction::CycleCaptionStyle ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
                     act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
                     act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage ||
@@ -2947,6 +3042,10 @@ void App::input(Action a) {
                 break;
             case Action::Back:
             case Action::Menu:
+                if (settings_kind(menu_kind_) && menu_kind_ != MenuKind::Settings) {
+                    open_settings();                              // submenu -> Settings
+                    break;
+                }
                 if (menu_kind_ == MenuKind::Settings) {   // Settings -> back to main menu
                     menu_open_ = false; open_main_menu();
                     break;
@@ -3283,7 +3382,7 @@ void App::render_menu(gfx::Renderer& rn) {
     int n = (int)menu_items_.size();
     // Settings rows carry a "Label:  Value" so they need more room than the
     // context menu; widen that panel to keep values from crowding the edge.
-    float iw = std::min((menu_kind_ == MenuKind::Settings ||
+    float iw = std::min((settings_kind(menu_kind_) ||
                          menu_kind_ == MenuKind::SearchFilters ? 620.f : 560.f)*s, W*0.86f);
     float ih = 58*s, gap = 8*s;
     float title_h = 56*s, foot_h = 34*s;                 // reserve the footer inside the panel
@@ -3304,6 +3403,16 @@ void App::render_menu(gfx::Renderer& rn) {
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
     std::string heading = (menu_kind_ == MenuKind::Main) ? "Menu"
                         : (menu_kind_ == MenuKind::Settings) ? "Settings"
+                        : (menu_kind_ == MenuKind::SettingsAudio)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetAudioMenu)
+                        : (menu_kind_ == MenuKind::SettingsVideo)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetVideoMenu)
+                        : (menu_kind_ == MenuKind::SettingsCaptions)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetCaptionsMenu)
+                        : (menu_kind_ == MenuKind::SettingsPlayback)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetPlaybackMenu)
+                        : (menu_kind_ == MenuKind::SettingsBrowsing)
+                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetBrowsingMenu)
                         : (menu_kind_ == MenuKind::SearchFilters) ? i18n::tr(i18n::Str::MenuSearchFilters)
                           : font_body_->ellipsize(menu_target_.title, iw - 4*s);
     rn.text(*font_body_, heading, px, py, theme_.text_dim);
@@ -3331,7 +3440,7 @@ void App::render_menu(gfx::Renderer& rn) {
             it.action == MenuAction::CycleAspect || it.action == MenuAction::CycleAudioLang ||
             it.action == MenuAction::CycleCaptionLang || it.action == MenuAction::CycleAudioTrack)
             has_value = true;
-    const char* foot = (menu_kind_ == MenuKind::Settings || menu_kind_ == MenuKind::SearchFilters)
+    const char* foot = (settings_kind(menu_kind_) || menu_kind_ == MenuKind::SearchFilters)
                      ? i18n::tr(i18n::Str::FooterDesc)
                      : has_value ? i18n::tr(i18n::Str::FooterMenuValue)
                      : i18n::tr(i18n::Str::FooterMenuPlain);

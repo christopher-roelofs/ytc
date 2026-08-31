@@ -264,12 +264,23 @@ private:
                             ToggleHideRestricted, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleAspect, CycleSpeed,
                             CycleAudioLang, CycleCaptionLang, CycleAudioTrack,
+                            CycleCaptionSize, CycleCaptionStyle,
+                            GoSettingsAudio, GoSettingsVideo, GoSettingsCaptions,
+                            GoSettingsPlayback, GoSettingsBrowsing,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
                             OpenSearchFilters, CycleFilterType, CycleFilterDuration,
                             CycleFilterDate, CycleFilterSort, Quit };
-    enum class MenuKind { Context, Main, Settings, SearchFilters };
+    enum class MenuKind { Context, Main, Settings, SearchFilters,
+                          SettingsAudio, SettingsVideo, SettingsCaptions,
+                          SettingsPlayback, SettingsBrowsing };
+    // Any of the Settings pages (top level or a submenu)?
+    bool settings_kind(MenuKind k) const {
+        return k == MenuKind::Settings || k == MenuKind::SettingsAudio ||
+               k == MenuKind::SettingsVideo || k == MenuKind::SettingsCaptions ||
+               k == MenuKind::SettingsPlayback || k == MenuKind::SettingsBrowsing;
+    }
     struct MenuItem { std::string label; MenuAction action; };
     void adjust_setting(MenuAction a, int dir);  // Left/Right cycle a setting's value
     void adjust_volume(int delta);               // Up/Down in the player: app-local volume
@@ -652,6 +663,14 @@ private:
                                          // once the track list arrives (else captions
                                          // start Off — nothing auto-enables them)
     std::string effective_audio_lang() const;  // override/setting -> AudioPrefs.lang value
+    int cc_size_ = 1;    // caption size 0 small / 1 medium / 2 large; "cc_size"
+    int cc_style_ = 0;   // caption style 0..5 (white .. yellow-on-blue); "cc_style"
+    void open_settings_audio();     // Settings > Audio submenu
+    void open_settings_video();     // Settings > Video submenu
+    void open_settings_captions();  // Settings > Captions submenu
+    void open_settings_playback();  // Settings > Playback submenu
+    void open_settings_browsing();  // Settings > Browsing submenu
+    void reopen_settings_menu();    // rebuild whichever settings page is current
     std::string now_playing_title_;
     yt::SearchResult now_playing_item_;   // context for the player options menu
     std::string status_msg_;

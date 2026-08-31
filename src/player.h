@@ -59,6 +59,10 @@ public:
     // Subtitles: add a local subtitle file and select+show it; or hide any subtitle.
     void add_subtitle(const std::string& path);
     void subtitles_off();
+    // Caption rendering: size 0 small / 1 medium / 2 large; style 0 white,
+    // 1 yellow, 2 white-on-black, 3 black-on-white, 4 yellow-on-black,
+    // 5 yellow-on-blue. Applied live and remembered for subsequent play()s.
+    void set_caption_style(int size, int style);
 
     bool active() const;      // a file is loaded
     bool paused() const;

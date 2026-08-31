@@ -24,6 +24,7 @@ struct Player::Impl {
     bool audio_added = false;
     std::string hwdec = "auto-copy-safe";   // decode mode (settings/env); see init()
     int aspect = 0;              // 0 Fit / 1 Zoom / 2 Stretch; see apply_aspect()
+    int cc_size = 1, cc_style = 0;   // caption rendering; see apply_caption_style()
 
     static void* get_proc(void*, const char* name) {
         return SDL_GL_GetProcAddress(name);
@@ -82,6 +83,10 @@ struct Player::Impl {
         mpv_request_log_messages(mpv, dbg ? "v" : "error");
         ytn::register_stream(mpv);   // our bounded-range googlevideo fetcher
         apply_aspect();              // fresh instance per video; re-apply the mode
+        // Our subs are VTT (converted to ASS internally); force the sub-* style
+        // options over the converted styling so size/color settings apply.
+        mpv_set_option_string(mpv, "sub-ass-override", "force");
+        apply_caption_style();
         return true;
     }
     // Fit  = keepaspect + no panscan: whole picture, black bars for non-16:9.
@@ -92,6 +97,22 @@ struct Player::Impl {
         if (!mpv) return;
         mpv_set_property_string(mpv, "keepaspect", aspect == 2 ? "no" : "yes");
         mpv_set_property_string(mpv, "panscan",    aspect == 1 ? "1.0" : "0.0");
+    }
+    void apply_caption_style() {
+        if (!mpv) return;
+        // Text / background per style; colors are "#AARRGGBB" (background kept
+        // slightly translucent so it doesn't fully wall off the video).
+        static const char* fg[] = {"#FFFFFF", "#FFFF00", "#FFFFFF",
+                                   "#000000", "#FFFF00", "#FFFF00"};
+        static const char* bg[] = {"#00000000", "#00000000", "#C8000000",
+                                   "#C8FFFFFF", "#C8000000", "#C80000B4"};
+        int st = (cc_style < 0 || cc_style > 5) ? 0 : cc_style;
+        double sc = cc_size == 0 ? 0.7 : cc_size == 2 ? 1.4 : 1.0;
+        mpv_set_property(mpv, "sub-scale", MPV_FORMAT_DOUBLE, &sc);
+        mpv_set_property_string(mpv, "sub-color", fg[st]);
+        mpv_set_property_string(mpv, "sub-back-color", bg[st]);
+        // The boxed styles read better without the default character outline.
+        mpv_set_property_string(mpv, "sub-border-size", st >= 2 ? "0" : "3");
     }
     void teardown() {
         if (rctx) { mpv_render_context_free(rctx); rctx = nullptr; }
@@ -256,6 +277,11 @@ void Player::set_aspect(int mode) {
     impl_->aspect = (mode < 0 || mode > 2) ? 0 : mode;
     impl_->apply_aspect();   // live if playing; init() re-applies for later videos
 }
+void Player::set_caption_style(int size, int style) {
+    impl_->cc_size = (size < 0 || size > 2) ? 1 : size;
+    impl_->cc_style = (style < 0 || style > 5) ? 0 : style;
+    impl_->apply_caption_style();   // live; init() re-applies for later videos
+}
 void Player::set_speed(double mult) {
     if (!impl_->mpv) return;
     if (mult < 0.25) mult = 0.25;
@@ -343,6 +369,7 @@ void Player::set_aspect(int) {}
 void Player::set_speed(double) {}
 void Player::add_subtitle(const std::string&) {}
 void Player::subtitles_off() {}
+void Player::set_caption_style(int, int) {}
 bool Player::active() const { return false; }
 bool Player::paused() const { return false; }
 double Player::position() const { return 0; }
