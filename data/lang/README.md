@@ -20,6 +20,10 @@ Anything missing falls back to English, so partial files are fine.
 ## Keys
 The keys are fixed identifiers used in the code (`i18n::Str`). English is also baked
 into the binary as the ultimate fallback, so the app still works if these files are
-missing. To regenerate all files from the built-in English defaults + current values:
+missing. After adding new string keys, regenerate the files with:
 `g++ -std=c++17 tools/dump_i18n.cpp src/i18n.cpp -o /tmp/dump_i18n && /tmp/dump_i18n data/lang`
-(only needed by developers when adding new string keys).
+This rewrites `en.json` with every key from the baked-in English table, and re-emits
+each other language in the same key order — existing translations are kept, keys
+removed from the enum are dropped (with a warning), and untranslated keys are left
+out (English fallback covers them; copy the line from `en.json` to translate it).
+`languages.json` is never touched. (Developers only; translators just edit values.)
