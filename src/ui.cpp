@@ -330,6 +330,9 @@ App::App(const std::string& config_path, gfx::Window* win)
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
+    aspect_mode_ = it_.setting_int("aspect", 0);           // 0 fit / 1 zoom / 2 stretch
+    if (aspect_mode_ < 0 || aspect_mode_ > 2) aspect_mode_ = 0;
+    player_.set_aspect(aspect_mode_);
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
     autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
     home_source_ = it_.setting_int("home_source", 0) ? 1 : 0; // 0 favorites / 1 +history
@@ -919,6 +922,9 @@ void App::open_settings() {
                            MenuAction::CycleVolume});
     // Video Decode (hwdec) hidden for now: the bundled ffmpeg is software-only, so the
     // toggle does nothing. Code kept (CycleHwdec/set_hwdec) for when a hw build lands.
+    const S aname[] = {S::AspectFit, S::AspectZoom, S::AspectStretch};
+    menu_items_.push_back({tr(S::SetAspect) + std::string(":  ") + tr(aname[aspect_mode_]),
+                           MenuAction::CycleAspect});
     menu_items_.push_back({tr(S::SetHidePaced) + std::string(":  ") + onoff(hide_restricted_),
                            MenuAction::ToggleHideRestricted});
     menu_items_.push_back({tr(S::SetAskResume) + std::string(":  ") + onoff(ask_resume_),
@@ -1051,6 +1057,13 @@ void App::adjust_setting(MenuAction a, int dir) {
         // the current video at its position (applies the new decoder immediately).
         if (mode_ == Mode::Playing) { menu_open_ = false; menu_paused_ = false;
                                       replay_current(player_.position()); }
+        return;
+    }
+    if (a == MenuAction::CycleAspect) {
+        aspect_mode_ = ((aspect_mode_ + dir) % 3 + 3) % 3;     // Fit -> Zoom -> Stretch, wraps
+        it_.set_setting_int("aspect", aspect_mode_);
+        player_.set_aspect(aspect_mode_);        // mpv property change: applies live
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
         return;
     }
     if (a == MenuAction::CycleView) {
@@ -2004,6 +2017,7 @@ void App::menu_activate() {
         case MenuAction::CycleView:
         case MenuAction::CycleVolume:
         case MenuAction::CycleHwdec:
+        case MenuAction::CycleAspect:
         case MenuAction::CycleSpeed:
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
@@ -2717,6 +2731,7 @@ void App::input(Action a) {
                     act == MenuAction::ToggleHideRestricted ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
+                    act == MenuAction::CycleAspect ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
                     act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
                     act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage ||
@@ -3106,7 +3121,8 @@ void App::render_menu(gfx::Renderer& rn) {
         if (it.action == MenuAction::CycleMaxQuality || it.action == MenuAction::ToggleStats ||
             it.action == MenuAction::ToggleHideRestricted ||
             it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
-            it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec)
+            it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec ||
+            it.action == MenuAction::CycleAspect)
             has_value = true;
     const char* foot = (menu_kind_ == MenuKind::Settings || menu_kind_ == MenuKind::SearchFilters)
                      ? i18n::tr(i18n::Str::FooterDesc)

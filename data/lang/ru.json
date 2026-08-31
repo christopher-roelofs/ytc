@@ -14,6 +14,7 @@
   "SetMaxQuality": "Макс. качество",
   "SetVolume": "Громкость",
   "SetVideoDecode": "Декодирование",
+  "SetAspect": "Соотношение сторон",
   "SetHidePaced": "Скрыть огранич.",
   "SetAskResume": "Продолжать?",
   "SetHomeFeed": "Лента",
@@ -25,6 +26,9 @@
   "Off": "Выкл",
   "Hardware": "Аппаратное",
   "Software": "Программное",
+  "AspectFit": "Вписать",
+  "AspectZoom": "Увеличение",
+  "AspectStretch": "Растянуть",
   "Favorites": "Избранное",
   "FavoritesPlusHistory": "Избр. + История",
   "ViewGrid": "Сетка",
@@ -113,6 +117,7 @@
   "TilePlaylist": "Плейлист",
   "TilePost": "Запись",
   "TileHasVideo": "с видео",
+  "TileLive": "Прямой эфир",
   "MenuCastToDevice": "Транслировать на устройство",
   "CastAddDevice": "Добавить устройство",
   "CastSearching": "Поиск устройств…",
@@ -155,6 +160,5 @@
   "DownloadDone": "Загружено",
   "DownloadFailed": "Ошибка загрузки",
   "DownloadBusy": "Загрузка уже выполняется",
-  "DownloadRemoved": "Загрузка удалена",
-  "TileLive": "Прямой эфир"
+  "DownloadRemoved": "Загрузка удалена"
 }

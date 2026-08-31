@@ -23,6 +23,7 @@ struct Player::Impl {
     std::string pending_audio;   // external audio URL to attach on file-loaded
     bool audio_added = false;
     std::string hwdec = "auto-copy-safe";   // decode mode (settings/env); see init()
+    int aspect = 0;              // 0 Fit / 1 Zoom / 2 Stretch; see apply_aspect()
 
     static void* get_proc(void*, const char* name) {
         return SDL_GL_GetProcAddress(name);
@@ -80,7 +81,17 @@ struct Player::Impl {
         if (dbg) std::fprintf(stderr, "[mpv] render ctx created\n");
         mpv_request_log_messages(mpv, dbg ? "v" : "error");
         ytn::register_stream(mpv);   // our bounded-range googlevideo fetcher
+        apply_aspect();              // fresh instance per video; re-apply the mode
         return true;
+    }
+    // Fit  = keepaspect + no panscan: whole picture, black bars for non-16:9.
+    // Zoom = keepaspect + panscan=1: scale until the screen is filled, cropping
+    //        the overflowing edges (a 4:3 video loses some top/bottom).
+    // Stretch = keepaspect off: fill the screen, distorting the picture.
+    void apply_aspect() {
+        if (!mpv) return;
+        mpv_set_property_string(mpv, "keepaspect", aspect == 2 ? "no" : "yes");
+        mpv_set_property_string(mpv, "panscan",    aspect == 1 ? "1.0" : "0.0");
     }
     void teardown() {
         if (rctx) { mpv_render_context_free(rctx); rctx = nullptr; }
@@ -241,6 +252,10 @@ int Player::volume() const {
 void Player::set_hwdec(const std::string& mode) {
     impl_->hwdec = mode.empty() ? "auto-copy-safe" : mode;
 }
+void Player::set_aspect(int mode) {
+    impl_->aspect = (mode < 0 || mode > 2) ? 0 : mode;
+    impl_->apply_aspect();   // live if playing; init() re-applies for later videos
+}
 void Player::set_speed(double mult) {
     if (!impl_->mpv) return;
     if (mult < 0.25) mult = 0.25;
@@ -321,6 +336,7 @@ void Player::seek_relative(double) {}
 void Player::set_volume(int) {}
 int Player::volume() const { return 100; }
 void Player::set_hwdec(const std::string&) {}
+void Player::set_aspect(int) {}
 void Player::set_speed(double) {}
 void Player::add_subtitle(const std::string&) {}
 void Player::subtitles_off() {}

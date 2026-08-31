@@ -14,6 +14,7 @@
   "SetMaxQuality": "Qualità max.",
   "SetVolume": "Volume",
   "SetVideoDecode": "Decodifica video",
+  "SetAspect": "Proporzioni",
   "SetHidePaced": "Nascondi video limitati",
   "SetAskResume": "Chiedi ripresa",
   "SetHomeFeed": "Feed home",
@@ -25,6 +26,9 @@
   "Off": "Disattivo",
   "Hardware": "Hardware",
   "Software": "Software",
+  "AspectFit": "Adatta",
+  "AspectZoom": "Zoom",
+  "AspectStretch": "Estendi",
   "Favorites": "Preferiti",
   "FavoritesPlusHistory": "Preferiti + Cronologia",
   "ViewGrid": "Griglia",
@@ -113,6 +117,7 @@
   "TilePlaylist": "Playlist",
   "TilePost": "Post",
   "TileHasVideo": "con video",
+  "TileLive": "In diretta",
   "MenuCastToDevice": "Trasmetti al dispositivo",
   "CastAddDevice": "Aggiungi un dispositivo",
   "CastSearching": "Ricerca dispositivi…",
@@ -155,6 +160,5 @@
   "DownloadDone": "Scaricato",
   "DownloadFailed": "Download non riuscito",
   "DownloadBusy": "Un download è già in corso",
-  "DownloadRemoved": "Download rimosso",
-  "TileLive": "In diretta"
+  "DownloadRemoved": "Download rimosso"
 }

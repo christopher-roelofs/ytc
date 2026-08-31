@@ -18,10 +18,11 @@ enum class Str {
     // Tab strip
     TabAll, TabVideos, TabShorts, TabPlaylists, TabPosts,
     // Settings row labels
-    SetMaxQuality, SetVolume, SetVideoDecode, SetHidePaced,
+    SetMaxQuality, SetVolume, SetVideoDecode, SetAspect, SetHidePaced,
     SetAskResume, SetHomeFeed, SetAutoplay, SetSponsorBlock, SetView, SetLanguage,
     // Settings values
-    On, Off, Hardware, Software, Favorites, FavoritesPlusHistory,
+    On, Off, Hardware, Software, AspectFit, AspectZoom, AspectStretch,
+    Favorites, FavoritesPlusHistory,
     ViewGrid, ViewCarousel, View3DCarousel, ViewCoverflow, AutoHighest,
     // Status / empty states / hints
     Results, Loading, Searching, NoResults, NoVideosYet, NothingInTab,

@@ -14,6 +14,7 @@
   "SetMaxQuality": "Макс. якість",
   "SetVolume": "Гучність",
   "SetVideoDecode": "Декодування",
+  "SetAspect": "Співвідношення сторін",
   "SetHidePaced": "Приховати обмеж.",
   "SetAskResume": "Продовжити?",
   "SetHomeFeed": "Стрічка",
@@ -25,6 +26,9 @@
   "Off": "Вимк",
   "Hardware": "Апаратне",
   "Software": "Програмне",
+  "AspectFit": "Вписати",
+  "AspectZoom": "Збільшення",
+  "AspectStretch": "Розтягнути",
   "Favorites": "Обране",
   "FavoritesPlusHistory": "Обр. + Історія",
   "ViewGrid": "Сітка",
@@ -113,6 +117,7 @@
   "TilePlaylist": "Плейлист",
   "TilePost": "Допис",
   "TileHasVideo": "з відео",
+  "TileLive": "Наживо",
   "MenuCastToDevice": "Транслювати на пристрій",
   "CastAddDevice": "Додати пристрій",
   "CastSearching": "Пошук пристроїв…",
@@ -155,6 +160,5 @@
   "DownloadDone": "Завантажено",
   "DownloadFailed": "Помилка завантаження",
   "DownloadBusy": "Завантаження вже триває",
-  "DownloadRemoved": "Завантаження видалено",
-  "TileLive": "Наживо"
+  "DownloadRemoved": "Завантаження видалено"
 }

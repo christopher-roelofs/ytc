@@ -262,7 +262,7 @@ private:
                             GoHome, GoFavorites, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleAskResume,
-                            CycleView, CycleVolume, CycleHwdec, CycleSpeed,
+                            CycleView, CycleVolume, CycleHwdec, CycleAspect, CycleSpeed,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
@@ -622,6 +622,7 @@ private:
     int  volume_ = 100;             // app-local volume % (0..150), persisted "volume"
     unsigned volume_overlay_until_ = 0;  // deadline to show the volume indicator
     int  hwdec_mode_ = 0;           // 0 = Hardware (auto-copy-safe), 1 = Software; "hwdec"
+    int  aspect_mode_ = 0;          // 0 = Fit (bars), 1 = Zoom (crop), 2 = Stretch; "aspect"
     std::string now_playing_title_;
     yt::SearchResult now_playing_item_;   // context for the player options menu
     std::string status_msg_;

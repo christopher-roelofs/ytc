@@ -51,6 +51,11 @@ public:
     // Playback speed multiplier (mpv "speed"); 1.0 = normal. Applied live.
     void set_speed(double mult);
 
+    // How non-16:9 video fills the screen. 0 = Fit (letterbox/pillarbox bars),
+    // 1 = Zoom (crop to fill, aspect kept), 2 = Stretch (fill, aspect ignored).
+    // Applied live and remembered for subsequent play()s.
+    void set_aspect(int mode);
+
     // Subtitles: add a local subtitle file and select+show it; or hide any subtitle.
     void add_subtitle(const std::string& path);
     void subtitles_off();
