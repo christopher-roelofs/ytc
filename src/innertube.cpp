@@ -1402,6 +1402,56 @@ bool Innertube::add_favorite(const std::string& channel_id, const std::string& n
     return true;
 }
 
+std::vector<FavPlaylist> Innertube::favorite_playlists() {
+    std::vector<FavPlaylist> out;
+    std::ifstream f(config_dir_ + "/playlists.json");
+    if (!f) return out;
+    json cfg = json::parse(f, nullptr, false);
+    if (cfg.is_discarded()) return out;
+    for (const auto& p : cfg.value("playlists", json::array())) {
+        FavPlaylist fp{p.value("id", ""), p.value("title", ""),
+                       p.value("author", ""), p.value("thumb", "")};
+        if (!fp.id.empty()) out.push_back(std::move(fp));
+    }
+    return out;
+}
+
+bool Innertube::add_favorite_playlist(const FavPlaylist& p) {
+    if (p.id.empty()) return false;
+    std::string path = config_dir_ + "/playlists.json";
+    json cfg;
+    { std::ifstream f(path); if (f) cfg = json::parse(f, nullptr, false); }
+    if (cfg.is_discarded() || !cfg.is_object()) cfg = json::object();
+    if (!cfg.contains("playlists") || !cfg["playlists"].is_array()) cfg["playlists"] = json::array();
+    for (const auto& e : cfg["playlists"])
+        if (e.value("id", "") == p.id) return false;            // already a favorite
+    cfg["playlists"].push_back({{"id", p.id}, {"title", p.title},
+                                {"author", p.author}, {"thumb", p.thumb}});
+    std::ofstream o(path);
+    if (!o) return false;
+    o << cfg.dump(2) << "\n";
+    return true;
+}
+
+bool Innertube::remove_favorite_playlist(const std::string& id) {
+    std::string path = config_dir_ + "/playlists.json";
+    json cfg;
+    { std::ifstream f(path); if (f) cfg = json::parse(f, nullptr, false); }
+    if (cfg.is_discarded() || !cfg.contains("playlists")) return false;
+    json keep = json::array();
+    bool removed = false;
+    for (const auto& e : cfg["playlists"]) {
+        if (e.value("id", "") == id) removed = true;
+        else keep.push_back(e);
+    }
+    if (!removed) return false;
+    cfg["playlists"] = std::move(keep);
+    std::ofstream o(path);
+    if (!o) return false;
+    o << cfg.dump(2) << "\n";
+    return true;
+}
+
 bool Innertube::remove_favorite(const std::string& channel_id) {
     std::string path = config_dir_ + "/channels.json";
     json cfg;

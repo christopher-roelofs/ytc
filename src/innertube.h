@@ -81,6 +81,12 @@ struct FeedSource {
     }
 };
 
+// One favorited playlist (config/playlists.json). Everything a tile needs is
+// stored at favoriting time — playlist thumbnails can't be derived from the id.
+struct FavPlaylist {
+    std::string id, title, author, thumb;
+};
+
 // One distinct audio (dub) language on a multi-audio video, for track pickers.
 struct AudioTrackInfo {
     std::string lang;        // "es" — pass as AudioPrefs.lang to select it
@@ -322,6 +328,11 @@ public:
     std::vector<std::string> favorite_channel_ids();
     bool add_favorite(const std::string& channel_id, const std::string& name); // true if newly added
     bool remove_favorite(const std::string& channel_id);                        // true if removed
+
+    // Favorite playlists, persisted in playlists.json (same shape as channels).
+    std::vector<FavPlaylist> favorite_playlists();
+    bool add_favorite_playlist(const FavPlaylist& p);       // true if newly added
+    bool remove_favorite_playlist(const std::string& id);   // true if removed
 
     // Watch Later list, persisted in watch_later.json. Entries can be videos OR
     // playlists (is_playlist + enough metadata to rebuild the tile).

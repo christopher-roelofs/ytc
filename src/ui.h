@@ -235,6 +235,8 @@ private:
     void poll_cast_link();              // apply a finished link
     void render_manage_devices(gfx::Renderer& rn);
     void refresh_favorites();           // reload the favorite-id cache from channels.json
+    void refresh_favorite_playlists();  // reload the favorite-playlist-id cache
+    void load_favorite_playlists();     // the Favorite Playlists view
     void refresh_watch_later();         // reload the watch-later id cache
     void refresh_downloads();           // reload the downloaded-id cache
     void start_download(const yt::SearchResult& t);   // begin an async download
@@ -256,10 +258,10 @@ private:
 
     // Menu items. The Select-button menu carries per-item actions (Context); the
     // Start-button menu carries top-level navigation (Main).
-    enum class MenuAction { FavoriteToggle, WatchLaterToggle, OpenChannel,
+    enum class MenuAction { FavoriteToggle, FavoritePlaylistToggle, WatchLaterToggle, OpenChannel,
                             ShowDescription, ShowChannelDescription, ShowPlaylistDescription,
                             ShowComments, PlayPostVideo,
-                            GoHome, GoFavorites, GoWatchLater, GoHistory,
+                            GoHome, GoFavorites, GoFavoritePlaylists, GoWatchLater, GoHistory,
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleAspect, CycleSpeed,
@@ -589,6 +591,7 @@ private:
     void push_view();                    // snapshot current view onto the stack
     bool pop_view();                     // restore the top snapshot (false if empty)
     std::unordered_set<std::string> fav_ids_;   // cached favorite channel ids
+    std::unordered_set<std::string> fav_pl_ids_;  // cached favorite playlist ids
 
     // Async channel-info fetch (fills the channel-view header without blocking).
     std::thread chinfo_thread_;

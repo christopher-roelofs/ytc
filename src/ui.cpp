@@ -322,6 +322,7 @@ App::App(const std::string& config_path, gfx::Window* win)
     if (getenv("YTC_CAROUSEL")) view_mode_ = ViewMode::Carousel;
     if (const char* vm = getenv("YTC_VIEW")) view_mode_ = (ViewMode)atoi(vm);
     refresh_favorites();
+    refresh_favorite_playlists();
     refresh_watch_later();
     refresh_downloads();
     hide_restricted_ = it_.setting_int("hide_restricted", 0) != 0;
@@ -595,6 +596,30 @@ void App::load_history() {
     }
     set_results(std::move(items));
 }
+void App::refresh_favorite_playlists() {
+    fav_pl_ids_.clear();
+    for (auto& p : it_.favorite_playlists()) fav_pl_ids_.insert(p.id);
+}
+
+// The Favorite Playlists view: one tile per saved playlist, everything needed
+// for the tile stored at favoriting time (thumbnails aren't derivable from ids).
+void App::load_favorite_playlists() {
+    query_.clear(); view_label_ = "Favorite Playlists";
+    in_channel_view_ = false; cont_token_.clear();
+    subview_playlist_.clear(); tab_focus_ = false; view_stack_.clear();
+    std::vector<yt::SearchResult> items;
+    for (auto& p : it_.favorite_playlists()) {
+        yt::SearchResult r;
+        r.kind = yt::SearchResult::Kind::Playlist;
+        r.playlist_id = p.id;
+        r.title = p.title;
+        r.author = p.author;
+        r.thumbnail_url = p.thumb;
+        items.push_back(std::move(r));
+    }
+    set_results(std::move(items));
+}
+
 void App::refresh_favorites() {
     fav_ids_.clear();
     for (auto& id : it_.favorite_channel_ids()) fav_ids_.insert(id);
@@ -775,8 +800,9 @@ void App::refresh_current_view(bool is_retry) {
     // Local (file-backed) views are instant — no thread needed. (Guarded on NOT
     // being in a subview: a lingering label must never hijack a channel refresh.)
     if (!in_channel_view_) {
-        if (view_label_ == "Favorite Channels") { load_favorites(); return; }
-        if (view_label_ == "Watch Later")       { load_watch_later(); return; }
+        if (view_label_ == "Favorite Channels")  { load_favorites(); return; }
+        if (view_label_ == "Favorite Playlists") { load_favorite_playlists(); return; }
+        if (view_label_ == "Watch Later")        { load_watch_later(); return; }
         if (view_label_ == "Downloads")         { load_downloads(); return; }
         if (view_label_ == "History")           { load_history(); return; }
     }
@@ -842,6 +868,21 @@ void App::refresh_current_view(bool is_retry) {
                     }
                     f.items = std::move(merged);
                 }
+                // Favorite playlists ride with the Favorites source: woven into the
+                // All feed near the top at a wide spacing (they carry no upload date,
+                // so an age-sort would bury them at the very end).
+                if (fav) {
+                    size_t pos = 4;
+                    for (const auto& p : it_.favorite_playlists()) {
+                        yt::SearchResult r;
+                        r.kind = yt::SearchResult::Kind::Playlist;
+                        r.playlist_id = p.id; r.title = p.title;
+                        r.author = p.author; r.thumbnail_url = p.thumb;
+                        if (pos >= f.items.size()) f.items.push_back(std::move(r));
+                        else f.items.insert(f.items.begin() + pos, std::move(r));
+                        pos += 9;
+                    }
+                }
                 // ok unless a source SHOULD have produced content but the network
                 // was unreachable (drives the auto-retry banner).
                 bool expect = (fav && !it_.favorite_channel_ids().empty()) ||
@@ -849,7 +890,26 @@ void App::refresh_current_view(bool is_retry) {
                               (cust && !it_.custom_feed_sources().empty());
                 f.ok = !expect || it_.has_visitor_data(); }
             else if (kind == RK_HOME_PLAYLISTS){ f.items = it_.home_playlists({}, &hc);
-                f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
+                // Favorited playlists lead the Playlists tab (deduped against the
+                // favorites-channels' own playlists fetched above).
+                std::vector<yt::SearchResult> lead;
+                for (const auto& p : it_.favorite_playlists()) {
+                    yt::SearchResult r;
+                    r.kind = yt::SearchResult::Kind::Playlist;
+                    r.playlist_id = p.id; r.title = p.title;
+                    r.author = p.author; r.thumbnail_url = p.thumb;
+                    lead.push_back(std::move(r));
+                }
+                if (!lead.empty()) {
+                    f.items.erase(std::remove_if(f.items.begin(), f.items.end(),
+                        [&](const yt::SearchResult& r) {
+                            for (const auto& l : lead) if (l.playlist_id == r.playlist_id) return true;
+                            return false;
+                        }), f.items.end());
+                    f.items.insert(f.items.begin(), std::make_move_iterator(lead.begin()),
+                                   std::make_move_iterator(lead.end()));
+                }
+                f.ok = (it_.favorite_channel_ids().empty() && lead.empty()) || it_.has_visitor_data(); }
             else if (kind == RK_HOME_POSTS){ f.items = it_.home_posts({}, &hc);
                 f.ok = it_.favorite_channel_ids().empty() || it_.has_visitor_data(); }
             else                                 f = it_.search_feed(query);
@@ -948,6 +1008,7 @@ void App::open_main_menu() {
     using i18n::tr; using S = i18n::Str;
     menu_items_.push_back({tr(S::Home),             MenuAction::GoHome});
     menu_items_.push_back({tr(S::FavoriteChannels), MenuAction::GoFavorites});
+    menu_items_.push_back({tr(S::FavoritePlaylists), MenuAction::GoFavoritePlaylists});
     menu_items_.push_back({tr(S::WatchLater),       MenuAction::GoWatchLater});
     menu_items_.push_back({tr(S::Downloads),        MenuAction::GoDownloads});
     menu_items_.push_back({tr(S::History),          MenuAction::GoHistory});
@@ -2159,6 +2220,9 @@ void App::open_menu() {
         if (!t.post_id.empty())
             menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
     } else if (t.is_playlist()) {
+        bool pfav = fav_pl_ids_.count(t.playlist_id) > 0;
+        menu_items_.push_back({tr(pfav ? S::RemovePlaylistFav : S::AddPlaylistFav),
+                               MenuAction::FavoritePlaylistToggle});
         bool wl = wl_ids_.count(t.playlist_id) > 0;
         menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
                                MenuAction::WatchLaterToggle});
@@ -2264,11 +2328,35 @@ void App::menu_activate() {
             else { it_.add_favorite(t.channel_id, name);
                 status_msg_ = i18n::tr(i18n::Str::AddedFav) + std::string(": ") + name; }
             status_until_ = SDL_GetTicks() + 4000; refresh_favorites();
+            // Un-favoriting from the Favorite Channels view drops the tile now.
+            if (view_label_ == "Favorite Channels" && mode_ != Mode::Playing) {
+                menu_open_ = false; menu_paused_ = false;
+                load_favorites();
+                return;
+            }
             // Un-favoriting a restricted channel makes it hideable again.
             if (hide_restricted_ && mode_ != Mode::Playing) {
                 filter_hidden(results_);
                 if (sel_ >= (int)results_.size())
                     sel_ = results_.empty() ? 0 : (int)results_.size() - 1;
+            }
+            break;
+        }
+        case MenuAction::FavoritePlaylistToggle: {
+            if (fav_pl_ids_.count(t.playlist_id)) {
+                it_.remove_favorite_playlist(t.playlist_id);
+                status_msg_ = i18n::tr(i18n::Str::RemovedFav) + std::string(": ") + t.title;
+            } else {
+                it_.add_favorite_playlist({t.playlist_id, t.title, t.author, t.thumbnail_url});
+                status_msg_ = i18n::tr(i18n::Str::AddedFav) + std::string(": ") + t.title;
+            }
+            status_until_ = SDL_GetTicks() + 4000;
+            refresh_favorite_playlists();
+            // Un-favoriting from the Favorite Playlists view drops the tile now.
+            if (view_label_ == "Favorite Playlists" && mode_ != Mode::Playing) {
+                menu_open_ = false; menu_paused_ = false;
+                load_favorite_playlists();
+                return;
             }
             break;
         }
@@ -2359,6 +2447,7 @@ void App::menu_activate() {
         // player and return to the grid before swapping in the new list.
         case MenuAction::GoHome:
         case MenuAction::GoFavorites:
+        case MenuAction::GoFavoritePlaylists:
         case MenuAction::GoWatchLater:
         case MenuAction::GoDownloads:
         case MenuAction::GoHistory: {
@@ -2370,6 +2459,7 @@ void App::menu_activate() {
             mode_ = Mode::Grid;
             if      (act == MenuAction::GoHome)       load_home();
             else if (act == MenuAction::GoFavorites)  load_favorites();
+            else if (act == MenuAction::GoFavoritePlaylists) load_favorite_playlists();
             else if (act == MenuAction::GoWatchLater) load_watch_later();
             else if (act == MenuAction::GoDownloads)  load_downloads();
             else                                      load_history();
@@ -2578,7 +2668,7 @@ void App::load_home_tab(int tab) {
 void App::apply_home_tab() {
     std::vector<yt::SearchResult> items;
     for (const auto& r : home_items_) {
-        if (home_tab_ == 1 && (r.is_short || r.is_post())) continue;  // Videos only
+        if (home_tab_ == 1 && (r.is_short || r.is_post() || r.is_playlist())) continue;  // Videos only
         if (home_tab_ == 2 && !r.is_short) continue;                  // Shorts only
         items.push_back(r);
     }
@@ -3898,8 +3988,9 @@ void App::draw_meta(gfx::Renderer& rn, const yt::SearchResult& v, int idx,
 // view_label_ is an internal English identity key; translate it only for display.
 static std::string tr_view_label(const std::string& label) {
     using S = i18n::Str;
-    if (label == "Favorite Channels") return i18n::tr(S::FavoriteChannels);
-    if (label == "Watch Later")       return i18n::tr(S::WatchLater);
+    if (label == "Favorite Channels")  return i18n::tr(S::FavoriteChannels);
+    if (label == "Favorite Playlists") return i18n::tr(S::FavoritePlaylists);
+    if (label == "Watch Later")        return i18n::tr(S::WatchLater);
     if (label == "History")           return i18n::tr(S::History);
     return label;
 }
@@ -3998,6 +4089,10 @@ void App::render_grid(gfx::Renderer& rn) {
             l1 = i18n::tr(S::NoFavorites);
             l2 = i18n::tr(S::FavHint2);
             l3 = i18n::tr(S::FavHint3);
+        } else if (view_label_ == "Favorite Playlists") {
+            l1 = i18n::tr(S::NoFavPlaylists);
+            l2 = i18n::tr(S::FavPlHint2);
+            l3 = "";
         } else if (view_label_ == "Watch Later") {
             l1 = i18n::tr(S::WatchLaterEmpty);
             l2 = i18n::tr(S::WlHint2);
@@ -4102,6 +4197,7 @@ bool App::browse_empty_overlay(gfx::Renderer& rn) {
     else if (view_label_ == "Watch Later") l1 = i18n::tr(i18n::Str::WatchLaterEmpty);
     else if (view_label_ == "History") l1 = i18n::tr(i18n::Str::NoHistory);
     else if (view_label_ == "Favorite Channels") l1 = i18n::tr(i18n::Str::NoFavorites);
+    else if (view_label_ == "Favorite Playlists") l1 = i18n::tr(i18n::Str::NoFavPlaylists);
     rn.text(*font_title_, l1, (W - font_title_->text_width(l1))/2, H*0.45f, theme_.text);
     // Match the grid's empty-state: pinned footer bar with the minimal hints.
     float fh = 44*s;

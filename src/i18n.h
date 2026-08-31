@@ -14,7 +14,7 @@ namespace i18n {
 // Translatable UI strings. Add a key here and a row in the table in i18n.cpp.
 enum class Str {
     // Top-level menu / view headers
-    Home, Search, FavoriteChannels, WatchLater, History, Settings, Exit,
+    Home, Search, FavoriteChannels, FavoritePlaylists, WatchLater, History, Settings, Exit,
     // Tab strip
     TabAll, TabVideos, TabShorts, TabPlaylists, TabPosts,
     // Settings row labels
@@ -45,6 +45,7 @@ enum class Str {
     ReadPost, PlayAttachedVideo, AddWatchLater, RemoveWatchLater,
     ShowDescription, ShowChannelDescription, ShowPlaylistDescription,
     AddFavorite, RemoveFavorite, GoToChannel, ClearHistoryItem,
+    AddPlaylistFav, RemovePlaylistFav, NoFavPlaylists, FavPlHint2,
     // Player options
     MenuQuality, MenuSpeed, MenuCaptions, CcNone, MenuStats, Enabled, Disabled,
     MenuAudioTrack,

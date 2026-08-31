@@ -14,7 +14,7 @@ namespace {
 // Canonical JSON keys, in Str enum order. Stable identifiers — these are the object
 // keys in the .json files. Edit the VALUES in the files, never these.
 const char* kKeys[(int)Str::COUNT] = {
-    "Home","Search","FavoriteChannels","WatchLater","History","Settings","Exit",
+    "Home","Search","FavoriteChannels","FavoritePlaylists","WatchLater","History","Settings","Exit",
     "TabAll","TabVideos","TabShorts","TabPlaylists","TabPosts",
     "SetMaxQuality","SetVolume","SetVideoDecode","SetAspect","SetAudioLang","SetCaptionLang",
     "SetAudioMenu","SetVideoMenu","SetCaptionsMenu","SetPlaybackMenu","SetBrowsingMenu",
@@ -39,6 +39,7 @@ const char* kKeys[(int)Str::COUNT] = {
     "ReadPost","PlayAttachedVideo","AddWatchLater","RemoveWatchLater",
     "ShowDescription","ShowChannelDescription","ShowPlaylistDescription",
     "AddFavorite","RemoveFavorite","GoToChannel","ClearHistoryItem",
+    "AddPlaylistFav","RemovePlaylistFav","NoFavPlaylists","FavPlHint2",
     "MenuQuality","MenuSpeed","MenuCaptions","CcNone","MenuStats","Enabled","Disabled",
     "MenuAudioTrack",
     "FooterMenuValue","FooterMenuPlain","FooterPostOverlay","FooterScrollOverlay",
@@ -73,7 +74,7 @@ const char* kKeys[(int)Str::COUNT] = {
 // always usable even if the data/lang files are missing or a key is untranslated.
 // (Every other language lives entirely in data/lang/<code>.json.) Order = enum order.
 const char* kEnglish[(int)Str::COUNT] = {
-    "Home","Search","Favorite Channels","Watch Later","History","Settings","Exit",
+    "Home","Search","Favorite Channels","Favorite Playlists","Watch Later","History","Settings","Exit",
     "All","Videos","Shorts","Playlists","Posts",
     "Max Quality","Volume","Video Decode","Aspect Ratio","Audio Language","Caption Language",
     "Audio","Video","Captions","Playback","Browsing",
@@ -105,6 +106,8 @@ const char* kEnglish[(int)Str::COUNT] = {
     "Read Post","Play Attached Video","Add to Watch Later","Remove from Watch Later",
     "Show Description","Show Channel Description","Show Playlist Description",
     "Add Channel to Favorites","Remove Channel from Favorites","Go to Channel","Clear History",
+    "Add Playlist to Favorites","Remove Playlist from Favorites",
+    "No favorite playlists yet","Press Select on a playlist and Add to Favorites",
     "Quality","Speed","Captions","none","Stats for Nerds","Enabled","Disabled",
     "Audio Track",
     "A: select    Left/Right: change    B: close","A: select    B: close",
