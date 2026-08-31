@@ -333,6 +333,9 @@ App::App(const std::string& config_path, gfx::Window* win)
     aspect_mode_ = it_.setting_int("aspect", 0);           // 0 fit / 1 zoom / 2 stretch
     if (aspect_mode_ < 0 || aspect_mode_ > 2) aspect_mode_ = 0;
     player_.set_aspect(aspect_mode_);
+    audio_lang_pref_ = it_.setting_str("audio_lang", "app");  // dub language default
+    cc_lang_pref_ = it_.setting_str("cc_lang", "app");        // default caption language
+    if (cc_lang_pref_ == "off") cc_lang_pref_ = "app";        // migrate the old value
     sponsorblock_ = it_.setting_int("sponsorblock", 0) != 0;   // default OFF
     autoplay_ = it_.setting_int("autoplay", 0) != 0;          // default OFF
     home_source_ = it_.setting_int("home_source", 0) ? 1 : 0; // 0 favorites / 1 +history
@@ -612,9 +615,12 @@ void App::start_download(const yt::SearchResult& t) {
     dl_running_ = true; dl_done_ = false; dl_ok_ = false; dl_cancel_ = false;
     dl_progress_ = 0; dl_id_ = t.video_id; dl_title_ = t.title;
     int max_h = play_prefs_.max_height;   // match the quality that would have played
+    yt::AudioPrefs dl_aprefs;             // ...and the audio language that would have
+    dl_aprefs.lang = audio_lang_pref_ == "app"  ? i18n::language_hl(lang_)
+                   : audio_lang_pref_ == "orig" ? "" : audio_lang_pref_;
     yt::SearchResult item = t;
     if (dl_thread_.joinable()) dl_thread_.join();
-    dl_thread_ = std::thread([this, item, max_h]() {
+    dl_thread_ = std::thread([this, item, max_h, dl_aprefs]() {
         bool ok = false;
         try {
             // Use the same resolve that plays the video — it works for every video we
@@ -622,7 +628,7 @@ void App::start_download(const yt::SearchResult& t) {
             yt::VideoInfo info = it_.resolve(item.video_id);
             if (getenv("YTC_DEBUG")) {
                 const yt::Format* dv = nullptr; { yt::VideoPrefs vp; vp.max_height=max_h; dv=info.best_video(vp); }
-                const yt::Format* da = info.best_audio();
+                const yt::Format* da = info.best_audio(dl_aprefs);
                 std::fprintf(stderr, "[dl] status=%s formats=%zu vf=%s(%d) af=%s remux=%d\n",
                     info.status.c_str(), info.formats.size(),
                     dv?(dv->url.empty()?"nourl":"ok"):"null", dv?dv->height:0,
@@ -661,7 +667,7 @@ void App::start_download(const yt::SearchResult& t) {
                 // quality that would have played.
                 yt::VideoPrefs vp; vp.max_height = max_h;
                 const yt::Format* vf = info.best_video(vp);
-                const yt::Format* af = info.best_audio();
+                const yt::Format* af = info.best_audio(dl_aprefs);
                 if (ytn::remux_available() && vf && af && !vf->url.empty() && !af->url.empty()) {
                     auto h = ua_hdrs(info.user_agent);
                     std::string vtmp = mp4 + ".v", atmp = mp4 + ".a";
@@ -910,6 +916,38 @@ static std::string quality_label(int h) {
     return std::to_string(h) + "p";
 }
 
+// Languages offered by the Audio/Caption Language settings — the ones YouTube
+// commonly auto-dubs or captions. English names on purpose: the bundled font
+// covers Latin/Cyrillic/Greek only, so endonyms like العربية wouldn't render.
+static const struct { const char* code; const char* name; } kLangChoices[] = {
+    {"en","English"}, {"es","Spanish"}, {"pt","Portuguese"}, {"fr","French"},
+    {"de","German"}, {"it","Italian"}, {"ru","Russian"}, {"uk","Ukrainian"},
+    {"el","Greek"}, {"pl","Polish"}, {"tr","Turkish"}, {"ar","Arabic"},
+    {"hi","Hindi"}, {"bn","Bengali"}, {"id","Indonesian"}, {"vi","Vietnamese"},
+    {"th","Thai"}, {"ja","Japanese"}, {"ko","Korean"}, {"zh","Chinese"},
+};
+static const int kLangChoiceCount = (int)(sizeof(kLangChoices)/sizeof(kLangChoices[0]));
+
+// Display label for an audio/cc language preference value ("app"/"orig"/"off"/code).
+static std::string lang_pref_label(const std::string& v) {
+    using S = i18n::Str;
+    if (v == "app")  return i18n::tr(S::AppLanguage);
+    if (v == "orig") return i18n::tr(S::OriginalTrack);
+    if (v == "off")  return i18n::tr(S::Off);
+    for (const auto& l : kLangChoices) if (v == l.code) return l.name;
+    return v;   // unknown code from a hand-edited settings.json: show it raw
+}
+
+// Cycle a language preference through [specials..., kLangChoices...] by dir.
+static std::string cycle_lang_pref(const std::string& cur, int dir,
+                                   const std::vector<std::string>& specials) {
+    std::vector<std::string> vals = specials;
+    for (const auto& l : kLangChoices) vals.push_back(l.code);
+    int n = (int)vals.size(), idx = 0;
+    for (int i = 0; i < n; ++i) if (vals[i] == cur) { idx = i; break; }
+    return vals[((idx + dir) % n + n) % n];
+}
+
 // ---------- Settings submenu ----------
 void App::open_settings() {
     using i18n::tr; using S = i18n::Str;
@@ -941,6 +979,10 @@ void App::open_settings() {
                            MenuAction::CycleView});
     menu_items_.push_back({tr(S::SetLanguage) + std::string(":  ") + i18n::language_name(lang_),
                            MenuAction::CycleLanguage});
+    menu_items_.push_back({tr(S::SetAudioLang) + std::string(":  ") + lang_pref_label(audio_lang_pref_),
+                           MenuAction::CycleAudioLang});
+    menu_items_.push_back({tr(S::SetCaptionLang) + std::string(":  ") + lang_pref_label(cc_lang_pref_),
+                           MenuAction::CycleCaptionLang});
     menu_items_.push_back({tr(S::SetLinkedDevices), MenuAction::GoLinkedDevices});
     menu_sel_ = 0;
     // (Do not re-pause here; if opened from the player the main menu already did.)
@@ -1057,6 +1099,36 @@ void App::adjust_setting(MenuAction a, int dir) {
         // the current video at its position (applies the new decoder immediately).
         if (mode_ == Mode::Playing) { menu_open_ = false; menu_paused_ = false;
                                       replay_current(player_.position()); }
+        return;
+    }
+    if (a == MenuAction::CycleAudioLang) {
+        audio_lang_pref_ = cycle_lang_pref(audio_lang_pref_, dir, {"app", "orig"});
+        it_.set_setting_str("audio_lang", audio_lang_pref_);
+        // Default for the NEXT videos; the playing one keeps its (possibly
+        // overridden) track — the player-menu Audio Track row changes it live.
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::CycleCaptionLang) {
+        cc_lang_pref_ = cycle_lang_pref(cc_lang_pref_, dir, {"app"});
+        it_.set_setting_str("cc_lang", cc_lang_pref_);
+        int keep = menu_sel_; open_settings(); menu_sel_ = keep;
+        return;
+    }
+    if (a == MenuAction::CycleAudioTrack) {
+        // Player menu only: pick a dub for THIS video (session-local, never saved).
+        int n = (int)playing_audio_tracks_.size();
+        if (n > 1) {
+            std::string cur = audio_override_lang_.empty() ? playing_audio_lang_
+                                                           : audio_override_lang_;
+            int idx = 0;
+            for (int i = 0; i < n; ++i)
+                if (playing_audio_tracks_[i].lang == cur) { idx = i; break; }
+            idx = ((idx + dir) % n + n) % n;
+            audio_override_lang_ = playing_audio_tracks_[idx].lang;
+            audio_dirty_ = true;             // re-resolve with the new track on menu close
+        }
+        int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label
         return;
     }
     if (a == MenuAction::CycleAspect) {
@@ -1195,25 +1267,92 @@ void App::poll_sponsorblock() {
 
 // Captions: fetch the track list off-thread when a video starts.
 void App::start_captions(const std::string& video_id) {
-    { std::lock_guard<std::mutex> lk(cc_m_); cc_tracks_.clear(); }
+    { std::lock_guard<std::mutex> lk(cc_m_); cc_tracks_.clear(); cc_pending_.clear(); }
     cc_sel_ = 0; cc_paths_.clear();
-    if (video_id.empty()) return;
-    if (cc_running_) return;   // previous track-list fetch still in flight; don't block UI
-    int sig = ++cc_sig_;
-    if (cc_thread_.joinable()) cc_thread_.join();   // finished -> instant
+    cc_dl_want_url_.clear(); cc_dl_want_key_.clear(); cc_dl_want_tlang_.clear();  // drop the
+                                                       // old video's queued fetch
+    cc_fail_pending_ = false;                          // stale failure: not this video's
+    ++cc_sig_;                 // invalidate any in-flight fetch (its publish is dropped)
+    cc_list_want_ = video_id;  // queue THIS video's list fetch; if the worker is still
+                               // on the old video, poll_captions() starts it on finish —
+                               // the old early-return here silently skipped the fetch,
+                               // leaving the new video showing the old (often empty) list
+    if (video_id.empty()) { cc_list_want_.clear(); return; }
+    maybe_start_cc_list();
+}
+// Start the queued track-list fetch if the worker is free. Never blocks.
+void App::maybe_start_cc_list() {
+    if (cc_running_ || cc_list_want_.empty()) return;
+    if (cc_thread_.joinable()) cc_thread_.join();   // worker idle -> instant
+    std::string vid = std::move(cc_list_want_);
+    cc_list_want_.clear();
+    int sig = cc_sig_;
     cc_running_ = true; cc_done_ = false;
-    cc_thread_ = std::thread([this, video_id, sig]() {
+    cc_thread_ = std::thread([this, vid, sig]() {
         std::vector<yt::CaptionTrack> t;
-        try { t = it_.caption_tracks(video_id); } catch (...) {}
+        try { t = it_.caption_tracks(vid); } catch (...) {}
         { std::lock_guard<std::mutex> lk(cc_m_); if (sig == cc_sig_) cc_pending_ = std::move(t); }
         cc_running_ = false; cc_done_ = true;
     });
 }
 void App::poll_captions() {
     if (!cc_done_.exchange(false)) return;
-    std::lock_guard<std::mutex> lk(cc_m_);
-    cc_tracks_ = std::move(cc_pending_);
-    cc_pending_.clear();
+    { std::lock_guard<std::mutex> lk(cc_m_);
+      cc_tracks_ = std::move(cc_pending_);
+      cc_pending_.clear(); }
+    // Caption Language setting: order the preferred language first (manual track
+    // before auto-generated) so turning captions ON lands on it. It never turns
+    // captions on by itself — cc_sel_ stays 0 (Off) here.
+    std::string want = cc_lang_pref_ == "app" ? i18n::language_hl(lang_) : cc_lang_pref_;
+    auto primary = [](const std::string& s) { return s.substr(0, s.find('-')); };
+    auto rank = [&](const yt::CaptionTrack& t) {
+        if (primary(t.language_code) != primary(want)) return 2;
+        return t.auto_generated ? 1 : 0;
+    };
+    std::stable_sort(cc_tracks_.begin(), cc_tracks_.end(),
+                     [&](const yt::CaptionTrack& a, const yt::CaptionTrack& b) {
+                         return rank(a) < rank(b); });
+    // Preferred language not offered at all? YouTube can machine-translate any
+    // translatable track server-side (&tlang=, at fetch time) — synthesize a
+    // "<Language> (translated)" entry as the FIRST option in the cycle. Prefer a
+    // human-made source track over ASR (translation quality compounds).
+    bool want_failed = std::find(cc_failed_langs_.begin(), cc_failed_langs_.end(), want)
+                       != cc_failed_langs_.end();   // failed earlier this video: don't re-offer
+    if (!want_failed && !cc_tracks_.empty() && rank(cc_tracks_.front()) == 2) {
+        const yt::CaptionTrack* src = nullptr;
+        for (const auto& t : cc_tracks_)
+            if (t.translatable && (!src || (src->auto_generated && !t.auto_generated)))
+                src = &t;
+        if (src) {
+            yt::CaptionTrack synth;
+            synth.language_code = want;
+            synth.name = lang_pref_label(want) + " (" + i18n::tr(i18n::Str::CcTranslated) + ")";
+            synth.base_url = src->base_url;
+            synth.auto_generated = true;
+            synth.tlang = want;
+            cc_tracks_.insert(cc_tracks_.begin(), std::move(synth));
+        }
+    }
+    // Replay of the same video (quality/audio-track change): put the caption
+    // selection back where it was. A new video always starts with captions Off.
+    if (!cc_restore_key_.empty()) {
+        bool failed = std::find(cc_failed_langs_.begin(), cc_failed_langs_.end(),
+                                cc_restore_key_) != cc_failed_langs_.end();
+        if (!failed)
+            for (int i = 0; i < (int)cc_tracks_.size(); ++i)
+                if (cc_tracks_[i].language_code == cc_restore_key_) {
+                    cc_sel_ = i + 1; apply_caption_selection(); break;
+                }
+        cc_restore_key_.clear();
+    }
+    // The worker is free now — start the queued fetch, if a new video arrived
+    // while it was still busy with the old one.
+    maybe_start_cc_list();
+    // The player options menu may be open showing "Captions: Loading..." — the
+    // list just landed, so rebuild it in place with the real state.
+    if (menu_open_ && menu_kind_ == MenuKind::Context && mode_ == Mode::Playing) {
+        int keep = menu_sel_; open_menu(); menu_sel_ = keep;
+    }
 }
 // Apply the current caption selection WITHOUT blocking: Off hides; an already-cached
 // track is added instantly; an un-cached track is downloaded on a worker thread and
@@ -1226,39 +1365,85 @@ std::string App::cc_current_key() const {
 void App::apply_caption_selection() {
     if (cc_sel_ <= 0 || cc_sel_ > (int)cc_tracks_.size()) { player_.subtitles_off(); return; }
     std::string url = cc_tracks_[cc_sel_ - 1].base_url;
+    std::string tlang = cc_tracks_[cc_sel_ - 1].tlang;
     std::string key = cc_current_key();
     auto it = cc_paths_.find(key);
     if (it != cc_paths_.end()) { player_.add_subtitle(it->second); return; }  // cached
     // Not cached: fetch off-thread. Hide until it arrives; show a brief status.
+    // Queue the request instead of joining a busy worker — a join here would stall
+    // the UI thread for a full network round-trip when cycling tracks quickly.
     player_.subtitles_off();
     status_msg_ = i18n::tr(i18n::Str::LoadingCaptions); status_until_ = SDL_GetTicks() + 4000;
-    if (cc_dl_thread_.joinable()) cc_dl_thread_.join();
+    cc_dl_want_url_ = url; cc_dl_want_key_ = key;   // latest selection wins
+    cc_dl_want_tlang_ = tlang;
+    maybe_start_cc_download();
+}
+// Start the queued caption fetch if the worker is free. NEVER blocks: while a
+// download runs this is a no-op — poll_caption_download() calls back here when
+// it finishes, picking up whatever request is queued by then (rapid cycling
+// overwrites the slot, so only the newest selection gets fetched next).
+void App::maybe_start_cc_download() {
+    if (cc_dl_running_) return;
+    if (cc_dl_thread_.joinable()) cc_dl_thread_.join();   // worker idle -> instant
+    if (cc_dl_want_key_.empty()) return;
+    std::string url = std::move(cc_dl_want_url_), key = std::move(cc_dl_want_key_);
+    std::string tlang = std::move(cc_dl_want_tlang_);
+    cc_dl_want_url_.clear(); cc_dl_want_key_.clear(); cc_dl_want_tlang_.clear();
     cc_dl_running_ = true; cc_dl_done_ = false;
-    cc_dl_thread_ = std::thread([this, url, key]() {
+    int sig = cc_sig_;   // which video this fetch belongs to
+    cc_dl_thread_ = std::thread([this, url, key, tlang, sig]() {
         std::string vtt;
-        try { vtt = it_.caption_vtt(url); } catch (...) {}
-        { std::lock_guard<std::mutex> lk(cc_m_); cc_dl_vtt_ = std::move(vtt); cc_dl_lang_ = key; }
+        try { vtt = it_.caption_vtt(url, tlang); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(cc_m_);
+          cc_dl_vtt_ = std::move(vtt); cc_dl_lang_ = key; cc_dl_res_sig_ = sig; }
         cc_dl_running_ = false; cc_dl_done_ = true;
     });
 }
-// Install a finished VTT — but only if that selection is still active.
+// Install a finished VTT — but only if that selection is still active — then
+// kick off whatever request queued up while the worker was busy.
 void App::poll_caption_download() {
     if (!cc_dl_done_.exchange(false)) return;
-    std::string vtt, lang;
+    std::string vtt, lang; int res_sig;
     { std::lock_guard<std::mutex> lk(cc_m_); vtt = std::move(cc_dl_vtt_); lang = cc_dl_lang_;
-      cc_dl_vtt_.clear(); }
+      res_sig = cc_dl_res_sig_; cc_dl_vtt_.clear(); }
+    if (res_sig != cc_sig_) { maybe_start_cc_download(); return; }  // a previous video's
+                                                                    // fetch: discard it
     bool still_selected = !lang.empty() && lang == cc_current_key();
     if (vtt.empty()) {
-        if (still_selected) { status_msg_ = i18n::tr(i18n::Str::CcUnavailable);
-            status_until_ = SDL_GetTicks() + 2500; cc_sel_ = 0; player_.subtitles_off(); }
-        return;
+        if (still_selected && cc_dl_want_key_.empty()) {
+            cc_sel_ = 0; player_.subtitles_off();
+            // Remember the failure for this video, and drop any synthetic
+            // (translated) entry for that language — it will never play, so it
+            // must not sit in the cycle inviting the same failure again. Real
+            // tracks stay listed (a transient network error shouldn't hide them).
+            cc_failed_langs_.push_back(lang);
+            cc_tracks_.erase(std::remove_if(cc_tracks_.begin(), cc_tracks_.end(),
+                                 [&](const yt::CaptionTrack& t) {
+                                     return !t.tlang.empty() && t.language_code == lang;
+                                 }),
+                             cc_tracks_.end());
+            // Don't flash the toast now: with the options menu up the user may not
+            // see it before it expires, leaving a mysterious "Captions: Off". The
+            // frame loop shows it once the menu is closed.
+            cc_fail_pending_ = true;
+            if (menu_open_ && menu_kind_ == MenuKind::Context) {   // relabel the row: Off
+                int keep = menu_sel_; open_menu(); menu_sel_ = keep;
+            }
+        }
+    } else {
+        std::string path = "/tmp/ytc_cc_" + lang + ".vtt";
+        { std::ofstream o(path, std::ios::binary); o << vtt; }
+        cc_paths_[lang] = path;
+        // A queued request for what just landed (selecting a track whose prefetch
+        // was in flight) is satisfied — drop it instead of fetching it again.
+        if (cc_dl_want_key_ == lang) {
+            cc_dl_want_url_.clear(); cc_dl_want_key_.clear(); cc_dl_want_tlang_.clear();
+        }
+        if (kDbg) std::fprintf(stderr, "[cc] %s -> %zu bytes (%s)\n", lang.c_str(), vtt.size(),
+                               still_selected ? "applied" : "cached");
+        if (still_selected) player_.add_subtitle(path);   // user may have moved on -> just cache
     }
-    std::string path = "/tmp/ytc_cc_" + lang + ".vtt";
-    { std::ofstream o(path, std::ios::binary); o << vtt; }
-    cc_paths_[lang] = path;
-    if (kDbg) std::fprintf(stderr, "[cc] %s -> %zu bytes (%s)\n", lang.c_str(), vtt.size(),
-                           still_selected ? "applied" : "cached");
-    if (still_selected) player_.add_subtitle(path);   // user may have moved on -> just cache
+    maybe_start_cc_download();
 }
 
 // Channel description in the same overlay (used from playlist rows, where each
@@ -1854,6 +2039,17 @@ void App::open_menu() {
             else if (cc_sel_ <= 0) cc += tr(S::Off);
             else cc += cc_tracks_[cc_sel_ - 1].name;   // track title, localized by YouTube (hl)
             menu_items_.push_back({cc, MenuAction::CycleCaptions});
+            // Audio (dub) track — only when the video actually has alternatives.
+            if (playing_audio_tracks_.size() > 1) {
+                std::string cur = audio_override_lang_.empty() ? playing_audio_lang_
+                                                               : audio_override_lang_;
+                std::string tname;
+                for (const auto& at : playing_audio_tracks_)
+                    if (at.lang == cur) { tname = at.name; break; }
+                if (tname.empty()) tname = cur;
+                menu_items_.push_back({tr(S::MenuAudioTrack) + std::string(":  ") + tname,
+                                       MenuAction::CycleAudioTrack});
+            }
             menu_items_.push_back({tr(S::MenuStats) + std::string(":  ")
                                    + tr(stats_for_nerds_ ? S::Enabled : S::Disabled),
                                    MenuAction::ToggleStats});
@@ -2018,6 +2214,9 @@ void App::menu_activate() {
         case MenuAction::CycleVolume:
         case MenuAction::CycleHwdec:
         case MenuAction::CycleAspect:
+        case MenuAction::CycleAudioLang:
+        case MenuAction::CycleCaptionLang:
+        case MenuAction::CycleAudioTrack:
         case MenuAction::CycleSpeed:
         case MenuAction::ToggleSponsorBlock:
         case MenuAction::CycleCaptions:
@@ -2731,7 +2930,8 @@ void App::input(Action a) {
                     act == MenuAction::ToggleHideRestricted ||
                     act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
                     act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
-                    act == MenuAction::CycleAspect ||
+                    act == MenuAction::CycleAspect || act == MenuAction::CycleAudioLang ||
+                    act == MenuAction::CycleCaptionLang || act == MenuAction::CycleAudioTrack ||
                     act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
                     act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
                     act == MenuAction::CycleHomeSource || act == MenuAction::CycleLanguage ||
@@ -2758,11 +2958,11 @@ void App::input(Action a) {
                     if (changed) run_search();
                     break;
                 }
-                // Close the options menu. If the quality changed while playing, re-resolve
-                // the current video at the new quality and resume the position.
+                // Close the options menu. If the quality or audio track changed while
+                // playing, re-resolve the current video and resume the position.
                 menu_open_ = false;
-                if (quality_dirty_ && mode_ == Mode::Playing) {
-                    quality_dirty_ = false; menu_paused_ = false;
+                if ((quality_dirty_ || audio_dirty_) && mode_ == Mode::Playing) {
+                    quality_dirty_ = false; audio_dirty_ = false; menu_paused_ = false;
                     replay_current(player_.position());
                 } else {
                     if (menu_paused_ && mode_ == Mode::Playing) player_.set_pause(false);
@@ -2922,6 +3122,12 @@ void App::pump_async() {
     poll_sponsorblock();
     poll_captions();
     poll_caption_download();
+    // A caption fetch failed earlier: surface it now that the menu is down.
+    if (cc_fail_pending_ && !menu_open_) {
+        cc_fail_pending_ = false;
+        status_msg_ = i18n::tr(i18n::Str::CcUnavailable);
+        status_until_ = SDL_GetTicks() + 4000;
+    }
     poll_related_autoplay();
     step_autoplay();
     // SponsorBlock: auto-skip when playback enters a segment. Uses an immediate
@@ -3122,7 +3328,8 @@ void App::render_menu(gfx::Renderer& rn) {
             it.action == MenuAction::ToggleHideRestricted ||
             it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
             it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec ||
-            it.action == MenuAction::CycleAspect)
+            it.action == MenuAction::CycleAspect || it.action == MenuAction::CycleAudioLang ||
+            it.action == MenuAction::CycleCaptionLang || it.action == MenuAction::CycleAudioTrack)
             has_value = true;
     const char* foot = (menu_kind_ == MenuKind::Settings || menu_kind_ == MenuKind::SearchFilters)
                      ? i18n::tr(i18n::Str::FooterDesc)
@@ -4152,6 +4359,10 @@ void App::request_playback() {
     now_playing_index_ = sel_;                   // remember list position (for autoplay)
     stats_for_nerds_ = false;                    // per-video: reset for each new video
     playback_speed_ = 1.0;                       // per-video: speed back to normal
+    audio_override_lang_.clear();                // per-video: back to the global default
+    audio_dirty_ = false;
+    cc_restore_key_.clear();                     // new video: captions start Off
+    cc_failed_langs_.clear();                    // new video: failures forgotten
     // (replay_current, used for quality changes, does NOT reset these -> speed persists
     //  across a re-resolve of the same video.)
     // Ask-to-resume: if a position was saved for this video, prompt before playing.
@@ -4181,6 +4392,10 @@ void App::play_item(const yt::SearchResult& v, int index) {
     now_playing_index_ = index;
     stats_for_nerds_ = false;
     playback_speed_ = 1.0;
+    audio_override_lang_.clear();   // per-video track choice ends with its video
+    audio_dirty_ = false;
+    cc_restore_key_.clear();        // new video: captions start Off
+    cc_failed_langs_.clear();       // new video: failures forgotten
     start_resolve(v.video_id, v.title, 0);
 }
 
@@ -4283,8 +4498,20 @@ void App::save_resume_position() {
 
 // Re-resolve the currently-playing video (e.g. after a quality change) and resume
 // at at_seconds once the new stream loads.
+// The AudioPrefs.lang value for the next resolve: the per-video override wins,
+// else the global setting ("app" -> the UI language; "orig" -> "" = original).
+std::string App::effective_audio_lang() const {
+    if (!audio_override_lang_.empty()) return audio_override_lang_;
+    if (audio_lang_pref_ == "app")  return i18n::language_hl(lang_);
+    if (audio_lang_pref_ == "orig") return "";
+    return audio_lang_pref_;
+}
+
 void App::replay_current(double at_seconds) {
     if (now_playing_item_.video_id.empty()) return;
+    // Same video, new stream (quality/audio-track change): carry the caption
+    // selection over — start_captions resets it, poll_captions restores it.
+    cc_restore_key_ = cc_current_key();
     // A restricted (paced) stream's FRESH url only serves ~the first 20MiB, so a deep
     // resume would 403 on load. Clamp into the fresh window (approx via bitrate).
     if (playing_paced_ && playing_vbitrate_ > 0) {
@@ -4311,13 +4538,14 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
 
     std::string fallback_title = title;
     yt::VideoPrefs prefs = play_prefs_;
+    yt::AudioPrefs aprefs; aprefs.lang = effective_audio_lang();
     resolve_running_ = true;
     resolve_done_ = false;
     // "Offline mode" is scoped to the Downloads view: only there do we play the local
     // file. From any other page a downloaded video streams normally (full options).
     bool play_local = it_.is_downloaded(video_id) && view_label_ == "Downloads";
     if (resolve_thread_.joinable()) resolve_thread_.join();
-    resolve_thread_ = std::thread([this, video_id, fallback_title, prefs, play_local]() {
+    resolve_thread_ = std::thread([this, video_id, fallback_title, prefs, aprefs, play_local]() {
         bool dbg = getenv("YTC_DEBUG");
         ResolveResult r;
         r.title = fallback_title;
@@ -4357,7 +4585,7 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
             if (dbg) std::fprintf(stderr, "[play] resolved LIVE via HLS manifest\n");
         } else {
             const yt::Format* vf = info.best_video(prefs);
-            const yt::Format* af = info.best_audio();
+            const yt::Format* af = info.best_audio(aprefs);
             if (!vf) { r.ok = false; r.status = "No playable video format"; }
             else {
                 r.ok = true;
@@ -4365,6 +4593,8 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
                 r.audio_url = af ? af->url : "";
                 r.user_agent = info.user_agent;
                 r.video_bitrate = vf->bitrate;
+                r.audio_lang = af ? af->track_lang : "";
+                r.audio_tracks = info.audio_tracks();   // for the player track picker
                 // Detect restricted (paced) delivery: some videos (e.g. kids content)
                 // 403 any range beyond a sliding window. The made-for-kids marker in
                 // playabilityStatus tells us for FREE; for unmarked videos a deep
@@ -4421,6 +4651,8 @@ void App::poll_resolve() {
     start_captions(now_playing_item_.video_id);        // fetch caption track list off-thread
     now_playing_title_ = r.title;
     now_playing_desc_ = r.description;          // free: came with the resolve
+    playing_audio_tracks_ = std::move(r.audio_tracks);
+    playing_audio_lang_ = r.audio_lang;
     playing_paced_ = r.paced;
     playing_vbitrate_ = r.video_bitrate;
     played_max_ = start_at;                     // seek window anchors here

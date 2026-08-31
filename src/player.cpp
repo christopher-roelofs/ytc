@@ -264,8 +264,11 @@ void Player::set_speed(double mult) {
 }
 void Player::add_subtitle(const std::string& path) {
     if (!impl_->mpv || path.empty()) return;
+    // Async: sub-add opens and parses the file before returning, which stalls the
+    // UI thread for a visible beat on weak cores. Fire it and let mpv apply it
+    // when ready — the caller only needs the toggle to feel instant.
     const char* cmd[] = {"sub-add", path.c_str(), "select", nullptr};
-    mpv_command(impl_->mpv, cmd);
+    mpv_command_async(impl_->mpv, 0, cmd);
     int on = 1; mpv_set_property(impl_->mpv, "sub-visibility", MPV_FORMAT_FLAG, &on);
 }
 void Player::subtitles_off() {

@@ -18,10 +18,12 @@ enum class Str {
     // Tab strip
     TabAll, TabVideos, TabShorts, TabPlaylists, TabPosts,
     // Settings row labels
-    SetMaxQuality, SetVolume, SetVideoDecode, SetAspect, SetHidePaced,
+    SetMaxQuality, SetVolume, SetVideoDecode, SetAspect, SetAudioLang, SetCaptionLang,
+    SetHidePaced,
     SetAskResume, SetHomeFeed, SetAutoplay, SetSponsorBlock, SetView, SetLanguage,
     // Settings values
     On, Off, Hardware, Software, AspectFit, AspectZoom, AspectStretch,
+    AppLanguage, OriginalTrack,
     Favorites, FavoritesPlusHistory,
     ViewGrid, ViewCarousel, View3DCarousel, ViewCoverflow, AutoHighest,
     // Status / empty states / hints
@@ -31,13 +33,14 @@ enum class Str {
     // Footers (whole-string per context)
     FooterBrowse, FooterSubview, FooterSearch, FooterHomeMin, FooterResume, FooterDesc,
     FooterPlayerPlay, FooterPlayerPause,
-    CcTranslate,
+    CcTranslate, CcTranslated,
     // Context / options menu items
     ReadPost, PlayAttachedVideo, AddWatchLater, RemoveWatchLater,
     ShowDescription, ShowChannelDescription, ShowPlaylistDescription,
     AddFavorite, RemoveFavorite, GoToChannel, ClearHistoryItem,
     // Player options
     MenuQuality, MenuSpeed, MenuCaptions, CcNone, MenuStats, Enabled, Disabled,
+    MenuAudioTrack,
     // Menu + overlay footers
     FooterMenuValue, FooterMenuPlain, FooterPostOverlay, FooterScrollOverlay,
     // Empty-state hints

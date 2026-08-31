@@ -15,11 +15,12 @@ static const char* config_path() {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <videoId> [max_height]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <videoId> [max_height] [audio_lang]\n", argv[0]);
         return 2;
     }
     std::string video_id = argv[1];
     int max_height = argc > 2 ? std::atoi(argv[2]) : 0;
+    std::string audio_lang = argc > 3 ? argv[3] : "";   // dub language ("" = original)
 
     try {
         auto t0 = std::chrono::steady_clock::now();
@@ -55,12 +56,22 @@ int main(int argc, char** argv) {
         yt::VideoPrefs vprefs;
         vprefs.max_height = max_height;
         const yt::Format* v = info.best_video(vprefs);
-        const yt::Format* a = info.best_audio();
+        yt::AudioPrefs aprefs; aprefs.lang = audio_lang;
+        const yt::Format* a = info.best_audio(aprefs);
         std::printf("\n  chosen video: itag %d %s %s (cap=%d)\n",
                     v ? v->itag : -1, v ? v->quality_label.c_str() : "-",
                     v ? yt::codec_name(v->codec_family) : "", max_height);
-        std::printf("  chosen audio: itag %d %ld kbps\n",
-                    a ? a->itag : -1, a ? a->bitrate / 1000 : 0);
+        std::printf("  chosen audio: itag %d %ld kbps%s%s\n",
+                    a ? a->itag : -1, a ? a->bitrate / 1000 : 0,
+                    a && !a->track_name.empty() ? " track=" : "",
+                    a ? a->track_name.c_str() : "");
+        auto tracks = info.audio_tracks();
+        if (tracks.size() > 1) {
+            std::printf("  audio tracks (%zu):", tracks.size());
+            for (const auto& t : tracks)
+                std::printf(" %s%s", t.lang.c_str(), t.original ? "(orig)" : "");
+            std::printf("\n");
+        }
 
         // Verify the chosen video URL actually serves bytes (Range 0-1MB).
         if (v && !v->url.empty()) {

@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <thread>
+#include <chrono>
 #include <mutex>
 #include <atomic>
 #include <unordered_map>
@@ -173,6 +174,28 @@ void Innertube::refresh_visitor_data_locked() {   // caller holds visitor_m_
         throw std::runtime_error("visitor_id: no visitorData in response");
 }
 
+// base64url-decode (no padding needed) — enough to peek inside a format's xtags,
+// a small protobuf whose readable strings include acont's "original"/"dubbed".
+static std::string b64url_decode(const std::string& in) {
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '-' || c == '+') return 62;
+        if (c == '_' || c == '/') return 63;
+        return -1;
+    };
+    std::string out;
+    int buf = 0, bits = 0;
+    for (char c : in) {
+        int v = val(c);
+        if (v < 0) continue;
+        buf = (buf << 6) | v; bits += 6;
+        if (bits >= 8) { bits -= 8; out += (char)((buf >> bits) & 0xFF); }
+    }
+    return out;
+}
+
 static void parse_format(const json& f, bool progressive, VideoInfo& out) {
     Format fmt;
     fmt.itag = f.value("itag", 0);
@@ -182,6 +205,20 @@ static void parse_format(const json& f, bool progressive, VideoInfo& out) {
     fmt.height = f.value("height", 0);
     fmt.fps = f.value("fps", 0);
     fmt.audio_quality = f.value("audioQuality", "");
+    // Multi-audio (dub) track metadata. audioTrack.id is "<lang>.<type>" where
+    // type 4 = the original track, 3 = a dub; xtags decodes to a protobuf whose
+    // acont field spells it out ("original"/"dubbed") — trust either signal.
+    if (f.contains("audioTrack") && f["audioTrack"].is_object()) {
+        const json& at = f["audioTrack"];
+        fmt.track_name = at.value("displayName", "");
+        fmt.track_default = at.value("audioIsDefault", false);
+        std::string id = at.value("id", "");
+        auto dot = id.find('.');
+        fmt.track_lang = dot == std::string::npos ? id : id.substr(0, dot);
+        fmt.track_original = (dot != std::string::npos && id.substr(dot + 1) == "4") ||
+                             b64url_decode(f.value("xtags", "")).find("original")
+                                 != std::string::npos;
+    }
     if (f.contains("bitrate")) fmt.bitrate = f["bitrate"].get<long>();
     if (f.contains("contentLength"))
         fmt.content_length = std::stol(f["contentLength"].get<std::string>());
@@ -2064,9 +2101,16 @@ std::string Innertube::caption_vtt(const std::string& base_url, const std::strin
         // tlang => YouTube auto-translates the track into that language server-side.
         if (!tlang.empty() && url.find("&tlang=") == std::string::npos)
             url += "&tlang=" + tlang;
-        auto r = http.get(url);
-        if (!r.ok()) return "";
-        return r.body;
+        // The timedtext endpoint intermittently 429s — a Google-side rate limit
+        // that typically clears within seconds (verified: 200/429/429/200 for the
+        // identical URL). Retry a couple of times before reporting "unavailable";
+        // callers run this on a worker thread, so the waits cost the UI nothing.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            auto r = http.get(url);
+            if (r.ok() && !r.body.empty()) return r.body;
+        }
+        return "";
     } catch (...) { return ""; }
 }
 
@@ -2138,6 +2182,26 @@ void Innertube::set_setting_int(const std::string& key, int value) {
     o << cfg.dump(2) << "\n";
 }
 
+std::string Innertube::setting_str(const std::string& key, const std::string& def) {
+    std::ifstream f(config_dir_ + "/settings.json");
+    if (!f) return def;
+    json cfg = json::parse(f, nullptr, false);
+    if (cfg.is_discarded() || !cfg.is_object()) return def;
+    auto it = cfg.find(key);
+    if (it == cfg.end() || !it->is_string()) return def;
+    return it->get<std::string>();
+}
+
+void Innertube::set_setting_str(const std::string& key, const std::string& value) {
+    std::string path = config_dir_ + "/settings.json";
+    json cfg;
+    { std::ifstream f(path); if (f) cfg = json::parse(f, nullptr, false); }
+    if (cfg.is_discarded() || !cfg.is_object()) cfg = json::object();
+    cfg[key] = value;
+    std::ofstream o(path); if (!o) return;
+    o << cfg.dump(2) << "\n";
+}
+
 // Effective quality: YouTube labels quality by the SHORTER side, so a vertical
 // "1080p" Short is 1080x1920 -> quality 1080, not 1920. Using raw height would
 // wrongly reject vertical formats under a height cap and pick a lower quality.
@@ -2170,12 +2234,39 @@ const Format* VideoInfo::best_video(const VideoPrefs& prefs) const {
     return best;
 }
 
+// Primary-subtag language match: "en" matches "en" and "en-US".
+static bool lang_match(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    auto primary = [](const std::string& s) { return s.substr(0, s.find('-')); };
+    return primary(a) == primary(b);
+}
+
 const Format* VideoInfo::best_audio(const AudioPrefs& prefs) const {
+    // Multi-audio videos carry one full set of audio formats per dub language,
+    // with near-identical bitrates — ranking across all of them picks a dub at
+    // random. Choose ONE track first: the preferred language if present, else
+    // the original, else the flagged default. Single-audio videos (no track
+    // metadata) skip this and rank everything as before.
+    std::string target;
+    bool any_track = false, have_target = false, have_orig = false, have_def = false;
+    std::string orig, def;
+    for (const auto& f : formats) {
+        if (!f.has_audio || f.has_video || f.track_lang.empty()) continue;
+        any_track = true;
+        if (!have_target && lang_match(f.track_lang, prefs.lang)) {
+            target = f.track_lang; have_target = true;
+        }
+        if (!have_orig && f.track_original) { orig = f.track_lang; have_orig = true; }
+        if (!have_def && f.track_default)   { def = f.track_lang; have_def = true; }
+    }
+    if (any_track && !have_target) target = have_orig ? orig : def;
+
     const Format* best = nullptr;
     size_t best_rank = 0;
     for (const auto& f : formats) {
         if (!f.has_audio || f.has_video) continue;         // audio-only
         if (f.url.empty()) continue;
+        if (any_track && !lang_match(f.track_lang, target)) continue;
         size_t rank = codec_rank(f.codec_family, prefs.codec_priority);
         if (rank == prefs.codec_priority.size()) continue;
         if (!best) { best = &f; best_rank = rank; continue; }
@@ -2184,6 +2275,21 @@ const Format* VideoInfo::best_audio(const AudioPrefs& prefs) const {
         if (better) { best = &f; best_rank = rank; }
     }
     return best;
+}
+
+std::vector<AudioTrackInfo> VideoInfo::audio_tracks() const {
+    std::vector<AudioTrackInfo> out;
+    for (const auto& f : formats) {
+        if (!f.has_audio || f.has_video || f.track_lang.empty()) continue;
+        bool seen = false;
+        for (const auto& t : out) if (t.lang == f.track_lang) { seen = true; break; }
+        if (seen) continue;
+        out.push_back({f.track_lang, f.track_name, f.track_original, f.track_default});
+    }
+    // Original first; the rest keep YouTube's order (alphabetical by language).
+    for (size_t i = 0; i < out.size(); ++i)
+        if (out[i].original) { std::rotate(out.begin(), out.begin() + i, out.begin() + i + 1); break; }
+    return out;
 }
 
 const Format* VideoInfo::best_progressive(int max_height) const {

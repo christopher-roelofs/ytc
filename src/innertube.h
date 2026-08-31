@@ -38,6 +38,12 @@ struct Format {
     long bitrate = 0;             // average bitrate, bits/s
     long content_length = 0;      // bytes, 0 if unknown
     std::string audio_quality;    // "AUDIO_QUALITY_MEDIUM" etc, "" for video
+    // Multi-audio (dub) track info, from adaptiveFormats[].audioTrack. Empty
+    // track_lang = the video has a single audio track (no audioTrack field).
+    std::string track_lang;       // "es" from audioTrack.id "es.3"
+    std::string track_name;       // audioTrack.displayName, localized by hl
+    bool track_default = false;   // audioTrack.audioIsDefault
+    bool track_original = false;  // the original (non-dubbed) track
     std::string url;              // direct, ready-to-play (empty if ciphered)
     bool has_audio = false;
     bool has_video = false;
@@ -55,6 +61,19 @@ struct VideoPrefs {
 
 struct AudioPrefs {
     std::vector<Codec> codec_priority = {Codec::AAC, Codec::Opus};
+    // Preferred dub language for multi-audio videos ("es"; primary subtag match,
+    // so "en" also matches an "en-US" track). Empty = the original track. A video
+    // with no matching track falls back to its original track. Single-audio
+    // videos ignore this entirely.
+    std::string lang;
+};
+
+// One distinct audio (dub) language on a multi-audio video, for track pickers.
+struct AudioTrackInfo {
+    std::string lang;        // "es" — pass as AudioPrefs.lang to select it
+    std::string name;        // display name, localized by hl ("Spanish")
+    bool original = false;
+    bool is_default = false;
 };
 
 // One result row — a video, a channel, a playlist, or a community post.
@@ -135,6 +154,8 @@ struct CaptionTrack {
     std::string base_url;        // timedtext URL (append &fmt=vtt to fetch WebVTT)
     bool auto_generated = false; // kind == "asr"
     bool translatable = false;   // isTranslatable — can be auto-translated via &tlang
+    std::string tlang;           // non-empty on a synthetic entry: fetch base_url
+                                 // auto-translated into this language (&tlang=)
 };
 
 struct VideoInfo {
@@ -159,6 +180,9 @@ struct VideoInfo {
     const Format* best_video(const VideoPrefs& prefs = {}) const;
     // Best audio-only format under the given policy.
     const Format* best_audio(const AudioPrefs& prefs = {}) const;
+    // Distinct audio (dub) languages, original first. Empty or size 1 = nothing
+    // to pick (single-audio video).
+    std::vector<AudioTrackInfo> audio_tracks() const;
     // Best progressive format (audio+video in one URL — itag 18/22), for a single-file
     // download. Prefers the tallest at or below max_height (0 = uncapped); falls back to
     // the smallest if all exceed it. nullptr if none are directly downloadable.
@@ -312,9 +336,11 @@ public:
     void   set_resume_pos(const std::string& video_id, double seconds);
     void   clear_resume_pos(const std::string& video_id);        // finished -> forget
 
-    // App settings, persisted in settings.json (key -> int).
+    // App settings, persisted in settings.json (key -> int or string).
     int  setting_int(const std::string& key, int def);
     void set_setting_int(const std::string& key, int value);
+    std::string setting_str(const std::string& key, const std::string& def);
+    void set_setting_str(const std::string& key, const std::string& value);
 
     // Restricted-delivery (paced/kids) detection for the "hide restricted" filter.
     // check_video_restricted: ONE lightweight /player call (IOS client, the one that

@@ -263,6 +263,7 @@ private:
                             GoSettings, CycleMaxQuality, ToggleStats,
                             ToggleHideRestricted, ToggleAskResume,
                             CycleView, CycleVolume, CycleHwdec, CycleAspect, CycleSpeed,
+                            CycleAudioLang, CycleCaptionLang, CycleAudioTrack,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
@@ -284,6 +285,8 @@ private:
                                    // content) — seeking must be clamped
         long video_bitrate = 0;    // bits/s of the chosen video format
         std::string status, video_url, audio_url, user_agent, title, description;
+        std::string audio_lang;    // track_lang of the chosen audio ("" = single-audio)
+        std::vector<yt::AudioTrackInfo> audio_tracks;   // for the player track picker
     };
 
     // Description overlay (over the grid or the player).
@@ -387,10 +390,21 @@ private:
     std::mutex cc_m_;
     std::vector<yt::CaptionTrack> cc_pending_;
     int cc_sig_ = 0;
+    std::string cc_list_want_;   // queued track-list fetch (video id); worker busy
+    void maybe_start_cc_list();  // start it once the worker is free — never blocks
     // Async VTT download for the selected track (so cycling captions never blocks).
     std::thread cc_dl_thread_;
     std::atomic<bool> cc_dl_running_{false}, cc_dl_done_{false};
     std::string cc_dl_vtt_, cc_dl_lang_;   // pending result + which language it is for
+    int cc_dl_res_sig_ = 0;                // cc_sig_ the result belongs to (guarded by cc_m_)
+    std::string cc_dl_want_url_, cc_dl_want_key_;  // queued request (latest selection wins)
+    std::string cc_dl_want_tlang_;                 // auto-translate target for that request
+    bool cc_fail_pending_ = false;                 // show "Captions unavailable" once the
+                                                   // options menu closes (so it's seen)
+    std::vector<std::string> cc_failed_langs_;     // languages whose fetch failed for THIS
+                                                   // video — synthetic (translated) entries
+                                                   // for them are dropped, not re-offered
+    void maybe_start_cc_download();        // start the queued fetch if the worker is free
     void start_captions(const std::string& video_id);
     void poll_captions();
     void apply_caption_selection();        // off / cached sub-add / kick async download
@@ -623,6 +637,21 @@ private:
     unsigned volume_overlay_until_ = 0;  // deadline to show the volume indicator
     int  hwdec_mode_ = 0;           // 0 = Hardware (auto-copy-safe), 1 = Software; "hwdec"
     int  aspect_mode_ = 0;          // 0 = Fit (bars), 1 = Zoom (crop), 2 = Stretch; "aspect"
+    // Multi-audio (dub) preferences. Global default (settings.json "audio_lang"):
+    // "app" = match the UI language, "orig" = original track, or a language code.
+    // The player-menu Audio Track row sets a per-video override (NOT persisted).
+    std::string audio_lang_pref_ = "app";
+    std::string cc_lang_pref_ = "app";   // "cc_lang": "app" or a language code — the
+                                         // language captions START on when turned on;
+                                         // never turns captions on by itself
+    std::string audio_override_lang_;    // per-video track choice; cleared on new video
+    bool audio_dirty_ = false;           // track changed in the player menu; re-resolve on close
+    std::vector<yt::AudioTrackInfo> playing_audio_tracks_;  // tracks of the playing video
+    std::string playing_audio_lang_;     // track actually playing ("" = single-audio)
+    std::string cc_restore_key_;         // replay only: re-select this caption language
+                                         // once the track list arrives (else captions
+                                         // start Off — nothing auto-enables them)
+    std::string effective_audio_lang() const;  // override/setting -> AudioPrefs.lang value
     std::string now_playing_title_;
     yt::SearchResult now_playing_item_;   // context for the player options menu
     std::string status_msg_;
