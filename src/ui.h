@@ -267,6 +267,8 @@ private:
                             CycleCaptionSize, CycleCaptionStyle,
                             GoSettingsAudio, GoSettingsVideo, GoSettingsCaptions,
                             GoSettingsPlayback, GoSettingsBrowsing,
+                            AddSearchToFeed, GoCustomFeed, FeedSourceRow,
+                            FeedRemoveYes, FeedRemoveNo,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleHomeSource, CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
@@ -274,7 +276,8 @@ private:
                             CycleFilterDate, CycleFilterSort, Quit };
     enum class MenuKind { Context, Main, Settings, SearchFilters,
                           SettingsAudio, SettingsVideo, SettingsCaptions,
-                          SettingsPlayback, SettingsBrowsing };
+                          SettingsPlayback, SettingsBrowsing,
+                          FeedManage, FeedRemoveConfirm };
     // Any of the Settings pages (top level or a submenu)?
     bool settings_kind(MenuKind k) const {
         return k == MenuKind::Settings || k == MenuKind::SettingsAudio ||
@@ -622,6 +625,8 @@ private:
     yt::Innertube::HomeCursor refresh_home_cursor_;   // home-feed cursor from the worker
     std::string refresh_sig_;           // view identity when the refresh was started
     int refresh_kind_ = 0;              // what the worker fetched (see refresh enum in .cpp)
+    int refresh_home_source_ = 0;       // home_source_ a home fetch was built with;
+                                        // a mismatch on completion -> discard + refetch
     // Auto-retry with incremental backoff when a network fetch fails (e.g. app
     // opened before wifi reconnected after wake).
     bool retry_pending_ = false;
@@ -670,6 +675,8 @@ private:
     void open_settings_captions();  // Settings > Captions submenu
     void open_settings_playback();  // Settings > Playback submenu
     void open_settings_browsing();  // Settings > Browsing submenu
+    void open_feed_manage();        // Browsing > Custom Feed: saved-search list
+    int feed_remove_idx_ = -1;      // source pending removal (FeedRemoveConfirm)
     void reopen_settings_menu();    // rebuild whichever settings page is current
     std::string now_playing_title_;
     yt::SearchResult now_playing_item_;   // context for the player options menu

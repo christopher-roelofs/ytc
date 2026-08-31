@@ -1475,6 +1475,93 @@ bool Innertube::remove_watch_later(const std::string& video_id) {
 // favorites/watch-later/history. Everything here reads the JSON files this app
 // writes itself, so the menu views can render tiles for each list.
 
+// ---- Custom feed (saved searches) ----
+// config/feeds.json: { "feeds": [ { "name": "Custom", "sources": [
+//   { "query": "...", "type": 0, "duration": 0, "upload_date": 0, "sort": 0 } ] } ] }
+// The named-feeds array leaves room to grow; only "Custom" is used today.
+static json load_feeds_json(const std::string& config_dir) {
+    std::ifstream f(config_dir + "/feeds.json");
+    if (f) { json j = json::parse(f, nullptr, false); if (!j.is_discarded() && j.is_object()) return j; }
+    return json{{"feeds", json::array({ json{{"name","Custom"},{"sources",json::array()}} })}};
+}
+static json* custom_sources_of(json& cfg) {
+    if (!cfg.contains("feeds") || !cfg["feeds"].is_array()) return nullptr;
+    for (auto& fd : cfg["feeds"])
+        if (fd.value("name", "") == "Custom" && fd.contains("sources") && fd["sources"].is_array())
+            return &fd["sources"];
+    return nullptr;
+}
+
+std::vector<FeedSource> Innertube::custom_feed_sources() {
+    std::vector<FeedSource> out;
+    json cfg = load_feeds_json(config_dir_);
+    json* src = custom_sources_of(cfg);
+    if (!src) return out;
+    for (const auto& s : *src) {
+        FeedSource fs;
+        fs.query = s.value("query", "");
+        fs.type = s.value("type", 0); fs.duration = s.value("duration", 0);
+        fs.upload_date = s.value("upload_date", 0); fs.sort = s.value("sort", 0);
+        if (!fs.query.empty()) out.push_back(std::move(fs));
+    }
+    return out;
+}
+
+bool Innertube::add_custom_feed_source(const FeedSource& s) {
+    for (const auto& e : custom_feed_sources()) if (e == s) return false;
+    json cfg = load_feeds_json(config_dir_);
+    json* src = custom_sources_of(cfg);
+    if (!src) return false;
+    src->push_back(json{{"query", s.query}, {"type", s.type}, {"duration", s.duration},
+                        {"upload_date", s.upload_date}, {"sort", s.sort}});
+    std::ofstream o(config_dir_ + "/feeds.json"); if (!o) return false;
+    o << cfg.dump(2) << "\n";
+    return true;
+}
+
+void Innertube::remove_custom_feed_source(size_t index) {
+    json cfg = load_feeds_json(config_dir_);
+    json* src = custom_sources_of(cfg);
+    if (!src || index >= src->size()) return;
+    src->erase(src->begin() + index);
+    std::ofstream o(config_dir_ + "/feeds.json"); if (!o) return;
+    o << cfg.dump(2) << "\n";
+}
+
+std::vector<SearchResult> Innertube::custom_feed(int per_source) {
+    // UI filter index -> protobuf value (same tables as the search screen).
+    static const int kTypePb[] = {0, 1, 2, 3};
+    static const int kDurPb[]  = {0, 4, 5, 2};
+    static const int kDatePb[] = {0, 2, 3, 4, 5};
+    static const int kSortPb[] = {0, 0, 3};
+    std::vector<std::vector<SearchResult>> per;
+    for (const auto& s : custom_feed_sources()) {
+        std::string params = build_search_params(kTypePb[s.type & 3], kDurPb[s.duration & 3],
+                                                 kDatePb[s.upload_date % 5], kSortPb[s.sort % 3]);
+        Feed f = search_feed(s.query, params);
+        if ((int)f.items.size() > per_source) f.items.resize(per_source);
+        if (!f.items.empty()) per.push_back(std::move(f.items));
+    }
+    // Round-robin interleave so every saved search is represented up top; dedupe.
+    std::vector<SearchResult> out;
+    std::unordered_map<std::string, bool> seen;
+    for (size_t i = 0; !per.empty(); ++i) {
+        bool any = false;
+        for (auto& list : per) {
+            if (i >= list.size()) continue;
+            any = true;
+            SearchResult& r = list[i];
+            std::string key = !r.video_id.empty() ? r.video_id
+                            : !r.playlist_id.empty() ? r.playlist_id : r.channel_id;
+            if (key.empty() || seen.count(key)) continue;
+            seen[key] = true;
+            out.push_back(std::move(r));
+        }
+        if (!any) break;
+    }
+    return out;
+}
+
 std::vector<std::pair<std::string,std::string>> Innertube::favorites() {
     std::vector<std::pair<std::string,std::string>> out;
     std::ifstream f(config_dir_ + "/channels.json");

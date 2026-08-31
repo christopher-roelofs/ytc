@@ -25,7 +25,9 @@ enum class Str {
     SetAskResume, SetHomeFeed, SetAutoplay, SetSponsorBlock, SetView, SetLanguage,
     // Settings values
     On, Off, Hardware, Software, AspectFit, AspectZoom, AspectStretch,
-    AppLanguage, OriginalTrack,
+    AppLanguage, OriginalTrack, HomeCustom,
+    SetCustomFeed, MenuAddSearchFeed, AddedToFeed, AlreadyInFeed,
+    FeedEmpty, FeedRemoveConfirm,
     SizeSmall, SizeMedium, SizeLarge,
     StyleWhite, StyleYellow, StyleWhiteOnBlack, StyleBlackOnWhite,
     StyleYellowOnBlack, StyleYellowOnBlue,

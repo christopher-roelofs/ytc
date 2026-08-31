@@ -68,6 +68,19 @@ struct AudioPrefs {
     std::string lang;
 };
 
+// One saved search powering the user's Custom home feed (config/feeds.json).
+// The filter ints use the SAME indexes as the Search Filters UI rows
+// (0 = Off): type Off/Videos/Channels/Playlists, duration Off/Under3/3-20/
+// Over20, upload_date Off/Today/Week/Month/Year, sort Off/Relevance/Popularity.
+struct FeedSource {
+    std::string query;
+    int type = 0, duration = 0, upload_date = 0, sort = 0;
+    bool operator==(const FeedSource& o) const {
+        return query == o.query && type == o.type && duration == o.duration &&
+               upload_date == o.upload_date && sort == o.sort;
+    }
+};
+
 // One distinct audio (dub) language on a multi-audio video, for track pickers.
 struct AudioTrackInfo {
     std::string lang;        // "es" — pass as AudioPrefs.lang to select it
@@ -318,6 +331,15 @@ public:
                          const std::string& author = "", const std::string& count = "");
     bool remove_watch_later(const std::string& id);
     std::vector<SearchResult> watch_later();         // ready-to-show tiles
+
+    // Custom home feed: saved searches persisted in config/feeds.json (schema
+    // allows named feeds later; today everything lives in the "Custom" feed).
+    std::vector<FeedSource> custom_feed_sources();
+    bool add_custom_feed_source(const FeedSource& s);   // false if already saved
+    void remove_custom_feed_source(size_t index);
+    // Fetch + interleave the saved searches into one feed (round-robin across
+    // sources, deduped). Runs the searches sequentially; call from a worker.
+    std::vector<SearchResult> custom_feed(int per_source = 12);
 
     // Stored lists as (id, name/title) pairs, for building the menu views.
     std::vector<std::pair<std::string,std::string>> favorites();     // (channel_id, name)
