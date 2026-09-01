@@ -3,6 +3,7 @@
 #ifdef YTC_HAVE_AVFORMAT
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
 #include <libavutil/mathematics.h>
 }
 #include <cstdio>
@@ -12,6 +13,10 @@ extern "C" {
 namespace ytn {
 
 bool remux_available() { return true; }
+
+bool hwdec_v4l2_available() {
+    return avcodec_find_decoder_by_name("h264_v4l2m2m") != nullptr;
+}
 
 namespace {
 struct Src {
@@ -127,6 +132,7 @@ bool remux_to_mp4(const std::string& video_path, const std::string& audio_path,
 
 namespace ytn {
 bool remux_available() { return false; }
+bool hwdec_v4l2_available() { return false; }
 bool remux_to_mp4(const std::string&, const std::string&, const std::string&) { return false; }
 } // namespace ytn
 

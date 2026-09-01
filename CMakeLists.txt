@@ -108,6 +108,15 @@ if(BUILD_UI)
 
     add_executable(yt_ui src/main_ui.cpp)
     target_link_libraries(yt_ui PRIVATE ytgfx)
+
+    # ytc_setup: the hardware-decode downloader (detection + prompt + fetch).
+    # Small on purpose: gfx + http only, no innertube/mpv.
+    add_executable(yt_setup src/main_setup.cpp src/gfx.cpp)
+    target_include_directories(yt_setup PRIVATE ${SDL2_INCLUDE_DIRS} ${GL_INCS})
+    target_link_libraries(yt_setup PRIVATE ytcore ${SDL2_LIBRARIES} ${GL_LIBS} Threads::Threads)
+    if(YTC_GL_DESKTOP)
+      target_compile_definitions(yt_setup PRIVATE YTC_GL_DESKTOP)
+    endif()
   else()
     message(WARNING "SDL2 or a GL backend not found; skipping yt_ui")
   endif()

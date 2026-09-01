@@ -2,6 +2,7 @@
 #include "platform.h"   // Windows timegm shim
 #include "i18n.h"
 #include "remux.h"
+#include "hwdetect.h"
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
@@ -329,8 +330,14 @@ App::App(const std::string& config_path, gfx::Window* win)
     ask_resume_ = it_.setting_int("ask_resume", 1) != 0;   // default ON
     volume_ = it_.setting_int("volume", 100);              // app-local playback volume %
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
+    // Hardware decode is real only when the device has a v4l2 decoder AND the
+    // loaded libavcodec provides v4l2m2m (the optional hwdec bundle from
+    // ytc_setup). Then the toggle appears in Settings > Video and "Hardware"
+    // maps to v4l2m2m-copy; everywhere else the old auto-copy-safe default
+    // stands (harmless: mpv falls back to software when nothing matches).
+    hwdec_capable_ = ytn::hwdec_v4l2_available() && hwdetect::detect().has_decoder();
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
-    player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
+    player_.set_hwdec(hwdec_mode_str());
     aspect_mode_ = it_.setting_int("aspect", 0);           // 0 fit / 1 zoom / 2 stretch
     if (aspect_mode_ < 0 || aspect_mode_ > 2) aspect_mode_ = 0;
     player_.set_aspect(aspect_mode_);
@@ -1170,8 +1177,14 @@ void App::open_settings_video() {
     menu_items_.clear();
     menu_items_.push_back({tr(S::SetMaxQuality) + std::string(":  ") + quality_label(play_prefs_.max_height),
                            MenuAction::CycleMaxQuality});
-    // Video Decode (hwdec) hidden for now: the bundled ffmpeg is software-only, so the
-    // toggle does nothing. Code kept (CycleHwdec/set_hwdec) for when a hw build lands.
+    // Video Decode: shown only when BOTH sides are real — the device has a v4l2
+    // decoder (hwdetect) AND the loaded libavcodec has the v4l2m2m decoder (the
+    // optional hwdec lib bundle, installed by ytc_setup). Software-only builds
+    // keep the row hidden, so the toggle can never be a no-op.
+    if (hwdec_capable_)
+        menu_items_.push_back({tr(S::SetVideoDecode) + std::string(":  ")
+                               + tr(hwdec_mode_ ? S::Software : S::Hardware),
+                               MenuAction::CycleHwdec});
     const S aname[] = {S::AspectFit, S::AspectZoom, S::AspectStretch};
     menu_items_.push_back({tr(S::SetAspect) + std::string(":  ") + tr(aname[aspect_mode_]),
                            MenuAction::CycleAspect});
@@ -1320,7 +1333,7 @@ void App::adjust_setting(MenuAction a, int dir) {
     if (a == MenuAction::CycleHwdec) {
         hwdec_mode_ = hwdec_mode_ ? 0 : 1;                 // toggle Hardware/Software
         it_.set_setting_int("hwdec", hwdec_mode_);
-        player_.set_hwdec(hwdec_mode_ ? "no" : "auto-copy-safe");
+        player_.set_hwdec(hwdec_mode_str());
         int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         // hwdec is fixed at mpv init, so a live change needs a fresh stream: re-resolve
         // the current video at its position (applies the new decoder immediately).
@@ -4871,6 +4884,14 @@ void App::save_resume_position() {
 
 // Re-resolve the currently-playing video (e.g. after a quality change) and resume
 // at at_seconds once the new stream loads.
+// The mpv "hwdec" value for the current Video Decode setting. On hwdec-capable
+// devices Hardware means the verified v4l2m2m path; elsewhere the historical
+// auto-copy-safe default stands (falls back to software where nothing matches).
+std::string App::hwdec_mode_str() const {
+    if (hwdec_mode_) return "no";
+    return hwdec_capable_ ? "v4l2m2m-copy" : "auto-copy-safe";
+}
+
 // The AudioPrefs.lang value for the next resolve: the per-video override wins,
 // else the global setting ("app" -> the UI language; "orig" -> "" = original).
 std::string App::effective_audio_lang() const {

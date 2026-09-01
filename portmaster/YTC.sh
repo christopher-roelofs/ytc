@@ -29,6 +29,24 @@ cd "$GAMEDIR"
 export LD_LIBRARY_PATH="$GAMEDIR/libs.${DEVICE_ARCH}:$LD_LIBRARY_PATH"
 export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
 
+# Optional hardware decode: offer the lib download once per manifest version
+# (ytc_setup detects the decoder, asks Yes / Not now / Never, writes
+# ./video_decode). "Never" and unsupported devices skip forever; "Not now"
+# asks again next launch; a bumped data/hwdec_version re-offers to everyone
+# else. Installed libs go FIRST on the path so the v4l2 ffmpeg wins.
+VDFILE="$GAMEDIR/video_decode"
+WANTVER=$(cat "$GAMEDIR/data/hwdec_version" 2>/dev/null)
+if [ -x "$GAMEDIR/ytc_setup.${DEVICE_ARCH}" ] && [ -n "$WANTVER" ]; then
+  if ! grep -q "^choice=never" "$VDFILE" 2>/dev/null && \
+     ! grep -q "^manifest=$WANTVER" "$VDFILE" 2>/dev/null && \
+     ! grep -q "^manifest=unsupported" "$VDFILE" 2>/dev/null; then
+    "$GAMEDIR/ytc_setup.${DEVICE_ARCH}"
+  fi
+fi
+if grep -q "^choice=installed" "$VDFILE" 2>/dev/null && [ -d "$GAMEDIR/libs.hwdec" ]; then
+  export LD_LIBRARY_PATH="$GAMEDIR/libs.hwdec:$LD_LIBRARY_PATH"
+fi
+
 # Handheld-class defaults: cap the ladder at 480p (software decode on
 # small ARM cores; the panel is 480p anyway). Font ships in data/.
 export YTC_MAXHEIGHT=480

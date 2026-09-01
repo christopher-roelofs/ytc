@@ -658,7 +658,9 @@ private:
     double playback_speed_ = 1.0;   // per-video playback speed (resets to 1.0 each video)
     int  volume_ = 100;             // app-local volume % (0..150), persisted "volume"
     unsigned volume_overlay_until_ = 0;  // deadline to show the volume indicator
-    int  hwdec_mode_ = 0;           // 0 = Hardware (auto-copy-safe), 1 = Software; "hwdec"
+    int  hwdec_mode_ = 0;           // 0 = Hardware, 1 = Software; "hwdec"
+    bool hwdec_capable_ = false;    // device decoder + v4l2m2m libavcodec both present
+    std::string hwdec_mode_str() const;   // hwdec_mode_ -> mpv "hwdec" value
     int  aspect_mode_ = 0;          // 0 = Fit (bars), 1 = Zoom (crop), 2 = Stretch; "aspect"
     // Multi-audio (dub) preferences. Global default (settings.json "audio_lang"):
     // "app" = match the UI language, "orig" = original track, or a language code.
