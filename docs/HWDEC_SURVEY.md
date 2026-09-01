@@ -22,16 +22,18 @@ busybox sh (muOS and ROCKNIX ship no bash) and keys off, strongest first:
 
 ## Conclusions
 
-- Both ROCKNIX targets decode via **mainline v4l2m2m** (Venus / Hantro), so a
-  single optional bundle — ffmpeg built with v4l2m2m + matching libmpv, used
-  as mpv `hwdec=v4l2m2m-copy` — covers Adreno AND Rockchip ROCKNIX devices.
-  Copy-mode keeps decoded frames CPU-visible, so the render-only libmpv and
-  the GLES2 path are untouched and no GPU-vendor surface import is involved.
-- The bundle matrix therefore collapses to: `software` (current, everywhere)
-  and `v4l2` (optional). No per-GPU .so downloads needed for these devices.
-- RK3566's Hantro has **no VP9** — hwdec there is H264-only. Our format
-  picker already prefers H264, so the ladders mostly line up; must not fall
-  back silently to broken VP9 hwdec (use `-copy` + mpv's software fallback).
+- **CORRECTION (verified on hardware 2026-08-31):** only STATEFUL v4l2
+  decoders work with ffmpeg's `v4l2_m2m` — the OUTPUT queue must accept
+  full-frame `H264`. Venus (RP5) is stateful and works (~24x less CPU at
+  1080p30 than software, ffmpeg 6.1; ROCKNIX's own ffmpeg 6.0 crashes).
+  The X55's `rk3568-vpu-dec` (Hantro) is STATELESS (`H264_SLICE`, V4L2
+  Request API) — mainline ffmpeg reports "could not find a valid device"
+  and mpv falls back to software. Supporting it would need LibreELEC-style
+  request-API ffmpeg patches (out of scope for now). Detection therefore
+  probes statefulness via VIDIOC_ENUM_FMT (src/hwdetect.h), not just names.
+- The optional `v4l2` bundle (ffmpeg 6.1 + v4l2m2m, mpv `hwdec=v4l2m2m-copy`)
+  covers stateful-decoder devices; copy-mode keeps frames CPU-visible so the
+  render-only libmpv and GLES2 path are untouched, GPU vendor irrelevant.
 - muOS H616/H700 exposes no decode devnodes: keep software decode and hide
   the Video Decode toggle there (detection makes that honest).
 - rkmpp (RK3588 vendor path) is out of scope for the port bundle — that's the

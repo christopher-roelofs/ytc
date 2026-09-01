@@ -109,7 +109,9 @@ static void write_state(const hwdetect::Info& hw, const std::string& choice,
                         const std::string& manifest_ver) {
     std::ofstream o("video_decode");
     o << "soc=" << hw.soc << "\n" << "gpu=" << hw.gpu << "\n"
-      << "decoder=" << hw.decoder << "\n" << "choice=" << choice << "\n";
+      << "decoder=" << hw.decoder << "\n";
+    if (!hw.stateless.empty()) o << "stateless=" << hw.stateless << "\n";
+    o << "choice=" << choice << "\n";
     if (!manifest_ver.empty()) o << "manifest=" << manifest_ver << "\n";
 }
 
@@ -129,8 +131,9 @@ int main(int argc, char** argv) {
     }
 
     hwdetect::Info hw = hwdetect::detect();
-    std::fprintf(stderr, "[setup] soc=%s gpu=%s decoder=%s\n",
-                 hw.soc.c_str(), hw.gpu.c_str(), hw.decoder.c_str());
+    std::fprintf(stderr, "[setup] soc=%s gpu=%s decoder=%s stateless=%s\n",
+                 hw.soc.c_str(), hw.gpu.c_str(), hw.decoder.c_str(),
+                 hw.stateless.c_str());
 
     // No decode hardware: record that so YTC.sh never asks again on this device.
     if (!hw.has_decoder()) { write_state(hw, "never", "unsupported"); return 0; }
