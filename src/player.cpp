@@ -307,6 +307,11 @@ double Player::position() const { return impl_->prop_d("time-pos"); }
 double Player::duration() const { return impl_->prop_d("duration"); }
 double Player::cached_until() const { return impl_->prop_d("demuxer-cache-time"); }
 
+std::string Player::hwdec_current() const {
+    if (!impl_->mpv || !impl_->loaded) return "";
+    return impl_->prop_str("hwdec-current");
+}
+
 std::vector<std::string> Player::stats_lines() const {
     std::vector<std::string> out;
     if (!impl_->mpv || !impl_->loaded) return out;
@@ -376,5 +381,6 @@ double Player::position() const { return 0; }
 double Player::duration() const { return 0; }
 double Player::cached_until() const { return 0; }
 std::vector<std::string> Player::stats_lines() const { return {}; }
+std::string Player::hwdec_current() const { return ""; }
 } // namespace ui
 #endif

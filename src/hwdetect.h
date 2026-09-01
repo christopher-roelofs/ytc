@@ -3,9 +3,11 @@
 // ytc_setup (to pick the right lib bundle to offer). Mirrors tools/gpu_probe.sh;
 // the survey behind the heuristics lives in docs/HWDEC_SURVEY.md.
 #pragma once
+#include "../third_party/json.hpp"
 #include <dirent.h>
 #include <fstream>
 #include <string>
+#include <vector>
 #ifdef __linux__
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -93,6 +95,74 @@ inline Info detect() {
             if (out.stateless.empty()) out.stateless = name;
         }
         closedir(d);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Manifest contract (data/hwdec_manifest.json, shipped with the port). Each
+// bundle declares how to tell the device qualifies ("detect"), which
+// libavcodec decoder proves the right libs are loaded ("check"), and what mpv
+// "hwdec" value Hardware means for it ("hwdec"), plus the files to fetch.
+// Both ytc_setup (to offer/download) and the app (to enable/map the toggle)
+// resolve bundles through this — the app never reads setup's output; it
+// probes hardware + loaded libs itself and only takes the NAMES from here.
+// Adding a backend = libs on a release + a bundle entry; no binary change
+// unless a genuinely new detect primitive is needed.
+// ---------------------------------------------------------------------------
+struct BundleFile { std::string name, sha256, url; long long size = 0; };
+struct Bundle {
+    std::string key, desc, detect, check, hwdec;
+    std::vector<BundleFile> files;
+    long long total_size = 0;
+    bool valid() const { return !key.empty(); }
+};
+
+// Detect primitives. Keep this list tiny and documented in the manifest.
+//   v4l2-stateful     a v4l2 decoder whose bitstream queue takes full-frame H264
+//   v4l2-stateless    a Request-API decoder (recorded, unusable by mainline ffmpeg)
+//   devnode:<path>    that device node exists (e.g. devnode:/dev/mpp_service)
+inline bool matches(const Info& hw, const std::string& spec) {
+    if (spec == "v4l2-stateful")  return hw.has_decoder();
+    if (spec == "v4l2-stateless") return !hw.stateless.empty();
+    if (spec.rfind("devnode:", 0) == 0) {
+#ifdef __linux__
+        return access(spec.substr(8).c_str(), F_OK) == 0;
+#else
+        return false;
+#endif
+    }
+    return false;
+}
+
+// Parse the manifest; returns the first bundle whose detect primitive the
+// device satisfies (the manifest's declared order is the priority order).
+// version_out gets the manifest version ("" if unreadable). Invalid Bundle if
+// nothing applies or the file is missing.
+inline Bundle pick_bundle(const Info& hw, const std::string& manifest_path,
+                          std::string* version_out = nullptr) {
+    Bundle out;
+    std::ifstream mf(manifest_path);
+    if (!mf) return out;
+    nlohmann::json m = nlohmann::json::parse(mf, nullptr, false);
+    if (m.is_discarded() || !m.is_object()) return out;
+    if (version_out) *version_out = std::to_string(m.value("version", 0));
+    nlohmann::json bundles = m.value("bundles", nlohmann::json::object());
+    for (auto it = bundles.begin(); it != bundles.end(); ++it) {
+        const nlohmann::json& b = it.value();
+        if (!b.is_object() || !matches(hw, b.value("detect", ""))) continue;
+        out.key = it.key();
+        out.desc = b.value("desc", "");
+        out.detect = b.value("detect", "");
+        out.check = b.value("check", "");
+        out.hwdec = b.value("hwdec", "");
+        for (const auto& f : b.value("files", nlohmann::json::array())) {
+            BundleFile x{f.value("name", ""), f.value("sha256", ""), f.value("url", "")};
+            x.size = f.value("size", 0LL);
+            out.total_size += x.size;
+            out.files.push_back(std::move(x));
+        }
+        break;
     }
     return out;
 }

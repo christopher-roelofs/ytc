@@ -107,8 +107,12 @@ Design rules:
 ```
 ./configure --prefix=$HOME/mpvbuild/prefix-clean --enable-shared --disable-static \
   --disable-programs --disable-doc --disable-avdevice \
-  --disable-rkmpp --disable-vaapi --disable-v4l2-m2m --disable-vdpau \
-  --disable-lzma --disable-bzlib
+  --disable-rkmpp --disable-vaapi --disable-vdpau \
+  --disable-lzma --disable-bzlib --enable-v4l2-m2m
+# v4l2-m2m has NO external deps (kernel headers only) and is what drives
+# stateful v4l2 decoders (Qualcomm Venus/Iris, Amlogic vdec) via mpv
+# hwdec=v4l2m2m-copy — so it ships in the base bundle since 2026-09-01.
+# Devices without a stateful decoder just fail to open it and fall back.
 make -j8 && make install
 # verify: readelf -d prefix-clean/lib/libavcodec.so.60 | grep NEEDED  (no rkmpp/drm/lzma)
 ```

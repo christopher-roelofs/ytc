@@ -8,8 +8,8 @@
 //
 // It records the outcome in ./video_decode (the port root — this binary runs
 // with GAMEDIR as cwd):
-//     soc=/gpu=/decoder=   detection details (informational)
-//     choice=installed|declined|never
+//     soc=/gpu=/decoder=/stateless=/bundle=/hwdec=   detection details (informational)
+//     choice=installed|declined|never|builtin
 //     manifest=<version>   written on install; YTC.sh re-prompts when the
 //                          shipped data/hwdec_version no longer matches
 // "Not now" writes no manifest= line, so the prompt returns next launch.
@@ -103,14 +103,18 @@ static std::string of_file(const std::string& path) {
 
 // ---------------------------------------------------------------------------
 
-struct ManifestFile { std::string name, sha, url; long long size = 0; };
-
+// Everything here is for YTC.sh (prompt suppression, lib path) and for humans
+// reading hardware reports. The app does NOT read this file — it resolves the
+// same manifest itself against the live hardware and loaded libs.
 static void write_state(const hwdetect::Info& hw, const std::string& choice,
-                        const std::string& manifest_ver) {
+                        const std::string& manifest_ver,
+                        const hwdetect::Bundle& bundle = {}) {
     std::ofstream o("video_decode");
     o << "soc=" << hw.soc << "\n" << "gpu=" << hw.gpu << "\n"
       << "decoder=" << hw.decoder << "\n";
     if (!hw.stateless.empty()) o << "stateless=" << hw.stateless << "\n";
+    if (bundle.valid()) o << "bundle=" << bundle.key << "\n"
+                          << "hwdec=" << bundle.hwdec << "\n";
     o << "choice=" << choice << "\n";
     if (!manifest_ver.empty()) o << "manifest=" << manifest_ver << "\n";
 }
@@ -135,35 +139,24 @@ int main(int argc, char** argv) {
                  hw.soc.c_str(), hw.gpu.c_str(), hw.decoder.c_str(),
                  hw.stateless.c_str());
 
-    // No decode hardware: record that so YTC.sh never asks again on this device.
-    if (!hw.has_decoder()) { write_state(hw, "never", "unsupported"); return 0; }
-
-    // Manifest: pick the bundle whose "when" substrings match the decoder name.
+    // Resolve the bundle through the shared manifest contract (same resolver the
+    // app uses): the first bundle whose detect primitive this device satisfies.
+    // None (no decode hardware, or nothing we can drive) -> record unsupported
+    // so YTC.sh never asks again on this device.
     std::string manifest_ver;
-    std::vector<ManifestFile> files;
-    long long total_size = 0;
-    {
-        std::ifstream mf("data/hwdec_manifest.json");
-        json m = json::parse(mf, nullptr, false);
-        if (m.is_discarded()) { std::fprintf(stderr, "[setup] bad manifest\n"); return 1; }
-        manifest_ver = std::to_string(m.value("version", 0));
-        json bundles = m.value("bundles", json::object());   // keep alive: items()
-                                                             // must not iterate a temporary
-        for (auto& [key, b] : bundles.items()) {
-            bool match = false;
-            for (const auto& w : b.value("when", json::array()))
-                if (hw.decoder.find(w.get<std::string>()) != std::string::npos) match = true;
-            if (!match) continue;
-            for (const auto& f : b.value("files", json::array())) {
-                ManifestFile x{f.value("name",""), f.value("sha256",""), f.value("url","")};
-                x.size = f.value("size", 0LL);
-                total_size += x.size;
-                files.push_back(std::move(x));
-            }
-            break;
-        }
+    hwdetect::Bundle bundle = hwdetect::pick_bundle(hw, "data/hwdec_manifest.json", &manifest_ver);
+    if (manifest_ver.empty()) { std::fprintf(stderr, "[setup] bad/missing manifest\n"); return 1; }
+    if (!bundle.valid()) { write_state(hw, "never", "unsupported"); return 0; }
+    if (bundle.files.empty()) {
+        // The matched backend ships in the base libs (e.g. v4l2m2m): nothing to
+        // download, nothing to ask. Record it (manifest= keeps YTC.sh quiet).
+        write_state(hw, "builtin", manifest_ver, bundle);
+        return 0;
     }
-    if (files.empty()) { write_state(hw, "never", "unsupported"); return 0; }
+    const std::vector<hwdetect::BundleFile>& files = bundle.files;
+    long long total_size = bundle.total_size;
+    std::fprintf(stderr, "[setup] bundle=%s hwdec=%s check=%s\n",
+                 bundle.key.c_str(), bundle.hwdec.c_str(), bundle.check.c_str());
 
     // ---- decide (UI or flags) ----
     int choice = -1;   // 0 yes, 1 not now, 2 never
@@ -269,14 +262,14 @@ int main(int argc, char** argv) {
     }
 
     if (choice == 1) { write_state(hw, "declined", ""); return 0; }
-    if (choice == 2) { write_state(hw, "never", manifest_ver); return 0; }
+    if (choice == 2) { write_state(hw, "never", manifest_ver, bundle); return 0; }
 
     // ---- download + verify + atomic install ----
     mkdir("libs.hwdec.part", 0755);
     bool ok = true;
     HttpClient http;
     for (size_t i = 0; i < files.size() && ok; ++i) {
-        const ManifestFile& f = files[i];
+        const hwdetect::BundleFile& f = files[i];
         std::string dest = "libs.hwdec.part/" + f.name;
         char st[160];
         snprintf(st, sizeof st, "Downloading %s (%zu/%zu)...", f.name.c_str(),
@@ -284,13 +277,13 @@ int main(int argc, char** argv) {
         status = st; progress = 0; draw(true);
         std::fprintf(stderr, "[setup] %s\n", st);
         // Skip re-downloading a leftover that already verifies (resumed setup).
-        if (sha256::of_file(dest) != f.sha) {
+        if (sha256::of_file(dest) != f.sha256) {
             ok = http.download(f.url, dest, {},
                 [&](long long dn, long long tot) {
                     if (tot > 0) { progress = (float)dn / (float)tot; draw(true); }
                     return true;
                 });
-            if (ok && sha256::of_file(dest) != f.sha) {
+            if (ok && sha256::of_file(dest) != f.sha256) {
                 std::fprintf(stderr, "[setup] SHA-256 mismatch: %s\n", f.name.c_str());
                 ok = false;
             }
@@ -304,7 +297,7 @@ int main(int argc, char** argv) {
         else    ::rename("libs.hwdec.old", "libs.hwdec");
     }
     if (ok) {
-        write_state(hw, "installed", manifest_ver);
+        write_state(hw, "installed", manifest_ver, bundle);
         status = "Installed. Hardware decode is ready."; progress = -1;
     } else {
         write_state(hw, "declined", "");            // failed: offer again next launch

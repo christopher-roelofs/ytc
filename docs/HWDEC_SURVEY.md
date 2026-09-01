@@ -39,7 +39,19 @@ busybox sh (muOS and ROCKNIX ship no bash) and keys off, strongest first:
 - rkmpp (RK3588 vendor path) is out of scope for the port bundle — that's the
   build host, not a target.
 
-## Outcome (2026-08-31): shipped for stateful devices; stateless PARKED
+## Outcome (2026-08-31, revised 2026-09-01): shipped for stateful devices; stateless PARKED
+
+**Revision 2026-09-01 — v4l2m2m folded into the base bundle.** It has no
+external deps (kernel headers only), so `libs.aarch64` now IS the v4l2 ffmpeg
+build and the RP5-class devices get hardware decode with no download and no
+prompt. The app detects it standalone (`src/hwdetect.h` ioctl probe +
+`avcodec_has_decoder("h264_v4l2m2m")` against the loaded libs) and shows the
+Video Decode toggle at startup. The manifest's `v4l2` bundle stays as the
+contract record with an EMPTY file list (= built in; `ytc_setup` records
+`choice=builtin`). The ytc_setup download flow (dormant, NOT shipped — see docs/HWDEC_SETUP_FLOW.md) is reserved for backends that
+carry real extra baggage (rkmpp: librockchip_mpp; request-API: libudev +
+patched libmpv) — the PortMaster side. Desktop parity: macOS asserts
+VideoToolbox; other desktops learn from mpv's hwdec-current (`hwdec_seen`).
 
 The plan above shipped: ffmpeg 6.1 with `--enable-v4l2-m2m` built on the Pi,
 the six libs hosted as GitHub release `hwdec-v1` (hashes pinned in the port's

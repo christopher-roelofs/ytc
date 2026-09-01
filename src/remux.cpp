@@ -14,8 +14,8 @@ namespace ytn {
 
 bool remux_available() { return true; }
 
-bool hwdec_v4l2_available() {
-    return avcodec_find_decoder_by_name("h264_v4l2m2m") != nullptr;
+bool avcodec_has_decoder(const std::string& name) {
+    return !name.empty() && avcodec_find_decoder_by_name(name.c_str()) != nullptr;
 }
 
 namespace {
@@ -132,7 +132,7 @@ bool remux_to_mp4(const std::string& video_path, const std::string& audio_path,
 
 namespace ytn {
 bool remux_available() { return false; }
-bool hwdec_v4l2_available() { return false; }
+bool avcodec_has_decoder(const std::string&) { return false; }
 bool remux_to_mp4(const std::string&, const std::string&, const std::string&) { return false; }
 } // namespace ytn
 

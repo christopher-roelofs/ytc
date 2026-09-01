@@ -659,7 +659,10 @@ private:
     int  volume_ = 100;             // app-local volume % (0..150), persisted "volume"
     unsigned volume_overlay_until_ = 0;  // deadline to show the volume indicator
     int  hwdec_mode_ = 0;           // 0 = Hardware, 1 = Software; "hwdec"
-    bool hwdec_capable_ = false;    // device decoder + v4l2m2m libavcodec both present
+    bool hwdec_capable_ = false;    // a manifest bundle's detect + check both pass
+    std::string hwdec_hw_value_ = "auto-copy-safe";  // mpv "hwdec" for Hardware mode
+                                                     // (from the matched bundle)
+    bool hwdec_probed_this_video_ = false;  // learned hwdec-current for this video yet?
     std::string hwdec_mode_str() const;   // hwdec_mode_ -> mpv "hwdec" value
     int  aspect_mode_ = 0;          // 0 = Fit (bars), 1 = Zoom (crop), 2 = Stretch; "aspect"
     // Multi-audio (dub) preferences. Global default (settings.json "audio_lang"):

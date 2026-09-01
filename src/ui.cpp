@@ -330,12 +330,46 @@ App::App(const std::string& config_path, gfx::Window* win)
     ask_resume_ = it_.setting_int("ask_resume", 1) != 0;   // default ON
     volume_ = it_.setting_int("volume", 100);              // app-local playback volume %
     if (volume_ < 0) volume_ = 0; if (volume_ > 150) volume_ = 150;
-    // Hardware decode is real only when the device has a v4l2 decoder AND the
-    // loaded libavcodec provides v4l2m2m (the optional hwdec bundle from
-    // ytc_setup). Then the toggle appears in Settings > Video and "Hardware"
-    // maps to v4l2m2m-copy; everywhere else the old auto-copy-safe default
-    // stands (harmless: mpv falls back to software when nothing matches).
-    hwdec_capable_ = ytn::hwdec_v4l2_available() && hwdetect::detect().has_decoder();
+    // Hardware decode detection — self-contained in the app; no data file or
+    // launcher state is required. The toggle appears only where hardware decode
+    // is REAL, established in this order:
+    //  1. Built-in backend: a STATEFUL v4l2 decoder on the device (ioctl-verified)
+    //     + the v4l2m2m decoder in the libavcodec we loaded (it ships in the
+    //     base bundle) -> hwdec=v4l2m2m-copy. Verified: Retroid Pocket 5 (Venus).
+    //  2. Optional downloadable backends: data/hwdec_manifest.json (the
+    //     PortMaster side — ytc_setup fetches libs; the app never reads setup's
+    //     output, it just re-probes hardware + loaded libs with the manifest's
+    //     names). Absent manifest = nothing extra, never an error.
+    //  3. macOS: VideoToolbox is universal -> auto-copy-safe is hardware there.
+    //  4. Learned: mpv's hwdec-current showed a hardware method here before
+    //     (desktop VAAPI etc.), persisted as "hwdec_seen".
+    // Everywhere else the historical auto-copy-safe default stands (mpv falls
+    // back to software harmlessly), with the toggle hidden.
+    {
+        hwdetect::Info hwi = hwdetect::detect();
+        std::string via;
+        if (hwi.has_decoder() && ytn::avcodec_has_decoder("h264_v4l2m2m")) {
+            hwdec_capable_ = true; hwdec_hw_value_ = "v4l2m2m-copy"; via = "builtin-v4l2";
+        } else {
+            std::string mpath = platform::exe_dir() + "/data/hwdec_manifest.json";
+            if (!std::ifstream(mpath).good()) mpath = "data/hwdec_manifest.json";
+            hwdetect::Bundle hb = hwdetect::pick_bundle(hwi, mpath);
+            if (hb.valid() && !hb.hwdec.empty() && !hb.files.empty() &&
+                ytn::avcodec_has_decoder(hb.check)) {
+                hwdec_capable_ = true; hwdec_hw_value_ = hb.hwdec; via = "bundle:" + hb.key;
+            }
+        }
+#ifdef __APPLE__
+        if (!hwdec_capable_) { hwdec_capable_ = true; via = "videotoolbox"; }
+#endif
+        if (!hwdec_capable_ && !it_.setting_str("hwdec_seen", "").empty()) {
+            hwdec_capable_ = true; via = "learned:" + it_.setting_str("hwdec_seen", "");
+        }
+        if (getenv("YTC_DEBUG"))
+            std::fprintf(stderr, "[hwdec] decoder=%s stateless=%s capable=%d hwdec=%s via=%s\n",
+                         hwi.decoder.c_str(), hwi.stateless.c_str(), (int)hwdec_capable_,
+                         hwdec_hw_value_.c_str(), via.empty() ? "none" : via.c_str());
+    }
     hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
     player_.set_hwdec(hwdec_mode_str());
     aspect_mode_ = it_.setting_int("aspect", 0);           // 0 fit / 1 zoom / 2 stretch
@@ -3481,6 +3515,22 @@ void App::pump_async() {
     poll_comments();
     poll_download();
     poll_sponsorblock();
+    // Runtime hwdec truth: once the decoder is up, mpv says what it actually
+    // uses. If a hardware method is active on a device with no manifest bundle
+    // (desktop VideoToolbox/VAAPI), remember it so Settings > Video shows the
+    // toggle from now on — the same "only when it's real" rule, learned live.
+    if (mode_ == Mode::Playing && !hwdec_probed_this_video_) {
+        std::string cur = player_.hwdec_current();
+        if (!cur.empty()) {
+            hwdec_probed_this_video_ = true;
+            if (cur != "no" && !hwdec_capable_) {
+                hwdec_capable_ = true;
+                it_.set_setting_str("hwdec_seen", cur);
+                if (getenv("YTC_DEBUG"))
+                    std::fprintf(stderr, "[hwdec] learned hardware decode: %s\n", cur.c_str());
+            }
+        }
+    }
     poll_captions();
     poll_caption_download();
     // A caption fetch failed earlier: surface it now that the menu is down.
@@ -4885,11 +4935,11 @@ void App::save_resume_position() {
 // Re-resolve the currently-playing video (e.g. after a quality change) and resume
 // at at_seconds once the new stream loads.
 // The mpv "hwdec" value for the current Video Decode setting. On hwdec-capable
-// devices Hardware means the verified v4l2m2m path; elsewhere the historical
-// auto-copy-safe default stands (falls back to software where nothing matches).
+// devices Hardware means the matched bundle's hwdec (e.g. v4l2m2m-copy);
+// elsewhere the historical auto-copy-safe default stands (software fallback).
 std::string App::hwdec_mode_str() const {
     if (hwdec_mode_) return "no";
-    return hwdec_capable_ ? "v4l2m2m-copy" : "auto-copy-safe";
+    return hwdec_hw_value_;   // the matched bundle's value, else auto-copy-safe
 }
 
 // The AudioPrefs.lang value for the next resolve: the per-video override wins,
@@ -5047,6 +5097,7 @@ void App::poll_resolve() {
     now_playing_desc_ = r.description;          // free: came with the resolve
     playing_audio_tracks_ = std::move(r.audio_tracks);
     playing_audio_lang_ = r.audio_lang;
+    hwdec_probed_this_video_ = false;           // re-learn hwdec-current per video
     playing_paced_ = r.paced;
     playing_vbitrate_ = r.video_bitrate;
     played_max_ = start_at;                     // seek window anchors here

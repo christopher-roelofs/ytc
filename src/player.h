@@ -72,6 +72,9 @@ public:
 
     // "Stats for nerds" — a few decode/stream properties as "Label: value" lines.
     std::vector<std::string> stats_lines() const;
+    // mpv "hwdec-current": "" until the decoder is up, then "no" (software) or
+    // the active hardware method (e.g. "videotoolbox-copy", "v4l2m2m-copy").
+    std::string hwdec_current() const;
 
 private:
     struct Impl;
