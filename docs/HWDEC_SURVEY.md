@@ -71,5 +71,28 @@ Revisit triggers: (a) the request-API hwaccel lands in mainline ffmpeg, or
 (b) user hardware reports (`tools/gpu_probe.sh`, `stateless=` lines) show
 stateless-decoder devices are a large share of the audience.
 
+## Ecosystem outlook (researched 2026-08-31 — UNVERIFIED, expectations only)
+
+ROCKNIX (2026 stable) supports ~66 devices across Rockchip (RK3326 / RK3566 /
+RK3588 / RK3399), Qualcomm (SM6115 / SM8250 / SM8550 / SM8650), Allwinner
+H700, and Amlogic S922X. muOS 2601 covers eleven Anbernic H700 models plus
+TrimUI Brick/Smart Pro (Allwinner A133P). Expected hwdec status per family,
+assuming our stateful-H264 ioctl detection:
+
+| SoC family | Example devices | Decoder | Expected verdict |
+|---|---|---|---|
+| Qualcomm SM8250 | Retroid Pocket 5 / Pocket Mini | Venus (stateful) | **works — VERIFIED** |
+| Qualcomm SM8550/SM8650 | AYN Odin 2 line, Retroid Pocket 6, AYN Thor, AYANEO Pocket S2/ACE, KONKR Pocket FIT | **Iris** — stateful V4L2, mainline since ~6.15, H264/HEVC/VP9 | **expected to work with the existing v4l2 bundle unchanged** (v4l2-compliance reports it a stateful decoder) |
+| Qualcomm SM6115 | budget Adreno 610 devices | Venus family | probably works (unverified) |
+| Amlogic S922X | ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro | meson vdec — stateful (kernel staging), H264/MPEG2/VP9 | plausible; staging-quality caveats, and mpv#8884 reports poor meson-vdec H264 — needs a real device test |
+| Rockchip RK3326/RK3399/RK3566 | RG351x, RG353x, RGB30, X55, ODROID-Go Advance | rkvdec / Hantro — stateless | software (X55 VERIFIED) |
+| Rockchip RK3588 | GameForce Ace, CM5 modules | rkvdec2 not mainline (vendor rkmpp only) | software |
+| Allwinner H700 / A133P | Anbernic RG35XX/RG40XX/RG34XX/CubeXX, TrimUI Brick/Smart Pro | cedrus — stateless (muOS doesn't even expose it) | software (muOS H700 VERIFIED) |
+
+Headline: the entire modern Qualcomm handheld wave (8 Gen 2/3 class) uses the
+stateful Iris driver, so the highest-value upcoming devices should light up
+with the bundle we already ship — the ioctl detection will confirm per device
+via user hardware reports. The stateless story stays parked as above.
+
 Device access for future sessions: RP5 at 192.168.86.246, X55 at .36 (both
 root/rocknix, DHCP — may move); muOS at .245 (root/root); Pi at .243.
