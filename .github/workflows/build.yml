@@ -33,18 +33,25 @@ jobs:
             ca-certificates git cmake ninja-build nasm pkg-config build-essential \
             patchelf python3-pip curl \
             libsdl2-dev libglew-dev libgl1-mesa-dev libcurl4-openssl-dev \
-            libass-dev libfribidi-dev libharfbuzz-dev libfreetype6-dev libdav1d-dev
+            libass-dev libfribidi-dev libharfbuzz-dev libfreetype6-dev libdav1d-dev \
+            libva-dev libdrm-dev
           # bullseye's meson (0.56) is too old for mpv 0.36 (needs >=0.62); use pip's.
           pip3 install --upgrade meson
       - uses: actions/checkout@v4
       - name: Build minimal FFmpeg 6.1 (matches mpv 0.36; decoders + mp4 mux, no encoders)
         run: |
+          # --enable-vaapi: hardware decode on Linux desktops (Intel/AMD incl. the
+          # Steam Deck) — the app's hwdec probe and mpv's auto-copy-safe both go
+          # through libavcodec's VAAPI hwaccel, so without it every desktop is
+          # software-only. libva itself is NOT bundled (must match the host's VA
+          # driver); it's a runtime dependency like Mesa. libdrm for DRM hwcontext.
           git clone --depth 1 -b n6.1 https://github.com/FFmpeg/FFmpeg ff
           cd ff
           ./configure --prefix="$GITHUB_WORKSPACE/ffout" \
             --disable-programs --disable-doc --disable-debug --disable-devices \
             --disable-encoders --disable-muxers --enable-muxer=mp4,mov,ipod \
-            --enable-libdav1d --enable-shared --disable-static
+            --enable-libdav1d --enable-vaapi --enable-libdrm --enable-shared --disable-static
+          grep -E "CONFIG_(VAAPI|H264_VAAPI_HWACCEL)=yes" ffbuild/config.mak
           make -j"$(nproc)"
           make install
       - name: Build minimal libmpv (0.36, classic vo_gpu -> no libplacebo/shaderc)
@@ -77,6 +84,7 @@ jobs:
               libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|ld-linux*|\
               libgcc_s.so*|libstdc++.so*|\
               libGL.so*|libGLX*|libEGL*|libGLdispatch*|libOpenGL*|libglapi*|libgbm*|libdrm*|\
+              libva.so*|libva-drm*|libva-x11*|libva-wayland*|\
               libX11*|libxcb*|libXext*|libXau*|libXdmcp*|libXrandr*|libXrender*|libXfixes*|\
               libXi*|libXcursor*|libXinerama*|libXss*|libXxf86vm*|\
               libwayland*|libxkbcommon*) : ;;
