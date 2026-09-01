@@ -4,6 +4,7 @@
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/mathematics.h>
 }
 #include <cstdio>
@@ -16,6 +17,24 @@ bool remux_available() { return true; }
 
 bool avcodec_has_decoder(const std::string& name) {
     return !name.empty() && avcodec_find_decoder_by_name(name.c_str()) != nullptr;
+}
+
+std::string probe_hw_device() {
+    const AVCodec* h264 = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (!h264) return "";
+    for (int i = 0;; ++i) {
+        const AVCodecHWConfig* cfg = avcodec_get_hw_config(h264, i);
+        if (!cfg) break;
+        if (!(cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) continue;
+        AVBufferRef* ref = nullptr;
+        if (av_hwdevice_ctx_create(&ref, cfg->device_type, nullptr, nullptr, 0) == 0) {
+            const char* n = av_hwdevice_get_type_name(cfg->device_type);
+            av_buffer_unref(&ref);
+            RXLOG("hw device available: %s\n", n ? n : "?");
+            return n ? n : "";
+        }
+    }
+    return "";
 }
 
 namespace {
@@ -133,6 +152,7 @@ bool remux_to_mp4(const std::string& video_path, const std::string& audio_path,
 namespace ytn {
 bool remux_available() { return false; }
 bool avcodec_has_decoder(const std::string&) { return false; }
+std::string probe_hw_device() { return ""; }
 bool remux_to_mp4(const std::string&, const std::string&, const std::string&) { return false; }
 } // namespace ytn
 

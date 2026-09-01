@@ -15,6 +15,15 @@ bool remux_available();
 // hwdetect this gates the Video Decode toggle. Always false without libav.
 bool avcodec_has_decoder(const std::string& name);
 
+// Probe for a usable hardware-decode DEVICE without playing anything: walks the
+// H264 decoder's compiled-in hw configs (VAAPI, VDPAU, VideoToolbox, D3D11,
+// CUDA, ...) and tries to create each device context — for VAAPI that is a real
+// vaInitialize on the render node. Returns the first device type name that
+// initializes ("vaapi", "videotoolbox", ...) or "" if none. Fast (ms). The
+// handheld ffmpeg builds have no hw device types, so this is "" there; v4l2m2m
+// is a decoder, not a device, and is detected separately.
+std::string probe_hw_device();
+
 // Combine video_path + audio_path into out_path (.mp4), stream-copy. Returns false
 // on any failure (and leaves no valid output). If audio_path is empty, only the
 // video stream is written. Blocking; call from a worker thread.

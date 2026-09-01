@@ -663,6 +663,16 @@ private:
     std::string hwdec_hw_value_ = "auto-copy-safe";  // mpv "hwdec" for Hardware mode
                                                      // (from the matched bundle)
     bool hwdec_probed_this_video_ = false;  // learned hwdec-current for this video yet?
+    // Startup detection runs on a worker (the desktop hw-device probe does a real
+    // vaInitialize; must not sit on the first-frame path). poll_hwdec_detect()
+    // applies the result on the UI thread; until then the auto-copy-safe default
+    // stands, which is what mpv would pick anyway.
+    std::thread hwdec_thread_;
+    std::atomic<bool> hwdec_detect_done_{false};
+    bool hwdec_det_capable_ = false;        // worker results (read after done flag)
+    std::string hwdec_det_value_, hwdec_det_via_;
+    void start_hwdec_detect();
+    void poll_hwdec_detect();
     std::string hwdec_mode_str() const;   // hwdec_mode_ -> mpv "hwdec" value
     int  aspect_mode_ = 0;          // 0 = Fit (bars), 1 = Zoom (crop), 2 = Stretch; "aspect"
     // Multi-audio (dub) preferences. Global default (settings.json "audio_lang"):
