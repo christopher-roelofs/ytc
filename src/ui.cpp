@@ -1233,7 +1233,7 @@ void App::adjust_setting(MenuAction a, int dir) {
     if (a == MenuAction::CycleFilterSort)     { cycle(filt_sort_, 3);     return; }
     if (a == MenuAction::ToggleStats) {
         stats_for_nerds_ = !stats_for_nerds_;
-        int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label in place
+        int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;   // rebuild label in place
         return;
     }
     if (a == MenuAction::ToggleHideRestricted) {
@@ -1315,7 +1315,7 @@ void App::adjust_setting(MenuAction a, int dir) {
             cc_sel_ = (cc_sel_ + dir + (n + 1)) % (n + 1);   // 0=Off, 1..n tracks; wraps
             apply_caption_selection();
         }
-        int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label
+        int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;   // rebuild label
         return;
     }
     if (a == MenuAction::CycleSpeed) {
@@ -1325,7 +1325,7 @@ void App::adjust_setting(MenuAction a, int dir) {
         cur = (cur + dir + n) % n;
         playback_speed_ = steps[cur];
         if (mode_ == Mode::Playing) player_.set_speed(playback_speed_);
-        int keep = menu_sel_; open_menu(); menu_sel_ = keep;    // rebuild label in place
+        int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;    // rebuild label in place
         return;
     }
     if (a == MenuAction::CycleHwdec) {
@@ -1380,13 +1380,20 @@ void App::adjust_setting(MenuAction a, int dir) {
             audio_override_lang_ = playing_audio_tracks_[idx].lang;
             audio_dirty_ = true;             // re-resolve with the new track on menu close
         }
-        int keep = menu_sel_; open_menu(); menu_sel_ = keep;   // rebuild label
+        int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;   // rebuild label
         return;
     }
     if (a == MenuAction::CycleAspect) {
+        if (player_menu_kind(menu_kind_)) {
+            // Player menu: this video only — live, never saved.
+            aspect_override_ = ((effective_aspect() + dir) % 3 + 3) % 3;
+            player_.set_aspect(aspect_override_);
+            int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;
+            return;
+        }
         aspect_mode_ = ((aspect_mode_ + dir) % 3 + 3) % 3;     // Fit -> Zoom -> Stretch, wraps
         it_.set_setting_int("aspect", aspect_mode_);
-        player_.set_aspect(aspect_mode_);        // mpv property change: applies live
+        player_.set_aspect(effective_aspect());  // mpv property change: applies live
         int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;
         return;
     }
@@ -1403,17 +1410,20 @@ void App::adjust_setting(MenuAction a, int dir) {
         static const int steps[] = {360, 480, 720, 1080, 1440, 2160, 0 /* Auto */};
         int n = (int)(sizeof(steps)/sizeof(steps[0]));
         int cur = 0;
-        for (int i = 0; i < n; ++i) if (steps[i] == play_prefs_.max_height) { cur = i; break; }
+        int from = player_menu_kind(menu_kind_) ? effective_max_height() : play_prefs_.max_height;
+        for (int i = 0; i < n; ++i) if (steps[i] == from) { cur = i; break; }
         cur = ((cur + dir) % n + n) % n;
+        if (player_menu_kind(menu_kind_)) {
+            // Player menu: this video only — the global Max Quality setting is
+            // untouched. Re-resolve at the new quality when the menu closes.
+            quality_override_ = steps[cur];
+            if (mode_ == Mode::Playing) quality_dirty_ = true;
+            int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;
+            return;
+        }
         play_prefs_.max_height = steps[cur];
         it_.set_setting_int("max_height", play_prefs_.max_height);
-        // Rebuild the current menu so the label updates in place.
-        int keep = menu_sel_;
-        reopen_settings_menu();
-        menu_sel_ = keep;
-        // In the player options menu, mark the change so we re-resolve the current
-        // video (at the new quality, resuming the position) when the menu closes.
-        if (menu_kind_ == MenuKind::Context && mode_ == Mode::Playing) quality_dirty_ = true;
+        int keep = menu_sel_; reopen_settings_menu(); menu_sel_ = keep;   // relabel in place
     }
     // Future bool settings toggle here (dir flips the value).
 }
@@ -1601,8 +1611,8 @@ void App::poll_captions() {
     maybe_start_cc_list();
     // The player options menu may be open showing "Captions: Loading..." — the
     // list just landed, so rebuild it in place with the real state.
-    if (menu_open_ && menu_kind_ == MenuKind::Context && mode_ == Mode::Playing) {
-        int keep = menu_sel_; open_menu(); menu_sel_ = keep;
+    if (menu_open_ && player_menu_kind(menu_kind_) && mode_ == Mode::Playing) {
+        int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;
     }
 }
 // Apply the current caption selection WITHOUT blocking: Off hides; an already-cached
@@ -1677,8 +1687,8 @@ void App::poll_caption_download() {
             // see it before it expires, leaving a mysterious "Captions: Off". The
             // frame loop shows it once the menu is closed.
             cc_fail_pending_ = true;
-            if (menu_open_ && menu_kind_ == MenuKind::Context) {   // relabel the row: Off
-                int keep = menu_sel_; open_menu(); menu_sel_ = keep;
+            if (menu_open_ && player_menu_kind(menu_kind_)) {   // relabel the row: Off
+                int keep = menu_sel_; reopen_player_menu(); menu_sel_ = keep;
             }
         }
     } else {
@@ -2231,6 +2241,7 @@ void App::open_menu() {
         if (!t.post_id.empty())
             menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
     } else if (t.is_playlist()) {
+        // Order everywhere: collect -> learn about it -> go/do -> heavy actions.
         bool pfav = fav_pl_ids_.count(t.playlist_id) > 0;
         menu_items_.push_back({tr(pfav ? S::RemovePlaylistFav : S::AddPlaylistFav),
                                MenuAction::FavoritePlaylistToggle});
@@ -2241,6 +2252,8 @@ void App::open_menu() {
         if (!t.channel_id.empty())
             menu_items_.push_back({tr(S::ShowChannelDescription),
                                    MenuAction::ShowChannelDescription});
+        if (!t.channel_id.empty())
+            menu_items_.push_back({tr(S::GoToChannel), MenuAction::OpenChannel});
     } else if (t.is_channel()) {
         bool fav = fav_ids_.count(t.channel_id) > 0;
         menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
@@ -2258,62 +2271,42 @@ void App::open_menu() {
         }
         menu_items_.push_back({tr(S::MenuRemoveDownload), MenuAction::RemoveDownload});
     } else {
+        // Order everywhere: collect -> learn about it -> go/do -> heavy actions.
+        // While playing, Playback (the per-video knobs) leads: it's the reason
+        // the menu gets opened mid-video.
+        if (mode_ == Mode::Playing)
+            menu_items_.push_back({tr(S::SetPlaybackMenu), MenuAction::GoPlayback});
+        // collect
+        bool wl = wl_ids_.count(t.video_id) > 0;
+        menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
+                               MenuAction::WatchLaterToggle});
         if (!t.channel_id.empty()) {
             bool fav = fav_ids_.count(t.channel_id) > 0;
             menu_items_.push_back({tr(fav ? S::RemoveFavorite : S::AddFavorite),
                                    MenuAction::FavoriteToggle});
         }
-        bool wl = wl_ids_.count(t.video_id) > 0;
-        menu_items_.push_back({tr(wl ? S::RemoveWatchLater : S::AddWatchLater),
-                               MenuAction::WatchLaterToggle});
-        if (!t.video_id.empty())
-            menu_items_.push_back({tr(S::MenuCastToDevice), MenuAction::CastToDevice});
+        // learn about it
         if (!t.video_id.empty())
             menu_items_.push_back({tr(S::ShowDescription), MenuAction::ShowDescription});
         if (!t.video_id.empty())
             menu_items_.push_back({tr(S::MenuShowComments), MenuAction::ShowComments});
+        if (!t.channel_id.empty())
+            menu_items_.push_back({tr(S::ShowChannelDescription),
+                                   MenuAction::ShowChannelDescription});
+        if (!subview_playlist_.empty() && mode_ != Mode::Playing)   // playlist screens only
+            menu_items_.push_back({tr(S::ShowPlaylistDescription),
+                                   MenuAction::ShowPlaylistDescription});
+        // go / do
+        if (mode_ != Mode::Playing && !t.channel_id.empty())
+            menu_items_.push_back({tr(S::GoToChannel), MenuAction::OpenChannel});
+        if (!t.video_id.empty())
+            menu_items_.push_back({tr(S::MenuCastToDevice), MenuAction::CastToDevice});
+        // heavy: download last (Remove Download in its place once downloaded)
         if (!t.video_id.empty())
             menu_items_.push_back({tr(dl_ids_.count(t.video_id) ? S::MenuRemoveDownload
                                                                 : S::MenuDownload),
                                    dl_ids_.count(t.video_id) ? MenuAction::RemoveDownload
                                                              : MenuAction::DownloadVideo});
-        // Channel description on every video tile with a known uploader.
-        if (!t.channel_id.empty())
-            menu_items_.push_back({tr(S::ShowChannelDescription),
-                                   MenuAction::ShowChannelDescription});
-        // The browsed playlist's description (playlist screens only).
-        if (!subview_playlist_.empty() && mode_ != Mode::Playing)
-            menu_items_.push_back({tr(S::ShowPlaylistDescription),
-                                   MenuAction::ShowPlaylistDescription});
-        // Quality + Speed + Stats (Left/Right) — only for the playing video.
-        if (mode_ == Mode::Playing) {
-            menu_items_.push_back({tr(S::MenuQuality) + std::string(":  ")
-                                   + quality_label(play_prefs_.max_height),
-                                   MenuAction::CycleMaxQuality});
-            char sb[24]; std::snprintf(sb, sizeof sb, ":  %gx", playback_speed_);
-            menu_items_.push_back({tr(S::MenuSpeed) + std::string(sb), MenuAction::CycleSpeed});
-            std::string cc = std::string(tr(S::MenuCaptions)) + ":  ";
-            if (cc_tracks_.empty()) cc += cc_running_ ? tr(S::Loading) : tr(S::CcNone);
-            else if (cc_sel_ <= 0) cc += tr(S::Off);
-            else cc += cc_tracks_[cc_sel_ - 1].name;   // track title, localized by YouTube (hl)
-            menu_items_.push_back({cc, MenuAction::CycleCaptions});
-            // Audio (dub) track — only when the video actually has alternatives.
-            if (playing_audio_tracks_.size() > 1) {
-                std::string cur = audio_override_lang_.empty() ? playing_audio_lang_
-                                                               : audio_override_lang_;
-                std::string tname;
-                for (const auto& at : playing_audio_tracks_)
-                    if (at.lang == cur) { tname = at.name; break; }
-                if (tname.empty()) tname = cur;
-                menu_items_.push_back({tr(S::MenuAudioTrack) + std::string(":  ") + tname,
-                                       MenuAction::CycleAudioTrack});
-            }
-            menu_items_.push_back({tr(S::MenuStats) + std::string(":  ")
-                                   + tr(stats_for_nerds_ ? S::Enabled : S::Disabled),
-                                   MenuAction::ToggleStats});
-        }
-        if (mode_ != Mode::Playing && !t.channel_id.empty())
-            menu_items_.push_back({tr(S::GoToChannel), MenuAction::OpenChannel});
     }
     }  // end have_item
     // Clear the whole watch history — only from a tile in the History view.
@@ -2326,6 +2319,48 @@ void App::open_menu() {
     if (mode_ == Mode::Playing && !player_.paused()) { player_.set_pause(true); menu_paused_ = true; }
     menu_open_ = true;
 }
+// Player options > Playback: the per-video value rows. Left/Right cycles them
+// (overrides that never touch Settings); B returns to the options menu, and
+// closing THAT still performs the deferred re-resolve for quality/audio changes.
+void App::open_player_playback() {
+    using i18n::tr; using S = i18n::Str;
+    menu_kind_ = MenuKind::PlayerPlayback;
+    menu_items_.clear();
+    menu_items_.push_back({tr(S::MenuQuality) + std::string(":  ")
+                           + quality_label(effective_max_height()),
+                           MenuAction::CycleMaxQuality});
+    const S aname[] = {S::AspectFit, S::AspectZoom, S::AspectStretch};
+    menu_items_.push_back({tr(S::SetAspect) + std::string(":  ") + tr(aname[effective_aspect()]),
+                           MenuAction::CycleAspect});
+    char sb[24]; std::snprintf(sb, sizeof sb, ":  %gx", playback_speed_);
+    menu_items_.push_back({tr(S::MenuSpeed) + std::string(sb), MenuAction::CycleSpeed});
+    std::string cc = std::string(tr(S::MenuCaptions)) + ":  ";
+    if (cc_tracks_.empty()) cc += cc_running_ ? tr(S::Loading) : tr(S::CcNone);
+    else if (cc_sel_ <= 0) cc += tr(S::Off);
+    else cc += cc_tracks_[cc_sel_ - 1].name;   // track title, localized by YouTube (hl)
+    menu_items_.push_back({cc, MenuAction::CycleCaptions});
+    // Audio (dub) track — only when the video actually has alternatives.
+    if (playing_audio_tracks_.size() > 1) {
+        std::string cur = audio_override_lang_.empty() ? playing_audio_lang_
+                                                       : audio_override_lang_;
+        std::string tname;
+        for (const auto& at : playing_audio_tracks_)
+            if (at.lang == cur) { tname = at.name; break; }
+        if (tname.empty()) tname = cur;
+        menu_items_.push_back({tr(S::MenuAudioTrack) + std::string(":  ") + tname,
+                               MenuAction::CycleAudioTrack});
+    }
+    menu_items_.push_back({tr(S::MenuStats) + std::string(":  ")
+                           + tr(stats_for_nerds_ ? S::Enabled : S::Disabled),
+                           MenuAction::ToggleStats});
+    menu_sel_ = 0;
+    menu_open_ = true;    // (player already paused by the options menu)
+}
+void App::reopen_player_menu() {
+    if (menu_kind_ == MenuKind::PlayerPlayback) open_player_playback();
+    else open_menu();
+}
+
 void App::menu_activate() {
     if (menu_sel_ < 0 || menu_sel_ >= (int)menu_items_.size()) return;
     const yt::SearchResult t = menu_target_;   // copy (open_channel may replace results)
@@ -2485,6 +2520,7 @@ void App::menu_activate() {
         case MenuAction::GoSettingsPlayback: open_settings_playback(); return;
         case MenuAction::GoSettingsBrowsing: open_settings_browsing(); return;
         case MenuAction::GoHomeFeedMenu:     open_settings_homefeed(); return;
+        case MenuAction::GoPlayback:         open_player_playback();   return;
         case MenuAction::AddSearchToFeed: {
             yt::FeedSource s;
             s.query = query_;
@@ -3267,19 +3303,7 @@ void App::input(Action a) {
             case Action::Right: {
                 if (menu_sel_ >= n) break;
                 MenuAction act = menu_items_[menu_sel_].action;
-                if (act == MenuAction::CycleMaxQuality || act == MenuAction::ToggleStats ||
-                    act == MenuAction::ToggleHideRestricted ||
-                    act == MenuAction::ToggleAskResume || act == MenuAction::CycleView ||
-                    act == MenuAction::CycleVolume || act == MenuAction::CycleHwdec ||
-                    act == MenuAction::CycleAspect || act == MenuAction::CycleAudioLang ||
-                    act == MenuAction::CycleCaptionLang || act == MenuAction::CycleAudioTrack ||
-                    act == MenuAction::CycleCaptionSize || act == MenuAction::CycleCaptionStyle ||
-                    act == MenuAction::CycleSpeed || act == MenuAction::ToggleSponsorBlock ||
-                    act == MenuAction::CycleCaptions || act == MenuAction::ToggleAutoplay ||
-                    act == MenuAction::ToggleFeedFavorites || act == MenuAction::ToggleFeedHistory ||
-                    act == MenuAction::ToggleFeedCustom || act == MenuAction::CycleLanguage ||
-                    act == MenuAction::CycleFilterType || act == MenuAction::CycleFilterDuration ||
-                    act == MenuAction::CycleFilterDate || act == MenuAction::CycleFilterSort)
+                if (is_value_action(act))
                     adjust_setting(act, a == Action::Right ? +1 : -1);
                 break;
             }
@@ -3290,6 +3314,10 @@ void App::input(Action a) {
                 break;
             case Action::Back:
             case Action::Menu:
+                if (menu_kind_ == MenuKind::PlayerPlayback) {     // Playback -> options
+                    open_menu();
+                    break;
+                }
                 if (menu_kind_ == MenuKind::FeedRemoveConfirm) {  // cancel -> the list
                     feed_remove_idx_ = -1; open_feed_manage();
                     break;
@@ -3651,6 +3679,37 @@ void App::render(gfx::Renderer& rn) {
     else if (cast_manage_open_ && mode_ != Mode::Search) render_manage_devices(rn);
 }
 
+// Rows whose A press opens another page (submenu / modal) rather than acting.
+// Rows whose value cycles with Left/Right (A does nothing). ONE list, used by
+// input handling, the footer hint, and the "‹ value ›" rendering.
+bool App::is_value_action(MenuAction a) {
+    using A = MenuAction;
+    switch (a) {
+        case A::CycleMaxQuality: case A::ToggleStats: case A::ToggleHideRestricted:
+        case A::ToggleAskResume: case A::CycleView: case A::CycleVolume: case A::CycleHwdec:
+        case A::CycleAspect: case A::CycleAudioLang: case A::CycleCaptionLang:
+        case A::CycleAudioTrack: case A::CycleCaptionSize: case A::CycleCaptionStyle:
+        case A::CycleSpeed: case A::ToggleSponsorBlock: case A::CycleCaptions:
+        case A::ToggleAutoplay: case A::ToggleFeedFavorites: case A::ToggleFeedHistory:
+        case A::ToggleFeedCustom: case A::CycleLanguage: case A::CycleFilterType:
+        case A::CycleFilterDuration: case A::CycleFilterDate: case A::CycleFilterSort:
+            return true;
+        default: return false;
+    }
+}
+
+bool App::is_submenu_action(MenuAction a) {
+    using A = MenuAction;
+    switch (a) {
+        case A::GoSettings: case A::GoSettingsAudio: case A::GoSettingsVideo:
+        case A::GoSettingsCaptions: case A::GoSettingsPlayback: case A::GoSettingsBrowsing:
+        case A::GoHomeFeedMenu: case A::GoCustomFeed: case A::GoLinkedDevices:
+        case A::GoPlayback: case A::OpenSearchFilters:
+            return true;
+        default: return false;
+    }
+}
+
 void App::render_menu(gfx::Renderer& rn) {
     const int W = win_->width(), H = win_->height();
     float s = H / 720.f;
@@ -3661,6 +3720,7 @@ void App::render_menu(gfx::Renderer& rn) {
     // context menu; widen that panel to keep values from crowding the edge.
     float iw = std::min((settings_kind(menu_kind_) ||
                          menu_kind_ == MenuKind::FeedManage ||
+                         menu_kind_ == MenuKind::PlayerPlayback ||
                          menu_kind_ == MenuKind::SearchFilters ? 620.f : 560.f)*s, W*0.86f);
     float ih = 58*s, gap = 8*s;
     float title_h = 56*s, foot_h = 34*s;                 // reserve the footer inside the panel
@@ -3693,6 +3753,8 @@ void App::render_menu(gfx::Renderer& rn) {
                           ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetBrowsingMenu)
                         : (menu_kind_ == MenuKind::SettingsHomeFeed)
                           ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetHomeFeed)
+                        : (menu_kind_ == MenuKind::PlayerPlayback)
+                          ? std::string(i18n::tr(i18n::Str::SetPlaybackMenu))
                         : (menu_kind_ == MenuKind::FeedManage)
                           ? std::string(i18n::tr(i18n::Str::SetCustomFeed))
                         : (menu_kind_ == MenuKind::FeedRemoveConfirm)
@@ -3710,20 +3772,48 @@ void App::render_menu(gfx::Renderer& rn) {
         bool sel = (i == menu_sel_);
         rn.quad({px, iy, iw, ih}, sel ? theme_.card_sel : theme_.card);
         if (sel) rn.quad({px, iy, 4*s, ih}, theme_.accent);
-        rn.text(*font_body_, font_body_->ellipsize(menu_items_[i].label, iw - 36*s),
-                px + 18*s, iy + (ih-font_body_->line_height())/2 + 3*s,
-                sel ? theme_.text : theme_.text_dim);
+        {
+            const std::string& lbl = menu_items_[i].label;
+            float ty = iy + (ih-font_body_->line_height())/2 + 3*s;
+            gfx::Color tc = sel ? theme_.text : theme_.text_dim;
+            size_t sep = is_value_action(menu_items_[i].action) ? lbl.find(":  ") : std::string::npos;
+            if (sep == std::string::npos) {
+                rn.text(*font_body_, font_body_->ellipsize(lbl, iw - 36*s), px + 18*s, ty, tc);
+            } else {
+                // Value row: label left, "‹ value ›" right-aligned. The chevrons say
+                // "Left/Right cycles this" per row — the footer only says it in
+                // general, and submenu rows already carry their own › marker.
+                std::string label = lbl.substr(0, sep);
+                std::string value = lbl.substr(sep + 3);
+                const char* lch = "\xE2\x80\xB9";   // ‹ U+2039
+                const char* rch = "\xE2\x80\xBA";   // › U+203A
+                float lw = font_body_->text_width(label);
+                float chw = font_body_->text_width(lch);
+                float right = px + iw - 18*s;
+                float avail = right - (px + 18*s + lw + 24*s) - 2*(chw + 8*s);
+                if (avail < 40*s) avail = 40*s;
+                value = font_body_->ellipsize(value, avail);
+                float vw = font_body_->text_width(value);
+                rn.text(*font_body_, label, px + 18*s, ty, tc);
+                rn.text(*font_body_, rch, right - chw, ty, theme_.text_dim);
+                rn.text(*font_body_, value, right - chw - 8*s - vw, ty, tc);
+                rn.text(*font_body_, lch, right - chw - 8*s - vw - 8*s - chw, ty, theme_.text_dim);
+            }
+        }
+        // Submenu rows get a trailing chevron: on a gamepad UI there's no hover to
+        // tell "A opens a page" from "A does the thing", and value rows already
+        // read differently ("Label:  Value").
+        if (is_submenu_action(menu_items_[i].action)) {
+            const char* chev = "\xE2\x80\xBA";   // U+203A ›
+            rn.text(*font_body_, chev,
+                    px + iw - 18*s - font_body_->text_width(chev),
+                    iy + (ih-font_body_->line_height())/2 + 3*s,
+                    sel ? theme_.text : theme_.text_dim);
+        }
         iy += ih + gap;
     }
     bool has_value = false;
-    for (auto& it : menu_items_)
-        if (it.action == MenuAction::CycleMaxQuality || it.action == MenuAction::ToggleStats ||
-            it.action == MenuAction::ToggleHideRestricted ||
-            it.action == MenuAction::ToggleAskResume || it.action == MenuAction::CycleView ||
-            it.action == MenuAction::CycleVolume || it.action == MenuAction::CycleHwdec ||
-            it.action == MenuAction::CycleAspect || it.action == MenuAction::CycleAudioLang ||
-            it.action == MenuAction::CycleCaptionLang || it.action == MenuAction::CycleAudioTrack)
-            has_value = true;
+    for (auto& it : menu_items_) if (is_value_action(it.action)) has_value = true;
     const char* foot = (menu_kind_ == MenuKind::FeedManage) ? i18n::tr(i18n::Str::FooterManage)
                      : (menu_kind_ == MenuKind::FeedRemoveConfirm) ? i18n::tr(i18n::Str::FooterMenuPlain)
                      : (settings_kind(menu_kind_) || menu_kind_ == MenuKind::SearchFilters)
@@ -4762,6 +4852,8 @@ void App::request_playback() {
     playback_speed_ = 1.0;                       // per-video: speed back to normal
     audio_override_lang_.clear();                // per-video: back to the global default
     audio_dirty_ = false;
+    quality_override_ = -1; quality_dirty_ = false;   // per-video Quality/Aspect overrides end
+    if (aspect_override_ >= 0) { aspect_override_ = -1; player_.set_aspect(aspect_mode_); }
     cc_restore_key_.clear();                     // new video: captions start Off
     cc_failed_langs_.clear();                    // new video: failures forgotten
     // (replay_current, used for quality changes, does NOT reset these -> speed persists
@@ -4795,6 +4887,8 @@ void App::play_item(const yt::SearchResult& v, int index) {
     playback_speed_ = 1.0;
     audio_override_lang_.clear();   // per-video track choice ends with its video
     audio_dirty_ = false;
+    quality_override_ = -1; quality_dirty_ = false;
+    if (aspect_override_ >= 0) { aspect_override_ = -1; player_.set_aspect(aspect_mode_); }
     cc_restore_key_.clear();        // new video: captions start Off
     cc_failed_langs_.clear();       // new video: failures forgotten
     start_resolve(v.video_id, v.title, 0);
@@ -5006,6 +5100,7 @@ void App::start_resolve(const std::string& video_id, const std::string& title, d
 
     std::string fallback_title = title;
     yt::VideoPrefs prefs = play_prefs_;
+    prefs.max_height = effective_max_height();   // per-video Quality override, if any
     yt::AudioPrefs aprefs; aprefs.lang = effective_audio_lang();
     resolve_running_ = true;
     resolve_done_ = false;

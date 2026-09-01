@@ -272,6 +272,7 @@ private:
                             AddSearchToFeed, GoCustomFeed, FeedSourceRow,
                             FeedRemoveYes, FeedRemoveNo, GoHomeFeedMenu,
                             ToggleFeedFavorites, ToggleFeedHistory, ToggleFeedCustom,
+                            GoPlayback,
                             ToggleSponsorBlock, CycleCaptions, ToggleAutoplay,
                             CycleLanguage, ClearHistory, CastToDevice,
                             GoLinkedDevices, DownloadVideo, RemoveDownload, GoDownloads,
@@ -280,7 +281,14 @@ private:
     enum class MenuKind { Context, Main, Settings, SearchFilters,
                           SettingsAudio, SettingsVideo, SettingsCaptions,
                           SettingsPlayback, SettingsBrowsing, SettingsHomeFeed,
-                          FeedManage, FeedRemoveConfirm };
+                          FeedManage, FeedRemoveConfirm,
+                          PlayerPlayback };   // player options > Playback (per-video knobs)
+    // The player options menu or its Playback page (per-video override rows).
+    static bool is_submenu_action(MenuAction a);   // row opens a page (draw a chevron)
+    static bool is_value_action(MenuAction a);     // row cycles a value with Left/Right
+    bool player_menu_kind(MenuKind k) const {
+        return k == MenuKind::Context || k == MenuKind::PlayerPlayback;
+    }
     // Any of the Settings pages (top level or a submenu)?
     bool settings_kind(MenuKind k) const {
         return k == MenuKind::Settings || k == MenuKind::SettingsAudio ||
@@ -645,6 +653,12 @@ private:
     unsigned controls_until_ = 0;   // deadline (SDL ticks) to keep the info overlay shown
     double resume_pos_ = 0;         // seek here once the next stream loads (quality re-resolve)
     bool quality_dirty_ = false;    // quality changed in the player menu; re-resolve on close
+    // Per-video overrides from the player options menu (NOT persisted; the global
+    // Settings values are untouched and return on the next video). -1 = none.
+    int quality_override_ = -1;     // max_height for THIS video (0 = Auto)
+    int aspect_override_ = -1;      // 0 Fit / 1 Zoom / 2 Stretch for THIS video
+    int effective_max_height() const { return quality_override_ >= 0 ? quality_override_ : play_prefs_.max_height; }
+    int effective_aspect() const     { return aspect_override_ >= 0 ? aspect_override_ : aspect_mode_; }
     // Seek debounce: coalesce rapid Left/Right presses into ONE seek so we don't fire a
     // burst of range requests that googlevideo rate-limits (403) -> stall/drop-to-grid.
     double pending_seek_ = 0;       // accumulated relative seek (seconds), not yet applied
@@ -701,6 +715,9 @@ private:
     void open_settings_homefeed();  // Browsing > Home Feed: source toggles
     int feed_remove_idx_ = -1;      // source pending removal (FeedRemoveConfirm)
     void reopen_settings_menu();    // rebuild whichever settings page is current
+    void open_player_playback();    // player options > Playback: Quality/Aspect/Speed/
+                                    // Captions/Audio Track/Stats (per-video, unsaved)
+    void reopen_player_menu();      // rebuild the player menu page that is current
     std::string now_playing_title_;
     yt::SearchResult now_playing_item_;   // context for the player options menu
     std::string status_msg_;
