@@ -361,8 +361,14 @@ App::App(const std::string& config_path, gfx::Window* win)
 
     // Default quality cap: 1080p (not 4K). Persisted in settings.json (Settings menu);
     // YTC_MAXHEIGHT overrides for testing (0 = uncapped).
-    play_prefs_.max_height = it_.setting_int("max_height", 1080);
-    if (const char* mh = getenv("YTC_MAXHEIGHT")) play_prefs_.max_height = atoi(mh);
+    // YTC_MAXHEIGHT (the port launcher exports 480 for handhelds) is the DEFAULT
+    // when the user hasn't chosen a Max Quality yet — not an override, or the
+    // Settings choice would silently reset to 480p on every launch.
+    {
+        const char* mh = getenv("YTC_MAXHEIGHT");
+        int def = mh ? atoi(mh) : 1080;
+        play_prefs_.max_height = it_.setting_int("max_height", def);
+    }
 }
 
 App::~App() {

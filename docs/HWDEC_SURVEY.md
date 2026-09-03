@@ -88,7 +88,7 @@ stateless-decoder devices are a large share of the audience.
 | Device | CFW / kernel | SoC | GPU | Video decoder (v4l2) | Result |
 |---|---|---|---|---|---|
 | Retroid Pocket 5 | ROCKNIX 20260701 / 7.0.11 | `qcom,sm8250` | Adreno (msm_dpu, mesa) | `qcom-venus-decoder` | **hardware (verified)** |
-| **Mangmi Air X** | ROCKNIX 20260801 / 7.1.2 | `mangmi,sm6115-air-x-mq66` / `qcom,sm6115` | Adreno 610 (msm_dpu, mesa) | `qcom-venus-decoder` (on video1; encoder is video0) | decoder node present (Venus family, should be stateful) — **UNCONFIRMED in playback**: owner reports no obvious hardware-decode effect; needs Stats-for-Nerds `Decode:` + `YTC_DEBUG` log (see below) |
+| **Mangmi Air X** | ROCKNIX 20260801 / 7.1.2 | `mangmi,sm6115-air-x-mq66` / `qcom,sm6115` | Adreno 610 (msm_dpu, mesa) | `qcom-venus-decoder` (on video1; encoder is video0) | **hardware (verified)** — Stats: `Decode: v4l2m2m-copy`, decoder drops 0 at 1080p60 H264. Ceiling: at 1080p60 the presentation path (copy-mode memcpy + GL upload + Adreno 610 render) drops ~1400 frames/min and A/V drifts +1 s — decoder fine, pipeline not. Practical max 720p60 on this SoC. |
 | Powkiddy X55 | ROCKNIX 20260701 / 7.0.2 | `rockchip,rk3566` | Mali blob | `rk3568-vpu-dec` (stateless) + `rga` | software (verified) |
 | Anbernic RG353M-class ("rgb30" DTB reports `anbernic,rg353m`) | Debian 13 vendor kernel 5.10.226 | `rockchip,rk3566` | Mali blob | none as v4l2 — `/dev/mpp_service` only (vendor rkmpp) | software — rkmpp path, parked |
 | Anbernic RG351V | AmberELEC 20250515 / 4.4.189 | `rockchip,rk3326` | Mali blob | none | software |
@@ -102,6 +102,11 @@ Takeaways:
   exactly where hardware decode is plausible. The Mangmi Air X decoder sitting
   on `video1` (encoder on `video0`) is handled because detection matches by
   name, not node index.
+- **Copy-mode has a ceiling on budget SoCs**: the Air X proves decode is not the
+  bottleneck at 1080p60 (dec drops 0) — the memcpy + texture upload + render
+  path is. Zero-copy (libmpv with EGL dmabuf import so Venus frames go straight
+  to the GPU) would lift it on the mesa devices; larger project, parked. The
+  port's 480p default cap already keeps such devices in their comfort zone.
 - **GPU load is NOT the indicator** for hardware decode: Venus is a separate
   video engine, and in copy mode the Adreno does nothing special (texture
   upload only). Confirm with Stats for Nerds' `Decode:` line or CPU load.
@@ -134,7 +139,7 @@ assuming our stateful-H264 ioctl detection:
 |---|---|---|---|
 | Qualcomm SM8250 | Retroid Pocket 5 / Pocket Mini | Venus (stateful) | **works — VERIFIED** |
 | Qualcomm SM8550/SM8650 | AYN Odin 2 line, Retroid Pocket 6, AYN Thor, AYANEO Pocket S2/ACE, KONKR Pocket FIT | **Iris** — stateful V4L2, mainline since ~6.15, H264/HEVC/VP9 | **expected to work with the existing v4l2 bundle unchanged** (v4l2-compliance reports it a stateful decoder) |
-| Qualcomm SM6115 | Mangmi Air X (and other Adreno 610 handhelds) | Venus (stateful family) — decoder node confirmed by field report | plausible; playback effect unconfirmed (see field reports) |
+| Qualcomm SM6115 | Mangmi Air X (and other Adreno 610 handhelds) | Venus (stateful) | **works — VERIFIED** (copy-path ceiling ~720p60; see field reports) |
 | Amlogic S922X | ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro | meson vdec — stateful (kernel staging), H264/MPEG2/VP9 | plausible; staging-quality caveats, and mpv#8884 reports poor meson-vdec H264 — needs a real device test |
 | Rockchip RK3326/RK3399/RK3566 | RG351x, RG353x, RGB30, X55, ODROID-Go Advance | rkvdec / Hantro — stateless | software (X55 VERIFIED) |
 | Rockchip RK3588 | GameForce Ace, CM5 modules | rkvdec2 not mainline (vendor rkmpp only) | software |
