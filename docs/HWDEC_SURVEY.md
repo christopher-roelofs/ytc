@@ -83,6 +83,45 @@ Revisit triggers: (a) the request-API hwaccel lands in mainline ffmpeg, or
 (b) user hardware reports (`tools/gpu_probe.sh`, `stateless=` lines) show
 stateless-decoder devices are a large share of the audience.
 
+## Field reports (2026-09-02, via `tools/gpu_probe.sh` from users)
+
+| Device | CFW / kernel | SoC | GPU | Video decoder (v4l2) | Result |
+|---|---|---|---|---|---|
+| Retroid Pocket 5 | ROCKNIX 20260701 / 7.0.11 | `qcom,sm8250` | Adreno (msm_dpu, mesa) | `qcom-venus-decoder` | **hardware (verified)** |
+| **Mangmi Air X** | ROCKNIX 20260801 / 7.1.2 | `mangmi,sm6115-air-x-mq66` / `qcom,sm6115` | Adreno 610 (msm_dpu, mesa) | `qcom-venus-decoder` (on video1; encoder is video0) | decoder node present (Venus family, should be stateful) — **UNCONFIRMED in playback**: owner reports no obvious hardware-decode effect; needs Stats-for-Nerds `Decode:` + `YTC_DEBUG` log (see below) |
+| Powkiddy X55 | ROCKNIX 20260701 / 7.0.2 | `rockchip,rk3566` | Mali blob | `rk3568-vpu-dec` (stateless) + `rga` | software (verified) |
+| Anbernic RG353M-class ("rgb30" DTB reports `anbernic,rg353m`) | Debian 13 vendor kernel 5.10.226 | `rockchip,rk3566` | Mali blob | none as v4l2 — `/dev/mpp_service` only (vendor rkmpp) | software — rkmpp path, parked |
+| Anbernic RG351V | AmberELEC 20250515 / 4.4.189 | `rockchip,rk3326` | Mali blob | none | software |
+| Anbernic RG35XX H | muOS 2606 / 4.9.170 | `allwinner,h616` | Mali blob | none | software |
+| Anbernic RG40XX V | muOS 2601 / 4.9.170 | `allwinner,h616` | Mali blob | none | software |
+| Anbernic RG CubeXX | KNULLI (Batocera 42) / 4.9.170 | `allwinner,h616` | Mali blob | none | software |
+| TrimUI Smart Pro S | KNULLI (Batocera 42) / 5.15.147 | `allwinner,a523` (sun55iw3) | Mali blob (sunxi-drm) | none | software |
+
+Takeaways:
+- **Detection held on every report** — no false positives; the decoder nodes are
+  exactly where hardware decode is plausible. The Mangmi Air X decoder sitting
+  on `video1` (encoder on `video0`) is handled because detection matches by
+  name, not node index.
+- **GPU load is NOT the indicator** for hardware decode: Venus is a separate
+  video engine, and in copy mode the Adreno does nothing special (texture
+  upload only). Confirm with Stats for Nerds' `Decode:` line or CPU load.
+  Diagnosing the Air X: (1) latest port zip (base libs carry v4l2m2m);
+  (2) Settings > Video shows the Video Decode toggle? (absent = detection
+  said no: old libs or ioctl-not-stateful); (3) Stats for Nerds `Decode:`
+  (`v4l2m2m-copy` vs `software`); (4) over SSH, `YTC_DEBUG=1` launch —
+  the `[hwdec]` line plus any mpv `driver decode error` / fallback lines.
+  A stateful node that fails at stream-on (firmware, HFI1 quirks on the
+  SM6115 Venus) falls back to software silently — mpv's safety net.
+- **Allwinner is uniformly software** across H616 (muOS, KNULLI) and the newer
+  **A523** (TrimUI Smart Pro S — not A133P as first assumed): no CFW exposes cedrus.
+- **Rockchip splits by kernel**: mainline (ROCKNIX) exposes a stateless Hantro;
+  vendor 5.10 kernels (that Debian RG353M/RGB30 build) expose only `mpp_service`.
+  Neither is usable by our v4l2m2m path; both would need the parked backends
+  (request-API and rkmpp respectively). RK3326 on AmberELEC's 4.4 kernel exposes
+  nothing at all.
+- **ROCKNIX kernels moved fast**: 6.19 in January, 7.0.x/7.1.x by summer 2026.
+  Venus on SM8250 has been stable across all of them.
+
 ## Ecosystem outlook (researched 2026-08-31 — UNVERIFIED, expectations only)
 
 ROCKNIX (2026 stable) supports ~66 devices across Rockchip (RK3326 / RK3566 /
@@ -95,11 +134,11 @@ assuming our stateful-H264 ioctl detection:
 |---|---|---|---|
 | Qualcomm SM8250 | Retroid Pocket 5 / Pocket Mini | Venus (stateful) | **works — VERIFIED** |
 | Qualcomm SM8550/SM8650 | AYN Odin 2 line, Retroid Pocket 6, AYN Thor, AYANEO Pocket S2/ACE, KONKR Pocket FIT | **Iris** — stateful V4L2, mainline since ~6.15, H264/HEVC/VP9 | **expected to work with the existing v4l2 bundle unchanged** (v4l2-compliance reports it a stateful decoder) |
-| Qualcomm SM6115 | budget Adreno 610 devices | Venus family | probably works (unverified) |
+| Qualcomm SM6115 | Mangmi Air X (and other Adreno 610 handhelds) | Venus (stateful family) — decoder node confirmed by field report | plausible; playback effect unconfirmed (see field reports) |
 | Amlogic S922X | ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro | meson vdec — stateful (kernel staging), H264/MPEG2/VP9 | plausible; staging-quality caveats, and mpv#8884 reports poor meson-vdec H264 — needs a real device test |
 | Rockchip RK3326/RK3399/RK3566 | RG351x, RG353x, RGB30, X55, ODROID-Go Advance | rkvdec / Hantro — stateless | software (X55 VERIFIED) |
 | Rockchip RK3588 | GameForce Ace, CM5 modules | rkvdec2 not mainline (vendor rkmpp only) | software |
-| Allwinner H700 / A133P | Anbernic RG35XX/RG40XX/RG34XX/CubeXX, TrimUI Brick/Smart Pro | cedrus — stateless (muOS doesn't even expose it) | software (muOS H700 VERIFIED) |
+| Allwinner H616/H700 / A133P / A523 | Anbernic RG35XX/RG40XX/RG34XX/CubeXX, TrimUI Brick/Smart Pro (S) | cedrus — stateless, and no CFW exposes it | software (VERIFIED on muOS + KNULLI, H616 and A523) |
 
 Headline: the entire modern Qualcomm handheld wave (8 Gen 2/3 class) uses the
 stateful Iris driver, so the highest-value upcoming devices should light up

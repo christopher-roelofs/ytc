@@ -30,7 +30,7 @@ the hardware can't handle a codec — "Hardware" never breaks playback.
 | Amlogic S922X (ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro) | Plausible — needs a device test |
 | Linux desktops / laptops with VAAPI (Intel, AMD incl. **Steam Deck**), macOS | Expected — verified on Intel UHD 620 |
 | Rockchip RK3326 / RK3566 / RK3588 (RG351x, RG353x, RGB30, X55, GameForce Ace) | Software — stateless decoders, not usable by mainline ffmpeg |
-| Allwinner H700 / A133P (Anbernic RG35XX/RG40XX/RG34XX/CubeXX, TrimUI) | Software — no usable decoder exposed |
+| Allwinner H616/H700 / A133P / A523 (Anbernic RG35XX/RG40XX/RG34XX/CubeXX, TrimUI Brick/Smart Pro) | Software — no usable decoder exposed (confirmed on muOS and KNULLI) |
 
 **Checking what your device does.** During playback, open the options menu and
 enable *Stats for Nerds*: the `Decode:` line shows the active method
