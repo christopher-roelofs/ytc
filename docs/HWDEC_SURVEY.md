@@ -88,7 +88,7 @@ stateless-decoder devices are a large share of the audience.
 | Device | CFW / kernel | SoC | GPU | Video decoder (v4l2) | Result |
 |---|---|---|---|---|---|
 | Retroid Pocket 5 | ROCKNIX 20260701 / 7.0.11 | `qcom,sm8250` | Adreno (msm_dpu, mesa) | `qcom-venus-decoder` | **hardware (verified)** |
-| **Mangmi Air X** | ROCKNIX 20260801 / 7.1.2 | `mangmi,sm6115-air-x-mq66` / `qcom,sm6115` | Adreno 610 (msm_dpu, mesa) | `qcom-venus-decoder` (on video1; encoder is video0) | **hardware (verified)** — Stats: `Decode: v4l2m2m-copy`, decoder drops 0 at 1080p60 H264. Ceiling: at 1080p60 the presentation path (copy-mode memcpy + GL upload + Adreno 610 render) drops ~1400 frames/min and A/V drifts +1 s — decoder fine, pipeline not. Practical max 720p60 on this SoC. |
+| **Mangmi Air X** | ROCKNIX 20260801 / 7.1.2 | `mangmi,sm6115-air-x-mq66` / `qcom,sm6115` | Adreno 610 (msm_dpu, mesa) | `qcom-venus-decoder` (on video1; encoder is video0) | **hardware works but loses to software** — Stats: `Decode: v4l2m2m-copy`, decoder drops 0 at 1080p60 H264, yet ~1400 presentation drops/min and +1 s A/V drift; the owner reports SOFTWARE plays the same 1080p60 video better. Cause: Venus capture buffers are mapped uncached, so copy-mode's per-frame memcpy is slower than the 8 CPU cores decoding into cached memory. **App defaults to Software on `qcom,sm6115`** (toggle available). Zero-copy is the fix. |
 | Powkiddy X55 | ROCKNIX 20260701 / 7.0.2 | `rockchip,rk3566` | Mali blob | `rk3568-vpu-dec` (stateless) + `rga` | software (verified) |
 | Anbernic RG353M-class ("rgb30" DTB reports `anbernic,rg353m`) | Debian 13 vendor kernel 5.10.226 | `rockchip,rk3566` | Mali blob | none as v4l2 — `/dev/mpp_service` only (vendor rkmpp) | software — rkmpp path, parked |
 | Anbernic RG351V | AmberELEC 20250515 / 4.4.189 | `rockchip,rk3326` | Mali blob | none | software |
@@ -102,11 +102,45 @@ Takeaways:
   exactly where hardware decode is plausible. The Mangmi Air X decoder sitting
   on `video1` (encoder on `video0`) is handled because detection matches by
   name, not node index.
-- **Copy-mode has a ceiling on budget SoCs**: the Air X proves decode is not the
-  bottleneck at 1080p60 (dec drops 0) — the memcpy + texture upload + render
-  path is. Zero-copy (libmpv with EGL dmabuf import so Venus frames go straight
-  to the GPU) would lift it on the mesa devices; larger project, parked. The
-  port's 480p default cap already keeps such devices in their comfort zone.
+- **Zero-copy attempted and PARKED (2026-09-04).** Facts established on the RP5:
+  1. Mainline ffmpeg 6.1's `v4l2_m2m` cannot output DRM_PRIME at all (no code
+     for it) — mpv reports "Unsupported hwdec: v4l2m2m" and its `v4l2m2m`
+     (non-copy) name is only a generic table entry. So zero-copy requires the
+     out-of-tree LibreELEC `v4l2-drmprime` ffmpeg patch (libreelec-12.x,
+     ffmpeg 6.0.1; 814 lines, only `libavcodec/v4l2_*` + configure; applies
+     cleanly on its own, no dependency on the request-API series).
+  2. With that patch built (ffmpeg 6.0.1 + libdrm; libmpv 0.36 rebuilt with
+     `-Degl=enabled -Ddrm=enabled` -> features `dmabuf-interop-gl drm egl`,
+     NEEDED gains libdrm.so.2 + libEGL.so.1 which muOS and ROCKNIX both have),
+     the app requesting `hwdec=v4l2m2m,v4l2m2m-copy` **crashed on the RP5**
+     (SIGSEGV on the mpv core thread at decoder init) and dmesg showed the
+     Venus firmware faulting: `SFR message from FW: Exception ... FA = 0x0
+     cause = 0x6`, `System error has occurred, recovery failed to init HFI`.
+  3. Bisected with the patched ffmpeg CLI, no mpv, on freshly rebooted
+     firmware: plain `h264_v4l2m2m` (software formats) decodes fine, but
+     `-init_hw_device drm -hwaccel drm` (the patch's DRM_PRIME export path)
+     **hung the decoder in-kernel and the device rebooted** (watchdog). The
+     patch was developed against bcm2835-codec / Rockchip / Allwinner
+     drivers; Venus's dmabuf-export interplay with it is broken at the
+     driver/firmware level (mainline 6.19/7.0 venus). Fixing that is kernel
+     work, not app work.
+  Also observed: an abrupt userspace exit mid-stream (`-frames:v N`) can
+  fault the Venus firmware too ("no valid instance ... session_id:ff") — the
+  driver's session teardown is fragile; the app's clean stop path is fine.
+  Shipped state is unchanged: mainline 6.1 v4l2m2m-copy bundle, copy-only
+  request. Revisit if venus gains robust VIDIOC_EXPBUF/dmabuf support
+  upstream or the patchset gets Venus-specific fixes.
+- **Copy-mode can be a net LOSS on budget SoCs**: the Air X proves decode is
+  not the bottleneck (dec drops 0) — the memcpy out of UNCACHED V4L2 capture
+  buffers is, and it loses to 8-core software decode into cached memory. So
+  "hardware if available" is not universally right: the app now defaults to
+  Software on known slow-copy SoCs (`kSlowCopyPath` in ui.cpp: `qcom,sm6115`),
+  keeping the toggle. The real lift is zero-copy — hwdec=v4l2m2m (non-copy)
+  emitting DRM_PRIME dmabufs, imported into our GLES context via
+  EGL_EXT_image_dma_buf_import (mpv's drmprime interop) — which needs libmpv
+  rebuilt with egl+drm enabled and a muOS (libmali/libdrm) compatibility
+  check. That is the next hwdec project; it would beat both paths on every
+  mesa device including the RP5.
 - **GPU load is NOT the indicator** for hardware decode: Venus is a separate
   video engine, and in copy mode the Adreno does nothing special (texture
   upload only). Confirm with Stats for Nerds' `Decode:` line or CPU load.
@@ -139,7 +173,7 @@ assuming our stateful-H264 ioctl detection:
 |---|---|---|---|
 | Qualcomm SM8250 | Retroid Pocket 5 / Pocket Mini | Venus (stateful) | **works — VERIFIED** |
 | Qualcomm SM8550/SM8650 | AYN Odin 2 line, Retroid Pocket 6, AYN Thor, AYANEO Pocket S2/ACE, KONKR Pocket FIT | **Iris** — stateful V4L2, mainline since ~6.15, H264/HEVC/VP9 | **expected to work with the existing v4l2 bundle unchanged** (v4l2-compliance reports it a stateful decoder) |
-| Qualcomm SM6115 | Mangmi Air X (and other Adreno 610 handhelds) | Venus (stateful) | **works — VERIFIED** (copy-path ceiling ~720p60; see field reports) |
+| Qualcomm SM6115 | Mangmi Air X (and other Adreno 610 handhelds) | Venus (stateful) | works but copy path loses to software — **defaults to Software**; zero-copy needed |
 | Amlogic S922X | ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro | meson vdec — stateful (kernel staging), H264/MPEG2/VP9 | plausible; staging-quality caveats, and mpv#8884 reports poor meson-vdec H264 — needs a real device test |
 | Rockchip RK3326/RK3399/RK3566 | RG351x, RG353x, RGB30, X55, ODROID-Go Advance | rkvdec / Hantro — stateless | software (X55 VERIFIED) |
 | Rockchip RK3588 | GameForce Ace, CM5 modules | rkvdec2 not mainline (vendor rkmpp only) | software |

@@ -333,7 +333,24 @@ App::App(const std::string& config_path, gfx::Window* win)
     // Hardware decode detection runs asynchronously (see start_hwdec_detect);
     // the toggle appears once it lands. Default until then: auto-copy-safe.
     start_hwdec_detect();
-    hwdec_mode_ = it_.setting_int("hwdec", 0) ? 1 : 0;     // 0 hardware / 1 software
+    // Video Decode default: Hardware — EXCEPT on SoCs where the v4l2m2m-copy
+    // path is known to lose to software (Venus capture buffers are mapped
+    // uncached; the per-frame memcpy is slower than decoding on the CPU cores).
+    // Field-verified on the Mangmi Air X (qcom,sm6115) at 1080p60: dec drops 0
+    // yet ~1400 presentation drops/min, and software played it better. The
+    // toggle stays available; an explicit choice persists. Zero-copy (dmabuf
+    // import) is the eventual fix that beats both — see docs/HWDEC_SURVEY.md.
+    {
+        int saved = it_.setting_int("hwdec", -1);
+        if (saved >= 0) hwdec_mode_ = saved ? 1 : 0;
+        else {
+            std::string compat = hwdetect::read_file("/proc/device-tree/compatible");
+            static const char* kSlowCopyPath[] = {"qcom,sm6115"};
+            hwdec_mode_ = 0;
+            for (const char* soc : kSlowCopyPath)
+                if (compat.find(soc) != std::string::npos) hwdec_mode_ = 1;
+        }
+    }
     player_.set_hwdec(hwdec_mode_str());
     aspect_mode_ = it_.setting_int("aspect", 0);           // 0 fit / 1 zoom / 2 stretch
     if (aspect_mode_ < 0 || aspect_mode_ > 2) aspect_mode_ = 0;
@@ -5033,6 +5050,12 @@ void App::start_hwdec_detect() {
         bool capable = false; std::string value = "auto-copy-safe", via;
         hwdetect::Info hwi = hwdetect::detect();
         if (hwi.has_decoder() && ytn::avcodec_has_decoder("h264_v4l2m2m")) {
+            // Copy mode only. Zero-copy (v4l2m2m non-copy -> DRM_PRIME dmabufs
+            // -> mpv drmprime interop) was tried 2026-09-04 with LibreELEC's
+            // v4l2-drmprime ffmpeg patch: on Venus (RP5, mainline 6.19) the
+            // dmabuf-export path faults the video firmware / hangs the decoder
+            // in-kernel. Parked with findings in docs/HWDEC_SURVEY.md. mpv
+            // falls back to software per stream when hardware can't take a format.
             capable = true; value = "v4l2m2m-copy"; via = "builtin-v4l2";
         } else {
             hwdetect::Bundle hb = hwdetect::pick_bundle(hwi, mpath);

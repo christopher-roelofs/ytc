@@ -27,7 +27,7 @@ the hardware can't handle a codec — "Hardware" never breaks playback.
 |---|---|
 | Retroid Pocket 5 / Pocket Mini (Snapdragon 865, Venus) | **Verified** — ~24× less CPU than software at 1080p |
 | Snapdragon 8 Gen 2 / 8 Gen 3 handhelds (AYN Odin 2 line, Retroid Pocket 6, AYN Thor, AYANEO Pocket S/S2/ACE/DMG/EVO, KONKR Pocket FIT) | Expected — Qualcomm Iris driver, same stateful V4L2 path |
-| Snapdragon 662 handhelds (Mangmi Air X) | **Verified** — decoder keeps up at 1080p60; the copy/render path tops out around 720p60 on this SoC |
+| Snapdragon 662 handhelds (Mangmi Air X) | Works, but the copy path loses to software on this SoC — **defaults to Software** (toggle available) |
 | Amlogic S922X (ODROID-Go Ultra, Powkiddy RGB10 Max 3 Pro) | Plausible — needs a device test |
 | Linux desktops / laptops with VAAPI (Intel, AMD incl. **Steam Deck**), macOS | Expected — verified on Intel UHD 620 |
 | Rockchip RK3326 / RK3566 / RK3588 (RG351x, RG353x, RGB30, X55, GameForce Ace) | Software — stateless decoders, not usable by mainline ffmpeg |

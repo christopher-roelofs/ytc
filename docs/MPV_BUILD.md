@@ -117,7 +117,28 @@ make -j8 && make install
 # verify: readelf -d prefix-clean/lib/libavcodec.so.60 | grep NEEDED  (no rkmpp/drm/lzma)
 ```
 
-### Render-only libmpv against that ffmpeg, in ~/mpvbuild/mpv (0.36):
+### ZERO-COPY variant (2026-09-04) — EXPERIMENT, NOT SHIPPED (crashes Venus; see HWDEC_SURVEY.md)
+ffmpeg as above but ADD `--enable-libdrm` (needed for v4l2_m2m to export
+DRM_PRIME dmabufs; adds libdrm.so.2 to libavutil's NEEDED). libmpv:
+```
+export PATH=$HOME/.local/bin:$PATH        # pip meson
+PKG_CONFIG_PATH=$HOME/mpvbuild/prefix-v4l2/lib/pkgconfig meson setup build-zc \
+  -Dlibmpv=true -Dcplayer=false -Degl=enabled -Ddrm=enabled -Dplain-gl=enabled \
+  -Dgbm=disabled -Djpeg=disabled -Dvulkan=disabled -Dvaapi=disabled \
+  -Dlibavdevice=disabled -Dlua=disabled -Dpulse=disabled -Dcaca=disabled \
+  -Djack=disabled -Dopenal=disabled -Dsndio=disabled -Doss-audio=disabled \
+  -Dwayland=disabled -Dx11=disabled --buildtype=release
+ninja -C build-zc
+# features must include: dmabuf-interop-gl drm egl   (mpv's drmprime interop)
+# NEEDED gains libdrm.so.2 + libEGL.so.1 — both present on muOS (libmali EGL)
+# and ROCKNIX (mesa); still NOT bundled (GPU-side libs stay the device's).
+```
+Plus LibreELEC's `v4l2-drmprime` patch on ffmpeg 6.0.1 (mainline v4l2_m2m has
+no DRM_PRIME output). Result on the RP5: Venus firmware exception / in-kernel
+hang -> device reboot. The shipped bundle stays the mainline 6.1 v4l2m2m-copy
+set with the render-only libmpv; the app requests `hwdec=v4l2m2m-copy` only.
+
+### Render-only libmpv against that ffmpeg, in ~/mpvbuild/mpv (0.36) — the PRE-zero-copy recipe:
 ```
 PKG_CONFIG_PATH=$HOME/mpvbuild/prefix-clean/lib/pkgconfig meson setup build-clean \
   -Dlibmpv=true -Dcplayer=false \
