@@ -83,7 +83,7 @@ static std::vector<double> chapter_times(const std::string& description) {
 
 // ---------- On-screen keyboard layout ----------
 namespace {
-enum KType { KCHAR, KSPACE, KDEL, KSUBMIT, KSHIFT, KLEFT, KRIGHT };
+enum KType { KCHAR, KSPACE, KDEL, KSUBMIT, KSHIFT, KLEFT, KRIGHT, KLANG };
 struct Key { const char* label; KType type; char ch; int span; };
 // Android-TV-style QWERTY, but keeping a dedicated number row on top. `span` widens a
 // key (space/search) for layout + nav. Each row totals 10 units.
@@ -102,6 +102,13 @@ const std::vector<std::vector<Key>> KB = {
      {"space",KSPACE,' ',4},{"-",KCHAR,'-',1},{"_",KCHAR,'_',1},
      {"Search",KSUBMIT,0,2}},
 };
+// Same five rows and ten-unit spans. Only the redundant underscore key becomes
+// a language toggle; Shift+hyphen still provides underscore in either mode.
+const std::vector<std::vector<Key>> KB_KO = [] {
+    auto kb = KB;
+    kb[4][4] = {"한/EN", KLANG, 0, 1};
+    return kb;
+}();
 // Dedicated numeric keypad for device linking (TV codes are digits only). A squared
 // 4-column dialpad; each row totals 4 units, keys are drawn square.
 const std::vector<std::vector<Key>> KB_NUM = {
@@ -327,6 +334,8 @@ void App::load_fonts() {
         std::string base = platform::exe_dir();
         std::string cands[] = {
             env ? std::string(env) : std::string(),
+            base + "/data/fonts/NotoSansKR-Regular.ttf",
+            "data/fonts/NotoSansKR-Regular.ttf",
             base + "/data/DejaVuSans.ttf",     // bundled next to the executable (desktop/port)
             "data/DejaVuSans.ttf",             // or relative to the working directory
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  // Debian/Ubuntu system
@@ -1163,6 +1172,7 @@ static std::string lang_pref_label(const std::string& v) {
     if (v == "app")  return i18n::tr(S::AppLanguage);
     if (v == "orig") return i18n::tr(S::OriginalTrack);
     if (v == "off")  return i18n::tr(S::Off);
+    if (v == "ko") return "한국어";
     for (const auto& l : kLangChoices) if (v == l.code) return l.name;
     return v;   // unknown code from a hand-edited settings.json: show it raw
 }
@@ -1733,6 +1743,7 @@ void App::poll_captions() {
 // Caption font for a track language: the bundled CJK font for Japanese (the
 // device may have no font with kana/kanji), else mpv's default.
 static std::string cc_font_for(const std::string& lang) {
+    if ((lang == "ko" || lang.rfind("ko-", 0) == 0)) return "Noto Sans KR";
     if ((lang == "ja" || lang.rfind("ja-", 0) == 0) && !cjk_font_path().empty())
         return "Noto Sans CJK JP";
     return "";
@@ -3082,7 +3093,7 @@ void App::cast_activate() {
         if (cast_sel_ < 0 || cast_sel_ >= n) return;
         cast_link_name_ = cast_devices_[cast_sel_].name;
         open_search();
-        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
+        kb_composer_.commit(); query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
         kb_mode_ = KbMode::LinkDevice;
         kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
         kb_placeholder_.clear();
@@ -3094,7 +3105,7 @@ void App::cast_activate_cast() {
     int n = (int)cast_devices_.size();
     if (cast_sel_ == n) {   // "Add a device" -> on-screen keyboard in code mode
         open_search();
-        query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;   // number row
+        kb_composer_.commit(); query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;   // number row
         kb_mode_ = KbMode::CastCode;
         kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);   // "Enter TV Code"
         kb_placeholder_.clear();                          // no hint in the box
@@ -3529,7 +3540,7 @@ void App::input(Action a) {
         return;
     }
     if (mode_ == Mode::Search) {
-        const auto& kb = kb_numeric() ? KB_NUM : KB;
+        const auto& kb = kb_numeric() ? KB_NUM : (i18n::language_hl(i18n::language()) == std::string("ko") ? KB_KO : KB);
         // Rows have different key counts/spans, so vertical moves are SPATIAL: keep the
         // horizontal center and land on whichever key in the target row spans it (a key
         // above the space bar lands on space, above Enter lands on Enter, etc.).
@@ -3553,7 +3564,7 @@ void App::input(Action a) {
             case Action::Down:  if (kb_row_ < (int)kb.size()-1) { float c = xcenter(kb_row_, kb_col_);
                                                    kb_col_ = col_at(++kb_row_, c); } break;
             case Action::Select: kb_activate(); break;
-            case Action::Sort:   query_input_.clear(); kb_caret_ = 0; break;   // X clears
+            case Action::Sort:   kb_composer_.commit(); query_input_.clear(); kb_caret_ = 0; break;   // X clears
             case Action::Search: submit_search(); break;      // Y submits
             case Action::Back:   mode_ = Mode::Grid;           // cancel; code entry -> picker
                                  kb_mode_ = KbMode::Search; break;
@@ -3915,20 +3926,20 @@ void App::render_menu(gfx::Renderer& rn) {
     float px = (W-iw)/2, py = (H-ph)/2;
     rn.quad({px-24*s, py-24*s, iw+48*s, ph+48*s}, theme_.panel);
     rn.quad({px-24*s, py-24*s, iw+48*s, 4*s}, theme_.accent);
-    std::string heading = (menu_kind_ == MenuKind::Main) ? "Menu"
-                        : (menu_kind_ == MenuKind::Settings) ? "Settings"
+    std::string heading = (menu_kind_ == MenuKind::Main) ? (std::string(i18n::language_hl(i18n::language()))=="ko" ? "메뉴" : "Menu")
+                        : (menu_kind_ == MenuKind::Settings) ? i18n::tr(i18n::Str::Settings)
                         : (menu_kind_ == MenuKind::SettingsAudio)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetAudioMenu)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetAudioMenu)
                         : (menu_kind_ == MenuKind::SettingsVideo)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetVideoMenu)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetVideoMenu)
                         : (menu_kind_ == MenuKind::SettingsCaptions)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetCaptionsMenu)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetCaptionsMenu)
                         : (menu_kind_ == MenuKind::SettingsPlayback)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetPlaybackMenu)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetPlaybackMenu)
                         : (menu_kind_ == MenuKind::SettingsBrowsing)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetBrowsingMenu)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetBrowsingMenu)
                         : (menu_kind_ == MenuKind::SettingsHomeFeed)
-                          ? std::string("Settings \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetHomeFeed)
+                          ? (std::string(i18n::tr(i18n::Str::Settings)) + " \xE2\x80\xA3 ") + i18n::tr(i18n::Str::SetHomeFeed)
                         : (menu_kind_ == MenuKind::PlayerPlayback)
                           ? std::string(i18n::tr(i18n::Str::SetPlaybackMenu))
                         : (menu_kind_ == MenuKind::FeedManage)
@@ -4839,6 +4850,8 @@ void App::render_player(gfx::Renderer& rn) {
 }
 
 void App::open_search() {
+    kb_composer_.commit();
+    kb_korean_ = std::string(i18n::language_hl(i18n::language())) == "ko";
     mode_ = Mode::Search;
     kb_mode_ = KbMode::Search;
     kb_title_ = i18n::tr(i18n::Str::Search);
@@ -4850,42 +4863,59 @@ void App::open_search() {
     status_msg_.clear();
 }
 void App::input_text(const std::string& s) {
-    for (char c : s) if (c >= 32 && c <= 126) {   // ASCII-only atlas
-        query_input_.insert(query_input_.begin() + kb_caret_, c);
-        kb_caret_++;
+    kb_composer_.commit();
+    // SDL_TEXTINPUT is already UTF-8 (including an external IME's committed text).
+    for (size_t p=0; p<s.size();) {
+        size_t end=hangul::next(s,p);
+        auto cp=hangul::decode(s,p);
+        if ((kb_numeric() && ((cp>='0' && cp<='9') || cp==' ')) ||
+            (!kb_numeric() && cp>=32 && cp!=127)) {
+            query_input_.insert(kb_caret_,s.substr(p,end-p));
+            kb_caret_+=int(end-p);
+        }
+        p=end;
     }
 }
 void App::backspace() {
-    if (kb_caret_ > 0) { query_input_.erase(query_input_.begin() + (kb_caret_-1)); kb_caret_--; }
+    kb_composer_.backspace(query_input_,kb_caret_);
 }
 void App::test_open_numeric_kb() {
     open_search();
-    query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
+    kb_composer_.commit(); query_input_.clear(); kb_caret_ = 0; kb_row_ = 0; kb_col_ = 0;
     kb_mode_ = KbMode::CastCode;
     kb_title_ = i18n::tr(i18n::Str::CastCodeTitle);
     kb_placeholder_.clear();
 }
 void App::kb_activate() {
-    const auto& kb = kb_numeric() ? KB_NUM : KB;
+    const auto& kb = kb_numeric() ? KB_NUM : (i18n::language_hl(i18n::language()) == std::string("ko") ? KB_KO : KB);
     const Key& k = kb[kb_row_][kb_col_];
     switch (k.type) {
         case KCHAR: {
-            char c = k.ch;
-            if (kb_shift_ && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-            query_input_.insert(query_input_.begin() + kb_caret_, c);
-            kb_caret_++;
-            kb_shift_ = false;                       // one-shot capital
+            char c=k.ch;
+            bool korean=kb_korean_ && !kb_numeric();
+            char32_t cp=korean ? hangul::key(c,kb_shift_) : c;
+            if (!korean && kb_shift_ && c>='a' && c<='z') cp=c-'a'+'A';
+            if (kb_shift_ && c=='-') cp='_';
+            if (korean && cp>=0x3131 && cp<=0x3163)
+                kb_composer_.add(query_input_,kb_caret_,cp);
+            else input_text(hangul::utf8(cp));
+            kb_shift_=false;
             break;
         }
-        case KSPACE:  query_input_.insert(query_input_.begin() + kb_caret_, ' '); kb_caret_++; break;
-        case KDEL:    backspace(); break;
-        case KLEFT:   if (kb_caret_ > 0) kb_caret_--; break;
-        case KRIGHT:  if (kb_caret_ < (int)query_input_.size()) kb_caret_++; break;
-        case KSHIFT:  kb_shift_ = !kb_shift_; break;
+        case KSPACE: input_text(" "); break;
+        case KDEL: backspace(); break;
+        case KLEFT:
+            kb_composer_.commit(); kb_caret_=int(hangul::prev(query_input_,kb_caret_)); break;
+        case KRIGHT:
+            kb_composer_.commit(); kb_caret_=int(hangul::next(query_input_,kb_caret_)); break;
+        case KSHIFT: kb_shift_=!kb_shift_; break;
+        case KLANG:
+            kb_composer_.commit(); kb_korean_=!kb_korean_; kb_shift_=false; break;
         case KSUBMIT: submit_search(); break;
     }
 }
 void App::submit_search() {
+    kb_composer_.commit();
     std::string q = query_input_;
     while (!q.empty() && q.back() == ' ') q.pop_back();
     if (kb_mode_ == KbMode::CastCode) {   // "Add a device": pair with the code, then cast
@@ -4957,10 +4987,12 @@ void App::render_search(gfx::Renderer& rn) {
     int start = 0;   // pull start rightward until the pre-caret text fits
     while (start < caret &&
            font_body_->text_width(query_input_.substr(start, caret - start)) > avail)
-        start++;
+        start = int(hangul::next(query_input_,start));
     std::string shown;   // extend from start while it fits
-    for (int i = start; i < csz; ++i) {
-        std::string cand = shown; cand += query_input_[i];
+    for (int i = start; i < csz;) {
+        int end = int(hangul::next(query_input_,i));
+        std::string cand = shown + query_input_.substr(i,end-i);
+        i=end;
         if (font_body_->text_width(cand) > avail) break;
         shown = std::move(cand);
     }
@@ -4973,7 +5005,7 @@ void App::render_search(gfx::Renderer& rn) {
 
     // Keyboard grid — centered; selected key drawn white (ATV style). The numeric
     // keypad (device linking) uses square keys on a narrow, centered grid.
-    const auto& kb = kb_numeric() ? KB_NUM : KB;
+    const auto& kb = kb_numeric() ? KB_NUM : (i18n::language_hl(i18n::language()) == std::string("ko") ? KB_KO : KB);
     bool numeric = kb_numeric();
     float gap = numeric ? 14*s : 10*s;
     float keyh = numeric ? 92*s : 60*s;
@@ -5001,6 +5033,12 @@ void App::render_search(gfx::Renderer& rn) {
                 std::string lbl = (k.type == KSUBMIT) ? i18n::tr(i18n::Str::KbEnter) : k.label;
                 if (k.type == KCHAR && kb_shift_ && lbl.size()==1 && lbl[0]>='a' && lbl[0]<='z')
                     lbl[0] = (char)(lbl[0]-'a'+'A');
+                if (k.type==KCHAR && kb_korean_ && !numeric) {
+                    auto cp=hangul::key(k.ch,kb_shift_);
+                    lbl=hangul::utf8(kb_shift_ && k.ch=='-' ? U'_' : cp);
+                } else if (k.type==KCHAR && kb_shift_ && k.ch=='-') lbl="_";
+                if (k.type==KDEL) lbl=std::string(i18n::language_hl(i18n::language()))=="ko" ? "삭제" : "Del";
+                if (k.type==KLANG) lbl=kb_korean_ ? "EN" : "한";
                 const gfx::Font& f = *font_body_;
                 gfx::Color tc = sel ? theme_.bg
                               : (k.type == KSHIFT && kb_shift_) ? theme_.accent : theme_.text;
