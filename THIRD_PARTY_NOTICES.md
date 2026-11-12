@@ -94,3 +94,12 @@ provided these libraries remain replaceable and their notices are preserved.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+### Korean font and keyboard support
+
+- Noto Sans KR Regular (`data/fonts/NotoSansKR-Regular.ttf`): SIL Open Font
+  License 1.1; notice at `data/fonts/OFL-NotoSansKR.txt`. Derived from a pinned
+  Google Fonts variable source using `tools/make_korean_font.py`.
+- Two-set composition/layout references and retained notices are described in
+  `docs/KOREAN.md` and `licenses/keyboard-reference-MIT.txt` /
+  `licenses/spruce-keyboard-reference.txt`.

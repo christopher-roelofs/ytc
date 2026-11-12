@@ -9,6 +9,7 @@
     { "code": "ru", "name": "Русский", "hl": "ru", "gl": "RU" },
     { "code": "uk", "name": "Українська", "hl": "uk", "gl": "UA" },
     { "code": "el", "name": "Ελληνικά", "hl": "el", "gl": "GR" },
-    { "code": "ja", "name": "日本語", "hl": "ja", "gl": "JP" }
+    { "code": "ja", "name": "日本語", "hl": "ja", "gl": "JP" },
+    { "code": "ko", "name": "한국어", "hl": "ko", "gl": "KR" }
   ]
 }

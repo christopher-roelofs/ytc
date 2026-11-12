@@ -3,6 +3,7 @@
 // run interactively (KMSDRM on device) or headless (offscreen) for screenshots.
 #pragma once
 #include "gfx.h"
+#include "hangul_input.h"
 #include "innertube.h"
 #include "i18n.h"
 #include "cast.h"
@@ -758,7 +759,9 @@ private:
     // On-screen keyboard (Search mode).
     std::string query_input_;
     int kb_row_ = 0, kb_col_ = 0;
-    int  kb_caret_ = 0;        // insertion index into query_input_ (ASCII, byte==char)
+    int  kb_caret_ = 0;        // UTF-8 byte offset, always at a codepoint boundary
+    hangul::Composer kb_composer_;
+    bool kb_korean_ = false;
     bool kb_shift_ = false;    // one-shot uppercase for the next letter
 
     // Async resolve (Select -> background thread -> play on the GL thread).
